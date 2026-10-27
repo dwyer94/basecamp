@@ -6,7 +6,7 @@ Build and test on the dev PC against `tools/fake_server.py`; deploy to the prod 
 
 Things that could change the design. Do these first, mostly by hand on the prod PC.
 
-- [ ] **Tailscale serve + identity**: on the prod PC run `tailscale serve --bg --https=443 http://127.0.0.1:8150` against a 10-line test app that echoes request headers. From your phone: does the page load over HTTPS, and is `Tailscale-User-Login` present? From a friend's device too? → decides Plan A vs Plan B ([02-architecture.md](02-architecture.md)).
+- [x] **Tailscale serve + identity** (2026-10-26: works from your phone and both PCs → Plan A, D-27; friend device still to check): on the prod PC run `tailscale serve --bg --https=443 http://127.0.0.1:8150` against a 10-line test app that echoes request headers. From your phone: does the page load over HTTPS, and is `Tailscale-User-Login` present? From a friend's device too? → decides Plan A vs Plan B ([02-architecture.md](02-architecture.md)).
 - [ ] **Tailnet policy**: which ports friends can reach on the prod PC today; would 443 need adding.
 - [ ] **Headless game start**: start Palworld and Enshrouded from a scheduled task as your account with "Do not store password", reboot, don't log in. Do they run? Does output come through the pipe or only a log file? Does Ctrl+Break make them save and quit? If anything fails only in this mode, retry with the password stored.
 - [ ] **Games survive Basecamp going away** (Q-09, Q-10): start a game through a Basecamp host from the test task, end the task and kill Basecamp; do the host and game keep running? (Low priority: kill the host too; does the game survive?)
@@ -36,7 +36,7 @@ Things that could change the design. Do these first, mostly by hand on the prod 
 ## Phase 2 · Web API and admin UI
 
 - FastAPI routers for servers and actions; status WebSocket; console WebSocket (R-20, R-23).
-- Auth module: Plan A (identity header + localhost) or Plan B (password + session), per Phase 0 (R-80).
+- Auth module: Plan A (identity header + localhost, D-27). Admin logins are a setting (R-80).
 - Admin dashboard and server page, phone-first: cards, status pills, Start/Stop/Restart, live console with command box.
 - Add/edit server form; game templates for Palworld and Enshrouded first (R-13); import existing install (R-15).
 - **Copy join address** and **Copy for Discord** buttons (R-24).

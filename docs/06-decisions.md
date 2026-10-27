@@ -30,13 +30,14 @@
 | D-24 | Dev PC venv uses CPython 3.13 fetched by `uv` (the PC only has 3.14 installed) | 2026-10-26 | Matches the release target (`--python-version 3.13`, docs/07) |
 | D-25 | **One host process per running server** (`basecamp/host.py`, standard library only). Basecamp starts it detached and outside its job; the host starts the game, owns its pipes, writes the console log, keeps a replay buffer, and serves a control channel on `127.0.0.1` (ephemeral port, per-run random token stored in the data folder). It exits only after its game, leaving `exit.json`. Basecamp reattaches via `state.json` (host PID + exe + create time, port, token); an exit while Basecamp was down is reported on reattach as Crashed unless the stop was asked for. Host gone but game alive: adopt the bare game as before | 2026-10-26 | Owner's call (R-04a): a game must never depend on Basecamp's pipes, and the console must survive Basecamp restarts and self-updates. TCP loopback over a named pipe: simpler with the standard library, and binding to `127.0.0.1` needs no firewall rule |
 | D-26 | Host compatibility: the hello negotiates `min(Basecamp's protocol, host's protocol)`. Protocol changes are additive only (new ops or fields, never removed or changed); each side keeps speaking every older version; a client only uses ops in the negotiated version. A Basecamp that meets a host below its `MIN_HOST_PROTOCOL` treats the game as bare. Hosts run from a copy in `<data>\hosts\bin\` named by content hash, never from a version folder | 2026-10-26 | A host lives as long as its game, so it can be several Basecamp releases old, or newer after a rollback. The launcher prunes old version folders (docs/07) |
+| D-27 | **Plan A confirmed** for auth: Basecamp binds to `127.0.0.1:8150`, `tailscale serve` publishes it over HTTPS, admin = owner's `Tailscale-User-Login` (or localhost), everyone else = friend view. Plan B (password) not built | 2026-10-26 | Q-02 test from the owner's phone and both PCs: login header present, page secure, clipboard copy works |
 
 ## Open questions
 
 | # | Question | Answer by |
 |---|---|---|
 | Q-01 | Which games do you run today, where are they installed, and on which ports? | Owner, Phase 0 |
-| Q-02 | Do identity headers work through `tailscale serve` on the tagged prod PC? | Phase 0 test |
+| Q-02 | ~~Do identity headers work through `tailscale serve` on the tagged prod PC?~~ **Yes** from the owner's devices (D-27). Still untested: a friend's device (does it load, and does the header carry their login?) | Friend check before Phase 4 |
 | Q-03 | Do people you share a device with count against your Tailscale user limit? | Phase 0 test with one friend |
 | Q-04 | Do your games run correctly headless (no one logged in) with output piped? | Phase 0 test |
 | Q-05 | Any non-Steam servers today? How do you update them? | Owner |
