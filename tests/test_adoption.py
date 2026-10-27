@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
 
 import psutil
 import pytest
@@ -14,9 +15,9 @@ import pytest
 from basecamp import hostclient
 from basecamp.db import Store
 from basecamp.hostclient import HostClient, HostError, IncompatibleHost
-from basecamp.models import ServerState
+from basecamp.models import Protocol, ServerState
 from basecamp.supervisor import NoConsole, Supervisor
-from tests.conftest import REPO, console_text, fake_config, wait_for
+from tests.conftest import REPO, console_text, fake_config, free_port, wait_for
 
 
 def _is_host(proc: psutil.Process) -> bool:
@@ -40,6 +41,14 @@ def _kill_basecamp(proc: subprocess.Popen) -> None:
     proc.wait(10)
 
 
+def _healthy(port: int) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=2) as res:
+            return json.loads(res.read())["ok"]
+    except OSError:
+        return False
+
+
 def _saved(settings, server_id: int) -> dict | None:
     try:
         return json.loads(settings.state_path.read_text())[str(server_id)]
@@ -51,7 +60,9 @@ def test_reattaches_after_basecamp_is_killed(settings):
     store = Store.open(settings.db_path, settings.migrations_dir)
     server = store.add_server(fake_config("adoptee", "--tick", "0.3", start_on_boot=True))
     store.close()
-    (settings.data_dir / "settings.toml").write_text("[basecamp]\nlow_ram_mb = 0\n")
+    web_port = free_port(Protocol.TCP)  # not 8150: a dev server may be running
+    (settings.data_dir / "settings.toml").write_text(
+        f"[basecamp]\nlow_ram_mb = 0\nport = {web_port}\n")
 
     env = {**os.environ, "BASECAMP_DATA_DIR": str(settings.data_dir)}
     basecamp = subprocess.Popen([sys.executable, "-m", "basecamp"], cwd=REPO, env=env,
@@ -61,6 +72,8 @@ def test_reattaches_after_basecamp_is_killed(settings):
         wait_for(lambda: (_saved(settings, server.id) or {}).get("state") == "running",
                  timeout=30)
         game_pid = _saved(settings, server.id)["pid"]
+        # The web server is up too, on the port from settings.toml.
+        wait_for(lambda: _healthy(web_port), timeout=15)
         _kill_basecamp(basecamp)
 
         time.sleep(1.0)

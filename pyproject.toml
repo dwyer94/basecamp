@@ -9,19 +9,26 @@ readme = "README.md"
 requires-python = ">=3.13"
 dynamic = ["version"]
 dependencies = [
+    "fastapi>=0.115",
     "psutil>=6.1",
     "pydantic>=2.9",
+    "uvicorn>=0.32",
+    "websockets>=13",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "httpx>=0.27",
     "pytest>=8.3",
     "pytest-timeout>=2.3",
     "ruff>=0.8",
 ]
 
 [tool.setuptools]
-packages = ["basecamp"]
+packages = ["basecamp", "basecamp.api"]
+
+[tool.setuptools.package-data]
+basecamp = ["web/*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "basecamp.__version__" }
@@ -36,3 +43,5 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 timeout = 60
+# Starlette's test client asks for httpx2; httpx still works.
+filterwarnings = ["ignore:Using .httpx. with .starlette.testclient. is deprecated"]

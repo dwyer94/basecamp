@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Game servers</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Game servers</h1>
+  <span class="offline" id="offline" hidden>reconnecting…</span>
+</header>
+<main>
+  <div id="servers"><p class="empty">Loading…</p></div>
+</main>
+<script src="/static/common.js"></script>
+<script>
+"use strict";
+// Friend view (R-70): name, status, uptime, join address with Copy. Nothing else.
+function render(servers) {
+  const root = $("#servers");
+  root.replaceChildren();
+  if (!servers.length) root.append(el("p", { class: "empty" }, "No servers yet."));
+  for (const s of servers) {
+    root.append(el("div", { class: "card" },
+      el("div", { class: "card-head" },
+        el("span", { class: "name" }, s.name), statePill(s.state)),
+      s.uptime_s !== null ? el("div", { class: "meta" }, fmtUptime(s.uptime_s)) : null,
+      s.join_address ? el("div", { class: "address" },
+        el("code", {}, s.join_address),
+        el("button", { class: "small", onclick: () => copyText(s.join_address) }, "Copy"))
+        : null));
+  }
+}
+keepSocket("/ws/status", {
+  onMessage: (msg) => msg.type === "servers" && render(msg.servers),
+  onState: (up) => { $("#offline").hidden = up; },
+});
+</script>
+</body>
+</html>

@@ -96,6 +96,7 @@ class ServerConfig(BaseModel):
     min_free_ram_mb: int = Field(default=0, ge=0)
     stop_recipe: list[StopStep] = Field(default_factory=list)
     notes: str = ""
+    template_id: str = ""  # the game template it was made from, if any (R-13)
 
     @model_validator(mode="after")
     def _check(self) -> ServerConfig:

@@ -96,17 +96,17 @@ def test_migrations_are_applied_once_and_new_ones_later(tmp_path):
     shutil.copytree(MIGRATIONS_DIR, migrations)
     conn = db.connect(tmp_path / "x.db")
 
-    assert db.migrate(conn, migrations) == [1]
+    assert db.migrate(conn, migrations) == [1, 2]
     assert db.migrate(conn, migrations) == []
 
-    (migrations / "0002_add_column.sql").write_text(
+    (migrations / "0099_add_column.sql").write_text(
         "-- example\nALTER TABLE servers ADD COLUMN color TEXT NOT NULL DEFAULT 'blue';\n")
-    assert db.migrate(conn, migrations) == [2]
+    assert db.migrate(conn, migrations) == [99]
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(servers)")]
     assert "color" in cols
 
     # An older Basecamp (rolled back) still opens the newer DB.
-    (migrations / "0002_add_column.sql").unlink()
+    (migrations / "0099_add_column.sql").unlink()
     assert db.migrate(conn, migrations) == []
     conn.close()
 

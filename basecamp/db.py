@@ -7,6 +7,7 @@ import logging
 import re
 import sqlite3
 import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,8 +23,18 @@ _PLAIN_COLUMNS = (
     "name", "kind", "install_dir", "exe_path", "args", "working_dir", "join_port",
     "start_on_boot", "boot_order", "steam_app_id", "steam_beta", "steam_validate", "save_dir",
     "log_source", "log_file", "rcon_host", "rcon_port", "real_exe_name", "ready_pattern",
-    "ready_after_s", "min_free_ram_mb", "notes",
+    "ready_after_s", "min_free_ram_mb", "notes", "template_id",
 )
+
+
+@dataclass(frozen=True)
+class AuditEntry:
+    id: int
+    ts: str
+    who: str
+    action: str
+    server_id: int | None
+    detail: str
 
 
 def _now() -> str:
@@ -187,6 +198,28 @@ class Store:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM servers ORDER BY id").fetchall()
             return [self._to_server(row) for row in rows]
+
+    # -- audit log (R-83) -----------------------------------------------------
+
+    def add_audit(self, who: str, action: str, server_id: int | None = None,
+                  detail: str = "") -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO audit_log (ts, who, action, server_id, detail) VALUES (?, ?, ?, ?, ?)",
+                (_now(), who, action, server_id, detail),
+            )
+
+    def list_audit(self, limit: int = 200, server_id: int | None = None) -> list[AuditEntry]:
+        sql = "SELECT * FROM audit_log"
+        params: list[object] = []
+        if server_id is not None:
+            sql += " WHERE server_id = ?"
+            params.append(server_id)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [AuditEntry(**dict(row)) for row in rows]
 
     # -- helpers --------------------------------------------------------------
 

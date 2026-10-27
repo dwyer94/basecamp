@@ -1,7 +1,5 @@
-"""App start: settings, logging, migrations, adopt orphans, start-on-boot servers.
-
-Phase 1 has no web server yet; ``run`` just keeps the supervisor alive until stopped.
-Phase 2 starts Uvicorn on ``settings.host:settings.port`` where marked below.
+"""App start: settings, logging, migrations, adopt orphans, start-on-boot servers, and the
+web server on ``settings.host:settings.port`` (127.0.0.1 only, D-27).
 """
 
 from __future__ import annotations
@@ -9,7 +7,10 @@ from __future__ import annotations
 import logging
 import threading
 
+import uvicorn
+
 from basecamp import __version__
+from basecamp.api.app import create_app
 from basecamp.db import Store
 from basecamp.logs import setup_logging
 from basecamp.settings import Settings
@@ -31,13 +32,27 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
     boot = threading.Thread(target=supervisor.start_on_boot, kwargs={"cancel": stop},
                             name="start on boot", daemon=True)
     boot.start()
-    # Phase 2: start the web server here.
+    config = uvicorn.Config(create_app(store, supervisor, settings), host=settings.host,
+                            port=settings.port, log_config=None, access_log=False,
+                            ws_ping_interval=20,
+                            # The peer must be the real socket peer: auth trusts the
+                            # Tailscale header only from loopback (basecamp/auth.py).
+                            proxy_headers=False)
+    web = uvicorn.Server(config)
+    web_thread = threading.Thread(target=web.run, name="web", daemon=True)
+    web_thread.start()
+    log.info("Web page on http://%s:%s", settings.host, settings.port)
     try:
         while not stop.wait(0.5):
-            pass
+            if not web_thread.is_alive():
+                log.error("The web server stopped (port %s in use?); Basecamp exits",
+                          settings.port)
+                break
     except KeyboardInterrupt:
         stop.set()
     finally:
+        web.should_exit = True
+        web_thread.join(10)
         # Game servers keep running (D-09); the next start adopts them.
         log.info("Basecamp stopping; game servers are left running")
         supervisor.detach()
