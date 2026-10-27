@@ -547,7 +547,7 @@ function serverForm(root, id) {
     el("h2", { style: "margin-top:0" }, "Start from a template"),
     field("Game", tplSelect),
     field("Install folder", installInput,
-      "Leave the game on 'Detect' to read steamapps\\appmanifest_*.acf from an existing install."),
+      "Leave the game on 'Detect' to read steamapps\\appmanifest_*.acf from an existing install. For a new install, pick the game and type a folder that doesn't exist yet (or is empty): save, then press Install on the server's page."),
     el("div", { class: "buttons" }, el("button", { class: "primary", onclick: useTemplate }, "Fill in")));
 
   root.replaceChildren(el("h2", {}, editing ? "Edit server" : "Add server"), top, messages, form);

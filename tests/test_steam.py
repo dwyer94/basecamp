@@ -105,6 +105,9 @@ def test_command_and_build_id(store, steam_settings, tmp_path):
     assert installed_build(server) == "1500"
     other = store.update_server(server.id, server.model_copy(update={"steam_app_id": 99}))
     assert installed_build(other) is None  # only that app's appmanifest counts
+    manifest = Path(server.install_dir) / "steamapps" / f"appmanifest_{APP_ID}.acf"
+    manifest.write_text(manifest.read_text().replace('"1500"', '"0"'))
+    assert installed_build(server) is None  # mid-download, real SteamCMD writes buildid 0
 
 
 def test_update_backs_up_stops_updates_and_starts_again(store, ssup, runner, backups,

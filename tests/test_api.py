@@ -300,6 +300,12 @@ def test_draft_from_template_then_save(client, tmp_path):
     saved = client.post("/api/servers", json=draft)
     assert saved.status_code == 201 and saved.json()["config"]["template_id"] == "palworld"
 
+    # A new install: the folder doesn't exist yet, and Install on the server page makes it.
+    fresh = client.post("/api/drafts", json={"template_id": "palworld",
+                                             "install_dir": str(tmp_path / "New")})
+    assert fresh.status_code == 200
+    assert fresh.json()["draft"]["exe_path"] == str(tmp_path / "New" / "PalServer.exe")
+
 
 def test_import_existing_install_reads_appmanifest(client, tmp_path):
     install = tmp_path / "Enshrouded"

@@ -110,7 +110,8 @@ def installed_build(server: Server) -> str | None:
         return None
     for manifest in templates.read_manifests(Path(server.install_dir)):
         if manifest.app_id == server.steam_app_id:
-            return manifest.build_id or None
+            # SteamCMD writes buildid "0" while a first install is still downloading
+            return manifest.build_id if manifest.build_id not in ("", "0") else None
     return None
 
 

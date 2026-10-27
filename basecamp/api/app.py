@@ -506,9 +506,10 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         manifests: list[templates.AppManifest] = []
         if install:
             folder = Path(install)
-            if not folder.is_dir():
+            if folder.is_dir():
+                manifests = templates.read_manifests(folder)
+            elif not template_id:
                 raise HTTPException(400, f"Folder not found: {install}")
-            manifests = templates.read_manifests(folder)
         if not template_id:
             if not install:
                 raise HTTPException(400, "Pick a template or an install folder")
@@ -538,8 +539,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             raise HTTPException(404, f"No template {template_id!r}") from None
         draft = templates.draft(chosen.template, install, body.name)
         if install and not Path(draft["exe_path"]).is_file():
-            messages.append(f"{draft['exe_path']} doesn't exist (yet). Install the server "
-                            "there, or fix the exe path.")
+            messages.append(f"{draft['exe_path']} doesn't exist (yet). For a new install, save "
+                            "the server and press Install on its page; otherwise fix the exe path.")
         if chosen.template.unverified:
             messages.append("Not yet checked against a real install: "
                             + ", ".join(chosen.template.unverified) + ".")

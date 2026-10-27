@@ -12,6 +12,7 @@ Basecamp is a small Windows app that runs on an always-on Windows PC (the "host 
 - Starts at boot, not at login, and starts every server marked **start on boot**. Several servers can run at once.
 - Start, stop, restart from the web page. Stop is graceful when the game supports it (save, then quit).
 - **One-click update** for Steam servers: stop, back up the save, run SteamCMD, start again.
+- **Adding a game**: **Add server**, pick the game's template and type an install folder (an empty or new one for a fresh install, or an existing install to take over). A game without a template: leave it on **Detect** for an existing install, or fill in the form by hand with type **steam** and the Steam **App ID** of its dedicated server (SteamDB lists them; it's not the game's own ID). Then **Install** on the server's page downloads it with SteamCMD.
 - **Live console**: watch server output and type commands into it (stdin, or RCON for games that use it).
 - **Copy join address** button: one click copies `<tailscale-ip>:<port>` (or a nicer line for Discord).
 - **Config file editor**: each server lists its config files (JSON, INI, etc.); edit them in the page, with a backup kept on every save.
