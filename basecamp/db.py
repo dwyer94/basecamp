@@ -25,7 +25,7 @@ _PLAIN_COLUMNS = (
     "log_source", "log_file", "rcon_host", "rcon_port", "real_exe_name", "ready_pattern",
     "ready_after_s", "min_free_ram_mb", "notes", "template_id", "backup_every_h", "backup_keep",
 )
-_JSON_COLUMNS = ("config_files", "notify_off")
+_JSON_COLUMNS = ("config_files", "notify_off", "stop_warning")
 
 
 @dataclass(frozen=True)

@@ -86,6 +86,7 @@ def admin_view(settings: Settings, server: Server, status: ServerStatus,
         cpu_percent=cpu.percent(status.pid) if cpu else None,
         last_exit_code=status.last_exit_code,
         restart_at=restart_at,  # a crash restart is pending (R-05)
+        stop_warning=status.warning,  # a stop countdown: {"kind", "stop_at"} (R-25)
         steam=steam,  # build ID, a queued or running install/update, the last run (R-30)
     )
     return view

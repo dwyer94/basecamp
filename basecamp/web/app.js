@@ -37,12 +37,29 @@ function notice(text, kind = "") {
   return el("div", { class: `notice ${kind}` }, text);
 }
 
+// The stop warning a server would send now (R-25): its lead time in minutes, or 0.
+function warnMinutes(s) {
+  const w = s.config.stop_warning;
+  return s.state === "running" && w && w.minutes && w.minutes.length ? w.minutes[0] : 0;
+}
+
 async function act(server, action) {
+  const lead = warnMinutes(server);
+  const warned = lead ? ` Players get ${lead} min warning first.` : "";
   if (action === "start" && server.steam && server.steam.failed && !server.steam.job
     && !confirm(`The last ${server.steam.last.kind} of ${server.name} failed, so its files may be half updated. Start anyway?`)) return;
-  if (action === "stop" && !server.restart_at && !confirm(`Stop ${server.name}?`)) return;
-  if (action === "restart" && !confirm(`Restart ${server.name}?`)) return;
-  if (action === "kill" && !confirm(`Kill ${server.name} without saving?`)) return;
+  if (action === "stop" && !server.restart_at && !confirm(`Stop ${server.name}?${warned}`)) return;
+  if (action === "restart" && !confirm(`Restart ${server.name}?${warned}`)) return;
+  if (action === "kill" && !confirm(`Kill ${server.name} without saving?${server.stop_warning ? " This also ends the countdown." : ""}`)) return;
+  if (action === "stop-now") {
+    const verb = { restart: "Restart", update: "Update" }[server.stop_warning && server.stop_warning.kind] || "Stop";
+    if (!confirm(`${verb} ${server.name} now, without waiting for the rest of the warning?`)) return;
+    try {
+      await api("POST", `/api/servers/${server.id}/stop?now=true`);
+      toast(`${verb} now: ${server.name}`);
+    } catch (e) { alert(`${server.name}: ${e.message}`); }
+    return;
+  }
   try {
     const result = await api("POST", `/api/servers/${server.id}/${action}`);
     if (result && result.warnings && result.warnings.length) toast(result.warnings.join(" "));
@@ -54,8 +71,8 @@ async function act(server, action) {
 
 // -- SteamCMD (R-11, R-30..R-32) ------------------------------------------------------
 
-const PHASES = { queued: "Queued", backup: "Backing up the save", stopping: "Stopping",
-  steamcmd: "SteamCMD running", starting: "Starting again" };
+const PHASES = { queued: "Queued", backup: "Backing up the save", warning: "Warning players",
+  stopping: "Stopping", steamcmd: "SteamCMD running", starting: "Starting again" };
 
 async function steamAction(s, action) {
   const st = s.steam;
@@ -98,7 +115,7 @@ function steamButton(s) {
     const idle = s.state === "stopped" || s.state === "crashed";
     return el("button", { disabled: !idle, onclick: () => steamAction(s, "install") }, "Install");
   }
-  return el("button", { disabled: ["stopping", "updating"].includes(s.state),
+  return el("button", { disabled: ["stopping", "updating"].includes(s.state) || Boolean(s.stop_warning),
     onclick: () => steamAction(s, "update") }, "Update");
 }
 
@@ -106,7 +123,7 @@ function steamLine(s) {
   const st = s.steam;
   if (!st) return null;
   return el("div", {},
-    st.job ? el("div", { class: "notice" }, jobText(st.job),
+    st.job && st.job.phase !== "warning" ? el("div", { class: "notice" }, jobText(st.job),
       st.job.phase === "steamcmd" && st.job.progress !== null && st.job.position === 0
         ? el("progress", { max: "100", value: String(st.job.progress) }) : null) : null,
     !st.job && st.failed && st.last ? el("div", { class: "notice error" },
@@ -115,17 +132,43 @@ function steamLine(s) {
         "SteamCMD output")) : null);
 }
 
+// -- stop countdown (R-25) -----------------------------------------------------------
+
+function fmtCountdown(stopAt) {
+  const left = Math.max(0, Math.round(stopAt - Date.now() / 1000));
+  return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+}
+
+// Every element with data-stop-at shows the time left; one timer for the whole page.
+setInterval(() => {
+  for (const node of document.querySelectorAll("[data-stop-at]")) {
+    node.textContent = fmtCountdown(Number(node.dataset.stopAt));
+  }
+}, 1000);
+
+function countdownLine(s) {
+  const w = s.stop_warning;
+  if (!w) return null;
+  const what = { stop: "Stopping", restart: "Restarting", update: "Updating" }[w.kind] || "Stopping";
+  return el("div", { class: "notice countdown" },
+    `${what} in `, el("strong", { "data-stop-at": String(w.stop_at) }, fmtCountdown(w.stop_at)),
+    " · players are being warned ",
+    el("button", { class: "small", onclick: () => act(s, "stop-now") },
+      w.kind === "stop" ? "Stop now" : `${what.replace(/ing$/, "")} now`));
+}
+
 function actionButtons(s) {
   const active = ["starting", "running", "stopping", "updating"].includes(s.state);
   const updating = s.state === "updating" || Boolean(s.steam && s.steam.job && s.steam.job.position === 0
     && s.steam.job.phase !== "queued");
+  const counting = Boolean(s.stop_warning);
   return el("div", { class: "buttons" },
     el("button", { class: "primary", disabled: active, onclick: () => act(s, "start") }, "Start"),
     s.restart_at
       ? el("button", { onclick: () => act(s, "stop") }, "Cancel restart")
-      : el("button", { disabled: !active || updating || s.state === "stopping",
+      : el("button", { disabled: !active || updating || counting || s.state === "stopping",
         onclick: () => act(s, "stop") }, "Stop"),
-    el("button", { disabled: !active || updating, onclick: () => act(s, "restart") }, "Restart"),
+    el("button", { disabled: !active || updating || counting, onclick: () => act(s, "restart") }, "Restart"),
     steamButton(s));
 }
 
@@ -140,6 +183,24 @@ function addressBlock(s) {
     el("button", { class: "small", onclick: () => copyText(s.join_address) }, "Copy"),
     el("button", { class: "small", onclick: () => copyText(s.discord_line, "Copied for Discord") },
       "Copy for Discord"));
+}
+
+// R-34: "update available" from the last build check; "unknown" when it failed.
+function buildBadge(s) {
+  const st = s.steam;
+  if (!st || !st.build_id || !st.latest || st.job) return null;
+  if (st.update_available) {
+    return el("span", { class: "tag update", title: `Steam has build ${st.latest.build_id}; this is ${st.build_id}` },
+      "update available");
+  }
+  if (!st.latest.build_id) {
+    return el("span", { class: "tag muted", title: `Last check: ${st.latest.error || "no answer"}` }, "update: unknown");
+  }
+  return null;
+}
+
+function cardHead(s, nameNode) {
+  return el("div", { class: "card-head" }, nameNode, el("span", { class: "tags" }, buildBadge(s), statePill(s.state)));
 }
 
 function metaLine(s) {
@@ -249,9 +310,8 @@ function dashboard(root) {
     }
     for (const s of servers) {
       list.append(el("div", { class: "card" },
-        el("div", { class: "card-head" },
-          el("a", { class: "name", href: `#server/${s.id}` }, s.name), statePill(s.state)),
-        metaLine(s), steamLine(s), addressBlock(s), actionButtons(s)));
+        cardHead(s, el("a", { class: "name", href: `#server/${s.id}` }, s.name)),
+        metaLine(s), countdownLine(s), steamLine(s), addressBlock(s), actionButtons(s)));
     }
   };
   update();
@@ -359,6 +419,8 @@ function serverPage(root, id) {
         el("td", {}, el("div", { class: "buttons", style: "margin:0" },
           el("button", { class: "small", disabled: backupBusy || !stopped || !res.save_dir,
             title: stopped ? "" : "Stop the server first", onclick: () => restore(b) }, "Restore"),
+          el("a", { class: "button small", href: `/api/servers/${id}/backups/${encodeURIComponent(b.name)}/download`,
+            download: b.name }, "Download"),
           el("button", { class: "small danger", disabled: backupBusy, onclick: () => removeBackup(b) }, "Delete")))))))
         : el("p", { class: "muted" }, "No backups yet."),
       res.backups.length && !stopped ? el("div", { class: "hint" }, "Stop the server to restore a backup.") : null));
@@ -397,15 +459,16 @@ function serverPage(root, id) {
       return;
     }
     const c = s.config;
-    head.replaceChildren(
-      el("div", { class: "card-head" }, el("span", { class: "name" }, s.name), statePill(s.state)),
-      metaLine(s), steamLine(s), addressBlock(s), actionButtons(s),
+    // replaceChildren would print a null as "null"; countdownLine and steamLine can be null.
+    head.replaceChildren(...[
+      cardHead(s, el("span", { class: "name" }, s.name)),
+      metaLine(s), countdownLine(s), steamLine(s), addressBlock(s), actionButtons(s),
       el("div", { class: "buttons" },
         el("a", { class: "button", href: `#edit/${id}` }, "Edit"),
         ["starting", "running", "stopping"].includes(s.state)
           ? el("button", { class: "danger", onclick: () => act(s, "kill") }, "Kill") : null),
       el("p", { class: "muted" }, c.exe_path, c.args ? ` ${c.args}` : "",
-        s.pid ? ` · PID ${s.pid}` : ""));
+        s.pid ? ` · PID ${s.pid}` : "")].filter(Boolean));
     input.disabled = !(s.has_console && s.state !== "stopped" && s.state !== "crashed");
     steamBox.replaceChildren(s.steam ? steamSection(s) : el("div"));
     const key = `${s.state} ${s.steam && s.steam.job ? s.steam.job.phase : ""}`;
@@ -413,6 +476,29 @@ function serverPage(root, id) {
   };
   update();
   return { update, close: () => sock.close() };
+}
+
+async function checkBuild(s) {
+  try {
+    await api("POST", `/api/servers/${s.id}/steam/check`);
+    toast(`Asking Steam about ${s.name}`);
+  } catch (e) { alert(`${s.name}: ${e.message}`); }
+}
+
+function latestLine(s) {
+  const st = s.steam;
+  const l = st.latest;
+  const when = l ? ` (checked ${new Date(l.checked_at * 1000).toLocaleString()})` : "";
+  let text;
+  if (st.checking) text = "Asking Steam for the latest build…";
+  else if (!l) text = "Latest build on Steam: not checked yet.";
+  else if (!l.build_id) text = `Latest build on Steam: unknown${when}.`;
+  else if (st.update_available) text = `Steam has build ${l.build_id} on ${l.branch}${when}: an update is available.`;
+  else if (st.update_available === false) text = `Up to date with Steam's ${l.branch} branch${when}.`;
+  else text = `Latest build on Steam: ${l.build_id} on ${l.branch}${when}.`;
+  return el("p", { class: "muted" }, el("span", { class: st.update_available ? "update-text" : "" }, text), " ",
+    el("button", { class: "small", disabled: st.checking || !st.steamcmd_found, onclick: () => checkBuild(s) },
+      "Check for update"));
 }
 
 function steamSection(s) {
@@ -427,6 +513,7 @@ function steamSection(s) {
       c.steam_beta ? `, beta branch ${c.steam_beta}` : "", c.steam_validate ? ", validate on update" : "",
       ". Installed build: ", el("strong", {}, st.build_id || (st.installed ? "unknown" : "not installed")),
       ". Folder ", el("code", {}, c.install_dir || "(not set)"), "."),
+    st.build_id ? latestLine(s) : null,
     last ? el("p", { class: "muted" },
       `Last ${last.kind}: ${last.result}`, last.ended_at ? `, ${new Date(last.ended_at).toLocaleString()}` : "",
       last.who ? ` by ${last.who}` : "", last.backup ? `. Backup ${last.backup}` : "", ". ",
@@ -456,7 +543,7 @@ const BLANK = {
   steam_app_id: null, steam_beta: "", steam_validate: false, config_files: [], save_dir: "",
   log_source: "stdout", log_file: "", rcon_host: "127.0.0.1", rcon_port: null,
   real_exe_name: "", ready_pattern: "", ready_after_s: 15, min_free_ram_mb: 0,
-  stop_recipe: [], notes: "", backup_every_h: 0, backup_keep: 10, notify_off: [],
+  stop_recipe: [], stop_warning: null, notes: "", backup_every_h: 0, backup_keep: 10, notify_off: [],
 };
 
 function field(label, input, hint) {
@@ -525,6 +612,26 @@ function serverForm(root, id) {
     stepRows.append(row);
   };
 
+  // R-25: the warning players get before a stop, restart or update from Basecamp.
+  const warningFields = () => {
+    const w = values.stop_warning || { action: "rcon", command: "", minutes: [] };
+    const action = el("select", {}, ["stdin", "rcon"].map((x) => el("option", { value: x, selected: w.action === x }, x)));
+    const command = el("input", { value: w.command, placeholder: "e.g. broadcast Restarting in {minutes} min",
+      autocomplete: "off", spellcheck: "false" });
+    const minutes = el("input", { value: (w.minutes || []).join(", "), placeholder: "e.g. 5, 1 (empty = off)",
+      inputmode: "decimal", autocomplete: "off" });
+    inputs.stop_warning = () => {
+      const mins = minutes.value.split(/[,\s]+/).filter(Boolean).map(Number);
+      if (!command.value.trim() && !mins.length) return null;
+      return { action: action.value, command: command.value, minutes: mins };
+    };
+    return el("div", { style: "margin-top:12px" },
+      el("label", {}, "Warn players first"),
+      el("div", { class: "row warn" }, action, command),
+      field("Warn at (minutes before)", minutes,
+        "Sent before a stop, restart or update you start (never before a crash restart). The first number is the lead time, the others are reminders. {minutes} and {seconds} in the command are filled in. Kill and Stop now skip it."));
+  };
+
   const collect = () => {
     const data = {};
     for (const [key, get] of Object.entries(inputs)) data[key] = get();
@@ -575,7 +682,8 @@ function serverForm(root, id) {
       el("fieldset", {}, el("legend", {}, "Stop recipe"), stepRows,
         el("button", { type: "button", class: "small", onclick: () => addStepRow() }, "Add step"),
         el("div", { class: "hint" },
-          "Each step runs, then waits up to its seconds for the exit. Kill always comes last. Empty = Ctrl+Break, 30 s, kill.")),
+          "Each step runs, then waits up to its seconds for the exit. Kill always comes last. Empty = Ctrl+Break, 30 s, kill."),
+        warningFields()),
       el("fieldset", {}, el("legend", {}, "Files"),
         field("Config files", lines("config_files"), "One path per line."),
         field("Save folder", text("save_dir")),
@@ -797,7 +905,7 @@ function configPage(root, id, n) {
           el("span", { class: "tag" }, file.kind), " ", dirty() ? el("span", { class: "tag unverified" }, "unsaved") : null),
         el("div", { class: "hint" }, el("code", {}, file.path)),
         el("div", { class: "hint" }, file.exists ? file.encoding : "Doesn't exist yet: saving creates it.",
-          file.kind === "json" ? " · JSON is checked before saving." : "")) : null);
+          file.kind === "json" ? " · JSON is checked before saving." : "")) : "");  // not null: replaceChildren prints it
   };
 
   const restartOffer = (what = "Saved") => el("div", { class: "notice ok" },
@@ -940,6 +1048,15 @@ async function settingsPage(root) {
     } catch (e) { alert(e.message); }
   };
 
+  const live = res.live_status;
+  const liveBox = el("input", { type: "checkbox", checked: live.on });
+  const saveLive = async () => {
+    try {
+      await api("PUT", "/api/settings", { discord_live_status: liveBox.checked });
+      toast(liveBox.checked ? "Live status on" : "Live status off");
+      settingsPage(root);
+    } catch (e) { alert(e.message); }
+  };
   const urlInput = el("input", { placeholder: "https://discord.com/api/webhooks/…", autocomplete: "off" });
   const save = async (serverId, input) => {
     const path = serverId ? `/api/servers/${serverId}/webhook` : "/api/notify";
@@ -1026,7 +1143,13 @@ async function settingsPage(root) {
       el("div", { class: "buttons" },
         el("button", { class: "primary", onclick: saveMain }, "Save webhook"),
         n.configured ? el("button", { onclick: () => test(null) }, "Send a test") : null),
-      el("div", { class: "hint" }, `Sent ${n.sent}, failed ${n.failed}, waiting ${n.pending} since Basecamp started.`)),
+      el("div", { class: "hint" }, `Sent ${n.sent}, failed ${n.failed}, waiting ${n.pending} since Basecamp started.`),
+      el("label", { class: "check", style: "margin-top:12px" }, liveBox, "Live status message: keep one message in the channel showing every server's state and join address, edited in place"),
+      el("div", { class: "hint" }, live.on
+        ? (live.error ? el("span", { class: "unverified" }, `Not updated: ${live.error}. Basecamp keeps trying.`)
+          : `${live.has_message ? "Editing its message" : "Posts its message when a server changes"}${live.edits ? ` (${live.edits} edits since Basecamp started)` : ""}. Delete it in Discord and Basecamp posts a new one.`)
+        : "Off. Event messages post either way."),
+      el("div", { class: "buttons" }, el("button", { class: "small", onclick: saveLive }, "Save"))),
     el("details", { class: "card", open: ownCount > 0 },
       el("summary", {}, `Advanced: a webhook per server${ownCount ? ` (${ownCount} set)` : ""}`),
       el("p", { class: "muted" }, "A server's own webhook replaces the main one for that server. Which events post is set in each server's Edit form."),

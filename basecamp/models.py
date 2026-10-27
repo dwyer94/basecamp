@@ -73,6 +73,37 @@ class StopStep(BaseModel):
         return self
 
 
+class StopWarning(BaseModel):
+    """R-25: tell players before a stop, restart or update that Basecamp starts. ``command``
+    is sent (stdin or RCON) at each of ``minutes`` before the stop, with ``{minutes}`` and
+    ``{seconds}`` filled in. No minutes = off (D-61)."""
+
+    action: StopAction = StopAction.STDIN
+    command: str = ""
+    minutes: list[float] = Field(default_factory=list, max_length=6)
+
+    @model_validator(mode="after")
+    def _check(self) -> StopWarning:
+        if self.action is StopAction.CTRL_BREAK:
+            raise ValueError("a stop warning is sent by stdin or rcon")
+        if any(not 0 < m <= 60 for m in self.minutes):
+            raise ValueError("warning minutes must be more than 0 and at most 60")
+        self.minutes = sorted(set(self.minutes), reverse=True)
+        if self.minutes and not self.command.strip():
+            raise ValueError("a stop warning needs a command")
+        return self
+
+    @property
+    def lead_s(self) -> float:
+        return self.minutes[0] * 60 if self.minutes else 0.0
+
+    def text(self, minutes: float) -> str:
+        """The command for ``minutes`` before the stop. Plain replace, so other braces in
+        the command are left alone."""
+        return (self.command.replace("{minutes}", f"{minutes:g}")
+                .replace("{seconds}", str(round(minutes * 60))))
+
+
 # R-22: used when a server has no recipe. Kill always follows the last step.
 DEFAULT_STOP_RECIPE: tuple[StopStep, ...] = (
     StopStep(action=StopAction.CTRL_BREAK, wait_s=30),
@@ -106,6 +137,7 @@ class ServerConfig(BaseModel):
     ready_after_s: float = Field(default=15.0, ge=0)
     min_free_ram_mb: int = Field(default=0, ge=0)
     stop_recipe: list[StopStep] = Field(default_factory=list)
+    stop_warning: StopWarning | None = None  # R-25: warn players first (None = off)
     notes: str = ""
     template_id: str = ""  # the game template it was made from, if any (R-13)
     backup_every_h: float = Field(default=0, ge=0, le=24 * 30)  # R-50; 0 = no schedule

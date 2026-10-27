@@ -11,12 +11,21 @@ import pytest
 
 from basecamp import notify
 from basecamp.backups import BackupError, Backups
-from basecamp.models import ServerKind, ServerState
+from basecamp.models import ServerKind, ServerState, StopAction, StopWarning
 from basecamp.notify import Notifier
 from basecamp.settings import Settings
-from basecamp.steam import Kind, SteamError, SteamRunner, installed_build, steam_command
+from basecamp.steam import (
+    Kind,
+    SteamError,
+    SteamRunner,
+    branch_build,
+    check_command,
+    installed_build,
+    parse_app_info,
+    steam_command,
+)
 from basecamp.supervisor import Supervisor
-from tests.conftest import REPO, console_text, fake_config, wait_for
+from tests.conftest import REPO, console_text, fake_config, stop_everything, wait_for
 
 FAKE_STEAMCMD = REPO / "tools" / "fake_steamcmd.py"
 APP_ID = 2394010
@@ -38,10 +47,7 @@ def fake_env(monkeypatch, tmp_path: Path) -> None:
 def ssup(store, steam_settings) -> Iterator[Supervisor]:
     sup = Supervisor(store, steam_settings)
     yield sup
-    for server in store.list_servers():
-        if sup.state(server.id) in (ServerState.STARTING, ServerState.RUNNING):
-            sup.kill(server.id)
-    sup.detach()
+    stop_everything(sup, store)
 
 
 @pytest.fixture
@@ -335,3 +341,141 @@ def test_update_over_the_api(store, steam_settings, tmp_path, monkeypatch):
     finally:
         app.state.steam.close()
         sup.detach()
+
+
+# -- build checks and the update-available badge (R-34, D-65) ------------------------------
+
+
+APP_INFO = """AppID : 2394010, change number : 1/0, last change : Mon Oct 26 10:00:00 2026
+"2394010"
+{
+	"common" { "name" "Palworld \\"Dedicated\\" Server" }
+	"depots"
+	{
+		"branches"
+		{
+			"Public" { "buildid" "20000001" "description" "a {brace} in a string" }
+			"beta" { "buildid" "20000002" }
+			"broken" { "timeupdated" "1" }
+		}
+	}
+}
+"""
+
+
+def test_parse_app_info():
+    info = parse_app_info("Loading Steam API...OK\n" + APP_INFO, APP_ID)
+    assert info["common"]["name"] == 'Palworld \\"Dedicated\\" Server'
+    assert branch_build(info, "public") == "20000001"
+    assert branch_build(info, "beta") == "20000002"
+    assert branch_build(info, "broken") is None and branch_build(info, "nope") is None
+    assert parse_app_info(APP_INFO, 99) is None and branch_build(None, "public") is None
+    assert check_command(Settings.load(Path("x"), steamcmd_path="C:\\s\\steamcmd.exe"),
+                         APP_ID) == ["C:\\s\\steamcmd.exe", "+login", "anonymous",
+                                     "+app_info_update", "1", "+app_info_print",
+                                     str(APP_ID), "+quit"]
+
+
+def test_check_finds_an_update_and_never_counts_as_busy(store, ssup, runner, tmp_path,
+                                                        monkeypatch, steam_settings):
+    server = steam_server(store, tmp_path)  # build 1500; the fake says Steam has 1001
+    view = runner.view(server)
+    assert view["latest"] is None and view["update_available"] is None
+    assert runner.check(server.id, "me") is True
+    assert runner.check(server.id) is False  # one queued at a time
+    assert runner.job(server.id) is None and not runner.busy(server.id)
+    assert runner.wait_idle(30)
+    view = runner.view(server)
+    assert view["latest"]["build_id"] == "1001" and view["latest"]["branch"] == "public"
+    assert view["update_available"] is True and not view["checking"]
+
+    monkeypatch.setenv("FAKE_STEAMCMD_LATEST", "1500")
+    runner.check(server.id)
+    assert runner.wait_idle(30)
+    assert runner.view(server)["update_available"] is False
+    # Kept across a Basecamp restart.
+    again = SteamRunner(store, ssup, steam_settings, Backups(store, ssup, steam_settings))
+    try:
+        assert again.view(server)["latest"]["build_id"] == "1500"
+    finally:
+        again.close()
+
+
+@pytest.mark.parametrize("how", ["branch", "steamcmd fails"])
+def test_a_failed_check_is_unknown_not_an_error(store, runner, tmp_path, monkeypatch, how):
+    if how == "branch":  # the fake lists public and beta only
+        server = steam_server(store, tmp_path, steam_beta="fail")
+    else:
+        server = steam_server(store, tmp_path)
+        monkeypatch.setenv("FAKE_STEAMCMD_MODE", "fail")
+    runner.check(server.id)
+    assert runner.wait_idle(30)
+    view = runner.view(server)
+    assert view["latest"]["build_id"] is None and view["latest"]["error"]
+    assert view["update_available"] is None
+    assert view["last"] is None  # a check isn't an install or update run
+    # Another branch or app makes the old answer irrelevant.
+    other = store.update_server(server.id, server.model_copy(update={"steam_beta": "beta"}))
+    assert runner.view(other)["latest"] is None
+
+
+def test_check_due_only_for_installed_servers_and_when_old(store, runner, tmp_path,
+                                                           steam_settings):
+    installed = steam_server(store, tmp_path, "inst")
+    steam_server(store, tmp_path, "empty", installed=False)
+    store.add_server(fake_config("custom"))
+    assert runner.check_due() == [installed.id]
+    assert runner.wait_idle(30)
+    assert runner.check_due() == []  # checked just now
+    object.__setattr__(steam_settings, "steam_check_h", 0.0)
+    assert runner.check_due() == []  # 0 = only by hand
+
+
+def test_check_over_the_api(store, steam_settings, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from basecamp.api.app import create_app
+    from tests.test_api import ADMIN, AS_FRIEND, BASE
+
+    web = dataclasses.replace(steam_settings, admin_logins=(ADMIN,))
+    sup = Supervisor(store, web)
+    app = create_app(store, sup, web)
+    server = steam_server(store, tmp_path)
+    custom = store.add_server(fake_config("custom"))
+    try:
+        with TestClient(app, base_url=BASE, client=("127.0.0.1", 50123)) as c:
+            path = f"/api/servers/{server.id}/steam/check"
+            assert c.post(path, headers=AS_FRIEND).status_code == 403
+            assert c.post(f"/api/servers/{custom.id}/steam/check").status_code == 409
+            assert c.post(path).status_code == 202
+            assert app.state.steam.wait_idle(30)
+            steam = c.get(f"/api/servers/{server.id}").json()["steam"]
+            assert steam["update_available"] is True and steam["latest"]["build_id"] == "1001"
+            assert "steam.check" in [e["action"] for e in c.get("/api/audit").json()]
+    finally:
+        app.state.steam.close()
+        sup.detach()
+
+
+def test_update_warns_players_and_cancel_during_the_warning(store, ssup, runner, tmp_path):
+    warning = StopWarning(action=StopAction.STDIN, command="say update in {minutes}",
+                          minutes=[1])
+    server = steam_server(store, tmp_path, stop_warning=warning, ready_after_s=1)
+    ssup.start(server.id)
+    wait_running(ssup, server.id)
+    runner.enqueue(server.id, Kind.UPDATE, "me")
+    wait_for(lambda: ssup.counting_down(server.id), timeout=20)
+    assert runner.view(server)["job"]["phase"] == "warning"
+    assert ssup.status(server.id).warning["kind"] == "update"
+    wait_for(lambda: "say update in 1" in console_text(ssup, server.id))
+    assert runner.cancel(server.id)
+    assert runner.wait_idle(30)
+    assert ssup.state(server.id) is ServerState.RUNNING  # left running, nothing changed
+    assert store.last_steam_run(server.id).result == "cancelled"
+
+    runner.enqueue(server.id, Kind.UPDATE, "me")
+    wait_for(lambda: ssup.counting_down(server.id), timeout=20)
+    assert ssup.stop_now(server.id)  # skip the rest: the update goes ahead
+    assert runner.wait_idle(60)
+    assert store.last_steam_run(server.id).result == "ok"
+    wait_running(ssup, server.id)

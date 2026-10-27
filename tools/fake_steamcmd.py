@@ -18,6 +18,11 @@ name (so the browser can try each one by setting the server's beta branch), else
                 the next run clears the marker and does "ok"
     hang        some progress, then stops responding (for the timeout and cancel)
 
+A build check (``+login anonymous +app_info_update 1 +app_info_print <appid> +quit``)
+prints app info with branches ``public`` (build ``FAKE_STEAMCMD_LATEST``, default 1001) and
+``beta`` (2000). Any other branch isn't listed, so a server on the ``fail`` branch checks as
+"unknown". ``FAKE_STEAMCMD_MODE=fail`` makes the check print an error and exit 8.
+
 ``FAKE_STEAMCMD_DELAY`` is the pause between progress lines (default 0.3 s).
 ``FAKE_STEAMCMD_STATE`` is the self-update marker file (default in the temp folder).
 """
@@ -102,7 +107,62 @@ def progress(delay: float, stop_at: float = 100.0) -> None:
     say(f" Update state (0x81) verifying update, progress: 100.00 ({total} / {total})")
 
 
+APP_INFO = """\
+"{app}"
+{{
+	"common"
+	{{
+		"name"		"Fake Dedicated Server {app}"
+		"type"		"Tool"
+	}}
+	"depots"
+	{{
+		"1006"
+		{{
+			"manifests"
+			{{
+				"public"
+				{{
+					"gid"		"123"
+				}}
+			}}
+		}}
+		"branches"
+		{{
+			"public"
+			{{
+				"buildid"		"{latest}"
+				"timeupdated"		"1790000000"
+			}}
+			"beta"
+			{{
+				"buildid"		"2000"
+				"description"		"Beta {{with braces}}"
+			}}
+		}}
+	}}
+}}"""
+
+
+def app_info(app: str, mode: str) -> int:
+    banner()
+    say("Connecting anonymously to Steam Public...OK")
+    say("Waiting for client config...OK")
+    say("Waiting for user info...OK")
+    if mode == "fail":
+        say("ERROR! Failed to request AppInfo update, not online or not logged in to Steam.")
+        return 8
+    latest = os.environ.get("FAKE_STEAMCMD_LATEST", "1001")
+    say(f"AppID : {app}, change number : 28000000/0, last change : Mon Oct 26 10:00:00 2026")
+    say(APP_INFO.format(app=app, latest=latest))
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if "+app_info_print" in argv:
+        i = argv.index("+app_info_print")
+        return app_info(argv[i + 1] if i + 1 < len(argv) else "",
+                        os.environ.get("FAKE_STEAMCMD_MODE", ""))
     args = parse(argv)
     delay = float(os.environ.get("FAKE_STEAMCMD_DELAY", "0.3"))
     mode = os.environ.get("FAKE_STEAMCMD_MODE", "")

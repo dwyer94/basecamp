@@ -20,6 +20,7 @@
     {"action": "rcon", "command": "Shutdown 10 Server is shutting down", "wait_s": 60},
     {"action": "ctrl_break", "wait_s": 30}
   ],
+  "stop_warning": {"action": "rcon", "command": "Broadcast Server_restarting_in_{minutes}_min", "minutes": []},
   "config_files": ["Pal\\Saved\\Config\\WindowsServer\\PalWorldSettings.ini"],
   "save_dir": "Pal\\Saved\\SaveGames",
   "rcon_port": 25575,
@@ -31,5 +32,5 @@
     "https://docs.palworldgame.com/settings-and-operation/configuration",
     "https://steamdb.info/app/2394010/"
   ],
-  "unverified": ["real_exe_name", "ready_pattern", "stop_recipe", "ports"]
+  "unverified": ["real_exe_name", "ready_pattern", "stop_recipe", "ports", "stop_warning"]
 }

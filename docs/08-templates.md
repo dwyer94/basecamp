@@ -32,6 +32,7 @@ Paths are relative to the server's **install folder**, unless they start with a 
 | `ready_pattern` | | Text in the output that means the server is up, e.g. `"Running Palworld dedicated server on"`. Plain text, not a regex |
 | `ready_after_s` | | With no ready line (or until it shows), the server counts as Running after this many seconds. Default 60 |
 | `stop_recipe` | | Steps for a graceful stop, see below. Empty = Ctrl+Break, wait 30 s, kill |
+| `stop_warning` | | A command that tells players a stop is coming, see below. Optional |
 | `config_files` | | Files the admin may edit from the page (Phase 5) |
 | `save_dir` | | The folder to back up (Phase 4) |
 | `rcon_port` | | RCON port, if the game has RCON (password goes in `secrets.toml`, never here) |
@@ -57,6 +58,20 @@ Each step does something, then waits up to `wait_s` seconds for the server to ex
 - `stdin`: types `command` into the server's console. Only for games that read commands from their console window.
 - `rcon`: sends `command` over RCON. Until Basecamp's RCON client is built these steps are skipped (no wait), so always end with a `ctrl_break` step.
 - `ctrl_break`: Ctrl+Break, like pressing Ctrl+C in the server's console window. Most dedicated servers save and quit on it, but check.
+
+### Stop warning
+
+Before a stop, restart or update started from Basecamp (never a crash restart), Basecamp can tell players (R-25, D-61). The command goes out at each of `minutes` before the stop, with `{minutes}` and `{seconds}` filled in:
+
+```json
+"stop_warning": {"action": "rcon", "command": "announce Server restarting in {minutes} min", "minutes": []}
+```
+
+- `action`: `stdin` or `rcon`, as in the stop recipe.
+- `command`: the game's broadcast or announce command. Other braces are left as they are.
+- `minutes`: the lead time and reminders, e.g. `[5, 1]`. Leave it empty in a template: the warning is then off until the admin types the minutes into the server's form, so a game's default never delays anyone's stop by surprise.
+
+If the warning can't be sent (no stdin after adoption, RCON not available), the countdown ends and the stop goes ahead at once. Until Basecamp's RCON client is built, `rcon` warnings are skipped like `rcon` stop steps. Put `stop_warning` in `unverified` until you've seen the message in game.
 
 ## Finding the facts for a new game
 
@@ -93,8 +108,8 @@ Researched from official guides where they exist (links in each file's `docs`), 
 
 | Game | App ID | Unverified |
 |---|---|---|
-| Palworld | 2394010 | `real_exe_name` (Shipping-Cmd vs older Test-Cmd), `ready_pattern`, `stop_recipe` (does Ctrl+Break save?), `ports` (query 27015) |
+| Palworld | 2394010 | `real_exe_name` (Shipping-Cmd vs older Test-Cmd), `ready_pattern`, `stop_recipe` (does Ctrl+Break save?), `ports` (query 27015), `stop_warning` (RCON `Broadcast`; spaces in it are reported to cut the message, so it uses `_`) |
 | Enshrouded | 2278520 | `ports`, `join_port_label` (join on the query port?), `stop_recipe`, `save_dir` |
-| V Rising | 1829350 | `ready_pattern` (none found), `stop_recipe`, `ports` (docs examples use 27015/27016, defaults 9876/9877) |
+| V Rising | 1829350 | `ready_pattern` (none found), `stop_recipe`, `ports` (docs examples use 27015/27016, defaults 9876/9877), `stop_warning` (RCON `announce`) |
 | RuneScape: Dragonwilds | 4019830 | `real_exe_name`, `args`, `log_file`, `ready_pattern`, `stop_recipe`, `config_files`, `save_dir` (Jagex's guide and the wiki disagree on install folder vs `%LOCALAPPDATA%`) |
 | Windrose | 4129620 | `real_exe_name`, `ports` (only with direct connection; default is invite codes), `log_file`, `ready_pattern`, `stop_recipe`, `config_files` (`ServerDescription.json` in the install folder or `R5\`) |

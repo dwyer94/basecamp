@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import mimetypes
 import sqlite3
 import threading
 from collections.abc import AsyncIterator, Callable
@@ -33,6 +34,7 @@ from basecamp.configs import ConfigFiles
 from basecamp.console import ConsoleLine
 from basecamp.crashes import CrashPolicy
 from basecamp.db import Store
+from basecamp.livestatus import LiveStatus
 from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig, ServerState
 from basecamp.notify import Notifier
 from basecamp.selfupdate import SelfUpdater, UpdateError
@@ -46,6 +48,7 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 STATUS_INTERVAL_S = 5.0  # uptime, CPU and RAM refresh on the status WebSocket
 _UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 _CONSOLE_QUEUE_MAX = 5000  # a console client this far behind is dropped
+mimetypes.add_type("application/manifest+json", ".webmanifest")  # add to home screen (R-72)
 
 
 class CommandIn(BaseModel):
@@ -76,6 +79,7 @@ class SettingsIn(BaseModel):
     default_backup_keep: int | None = Field(default=None, ge=1, le=1000)
     update_beta: bool | None = None
     update_auto_hour: int | None = Field(default=None, ge=-1, le=23)  # -1 = off
+    discord_live_status: bool | None = None  # R-63
     # Also give every existing server the backup defaults.
     apply_backup_defaults: bool = False
 
@@ -139,7 +143,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                crashes: CrashPolicy | None = None,
                steam: SteamRunner | None = None,
                config_files: ConfigFiles | None = None,
-               updater: SelfUpdater | None = None) -> FastAPI:
+               updater: SelfUpdater | None = None,
+               live: LiveStatus | None = None) -> FastAPI:
     """The services are made by main.run; tests may leave them out (no crash restarts)."""
     hub = _Hub()
     cpu = views.CpuSampler()
@@ -148,7 +153,9 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     steam = steam or SteamRunner(store, sup, settings, backups, notifier)
     config_files = config_files or ConfigFiles(settings)
     updater = updater or SelfUpdater(settings, store, notifier)
+    live = live or LiveStatus(settings, store, sup)
     sup.add_listener(hub.poke)
+    sup.add_change_listener(hub.poke)
     steam.add_listener(hub.poke)
 
     @contextlib.asynccontextmanager
@@ -320,21 +327,33 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             raise HTTPException(500, str(e)) from None
         return {"pid": result.pid, "warnings": result.warnings}
 
+    def not_counting_down(server_id: int) -> None:
+        if sup.counting_down(server_id):
+            raise HTTPException(409, "It's already counting down to a stop; use Stop now or "
+                                     "Kill")
+
     @app.post("/api/servers/{server_id}/stop", status_code=202)
-    def stop(server_id: int, w: Admin) -> dict:
+    def stop(server_id: int, w: Admin, now: bool = False) -> dict:
+        """Stop, after the server's stop warning (R-25). ``now`` skips the warning, and
+        during a countdown (of a stop, restart or update) skips the rest of it."""
         server = get_server(server_id)
+        if now and sup.stop_now(server_id):
+            audit(w, "stop.now", server_id, server.name)
+            return {"accepted": True, "skipped_warning": True}
         not_updating(server_id)
-        audit(w, "stop", server_id, server.name)
+        not_counting_down(server_id)
+        audit(w, "stop", server_id, server.name + (" (no warning)" if now else ""))
         cancel_restart(server_id)
-        in_background("stop", server_id, lambda: sup.stop(server_id))
+        in_background("stop", server_id, lambda: sup.stop(server_id, warn=not now))
         return {"accepted": True}
 
     @app.post("/api/servers/{server_id}/restart", status_code=202)
-    def restart(server_id: int, w: Admin) -> dict:
+    def restart(server_id: int, w: Admin, now: bool = False) -> dict:
         server = get_server(server_id)
         not_updating(server_id)
-        audit(w, "restart", server_id, server.name)
-        in_background("restart", server_id, lambda: sup.restart(server_id))
+        not_counting_down(server_id)
+        audit(w, "restart", server_id, server.name + (" (no warning)" if now else ""))
+        in_background("restart", server_id, lambda: sup.restart(server_id, warn=not now))
         return {"accepted": True}
 
     @app.post("/api/servers/{server_id}/kill", status_code=202)
@@ -383,6 +402,18 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     @app.post("/api/servers/{server_id}/install", status_code=202)
     def install(server_id: int, w: Admin) -> dict:
         return queue_steam(server_id, Kind.INSTALL, w)
+
+    @app.post("/api/servers/{server_id}/steam/check", status_code=202)
+    def check_build(server_id: int, w: Admin) -> dict:
+        """Ask Steam for the latest build (R-34), through the SteamCMD queue."""
+        server = get_server(server_id)
+        try:
+            queued = steam.check(server_id, w.label)
+        except SteamError as e:
+            raise HTTPException(409, str(e)) from None
+        if queued:
+            audit(w, "steam.check", server_id, server.name)
+        return {"accepted": True, "queued": queued}
 
     @app.post("/api/servers/{server_id}/steam/cancel")
     def cancel_steam(server_id: int, w: Admin) -> dict:
@@ -454,6 +485,22 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         return {"restored": name, "safety_backup": safety.name if safety else None,
                 "removed": removed}
 
+    @app.get("/api/servers/{server_id}/backups/{name}/download")
+    def download_backup(server_id: int, name: str, w: Admin) -> FileResponse:
+        """The backup zip itself (R-54), streamed from disk. Only names the backups folder
+        lists for this server; nothing else can be asked for (D-64)."""
+        get_server(server_id)
+        try:
+            path = backups.path(server_id, name)
+        except (BackupError, FileNotFoundError):
+            raise HTTPException(404, "No such backup") from None
+        folder = settings.server_backup_dir(server_id).resolve()
+        if path.resolve().parent != folder:  # a link swapped in by hand
+            raise HTTPException(404, "No such backup")
+        audit(w, "backup.download", server_id, name)
+        return FileResponse(path, media_type="application/zip", filename=name,
+                            headers={"Cache-Control": "no-store"})
+
     @app.delete("/api/servers/{server_id}/backups/{name}", status_code=204)
     def delete_backup(server_id: int, name: str, w: Admin) -> None:
         get_server(server_id)
@@ -483,6 +530,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         except configs.Conflict as e:
             raise HTTPException(409, str(e)) from None
         except configs.ConfigError as e:
+            if action == "config.save":  # bad JSON, a character the encoding can't hold
+                audit(w, "config.invalid", server_id, f"{name}: {e}")
             raise HTTPException(400, str(e)) from None
         audit(w, action, server_id, f"{name}{detail}")
         result["running"] = sup.state(server_id) in (ServerState.STARTING, ServerState.RUNNING)
@@ -525,7 +574,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                 "config_copies_keep": settings.config_copies_keep,
                 "backups_dir": str(settings.backups_dir),
                 "settings_file": str(settings.data_dir / "settings.toml"),
-                "notify": notify_info(), "update": updater.view()}
+                "notify": notify_info(), "update": updater.view(),
+                "live_status": live.view()}
 
     @app.get("/api/settings")
     def read_settings(w: Admin) -> dict:
@@ -558,6 +608,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                   f"{settings.default_backup_keep}: {len(updated)} server(s)")
         if changed or updated:
             hub.poke()  # join addresses on every page
+            live.poke()  # and in the live status message
         return {**settings_info(), "changed": sorted(changed), "servers_updated": updated}
 
     # -- Discord (R-60..R-62) ---------------------------------------------------------
@@ -586,6 +637,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         url = check_webhook(body.webhook_url)
         notify.set_webhook(settings, url)
         audit(w, "notify.webhook", None, "set" if url else "removed")  # never the URL
+        live.poke()  # a new webhook gets its own live status message
         return notify_info()
 
     @app.put("/api/servers/{server_id}/webhook")
@@ -815,4 +867,5 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     app.state.notifier = notifier
     app.state.steam = steam
     app.state.configs = config_files
+    app.state.live = live
     return app

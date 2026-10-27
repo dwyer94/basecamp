@@ -16,6 +16,7 @@ from basecamp.api.app import create_app
 from basecamp.backups import Backups
 from basecamp.crashes import CrashPolicy
 from basecamp.db import Store
+from basecamp.livestatus import LiveStatus
 from basecamp.logs import setup_logging
 from basecamp.notify import Notifier
 from basecamp.selfupdate import SelfUpdater
@@ -41,6 +42,7 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
     crashes = CrashPolicy(store, supervisor, settings, notifier)
     backups = Backups(store, supervisor, settings, notifier.server_event)
     steam = SteamRunner(store, supervisor, settings, backups, notifier)
+    live = LiveStatus(settings, store, supervisor)
     adopted = supervisor.adopt_orphans()
     if adopted:
         log.info("Adopted %d running server(s)", len(adopted))
@@ -52,10 +54,12 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
         notifier.post(":arrow_forward: Basecamp started after the PC restarted"
                       + (f"; starting {', '.join(names)}" if names else ""))
     backups.start_scheduler()
+    steam.start_scheduler()
+    live.poke()  # the servers as they are after adopting
     updater = SelfUpdater(settings, store, notifier, stop)
     updater.start()
     app = create_app(store, supervisor, settings, notifier=notifier, backups=backups,
-                     crashes=crashes, steam=steam, updater=updater)
+                     crashes=crashes, steam=steam, updater=updater, live=live)
     config = uvicorn.Config(app, host=settings.host,
                             port=settings.port, log_config=None, access_log=False,
                             ws_ping_interval=20,
@@ -82,6 +86,7 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
         backups.stop_scheduler()
         updater.close()
         steam.close()
+        live.close()
         notifier.close()
         supervisor.detach()
         store.close()

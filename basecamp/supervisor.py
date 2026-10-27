@@ -19,6 +19,11 @@ Seams for later phases:
 - ``hold`` keeps actions off a server while a restore runs.
 - ``updating`` holds it for a SteamCMD install or update (basecamp/steam.py): stop through
   the server's own stop recipe, Updating while SteamCMD runs, then start again if asked.
+
+A stop, restart or update that Basecamp starts can warn players first (R-25, D-61): the
+server's ``stop_warning`` command goes out at each of its minutes before the stop, while the
+action holds the server's lock and the server stays Running. ``stop_now`` skips the rest of
+the countdown; ``kill`` ends it and the action with it. Crash restarts never warn.
 """
 
 from __future__ import annotations
@@ -56,6 +61,7 @@ from basecamp.settings import Settings
 log = logging.getLogger(__name__)
 
 Listener = Callable[[int, ServerState, ServerState], None]
+ChangeListener = Callable[[int], None]
 RconSender = Callable[[Server, str], None]
 
 
@@ -101,6 +107,23 @@ class ServerStatus:
     has_console: bool  # its host is up: output and stdin commands work
     rss_bytes: int | None
     last_exit_code: int | None
+    warning: dict | None = None  # a stop countdown: {"kind", "stop_at"} (R-25)
+
+
+@dataclass
+class _Countdown:
+    """A stop warning counting down (R-25)."""
+
+    kind: str  # stop, restart, update
+    stop_at: float  # epoch seconds
+    skip: threading.Event = field(default_factory=threading.Event)  # Stop now, or Kill
+    killed: bool = False
+
+    def as_dict(self) -> dict:
+        return {"kind": self.kind, "stop_at": self.stop_at}
+
+
+_WARN_VERB = {"stop": "Stopping", "restart": "Restarting", "update": "Updating"}
 
 
 class _Run:
@@ -151,6 +174,7 @@ class _Slot:
         self.run: _Run | None = None
         self.console = console
         self.last_exit_code: int | None = None
+        self.countdown: _Countdown | None = None
 
 
 def install_host_script(settings: Settings) -> Path:
@@ -176,6 +200,7 @@ class Supervisor:
         self._mu = threading.RLock()
         self._slots: dict[int, _Slot] = {}
         self._listeners: list[Listener] = []
+        self._change_listeners: list[ChangeListener] = []
         settings.ensure_dirs()
         self._host_script = install_host_script(settings)
         self._host_python = procs.host_python()
@@ -184,6 +209,11 @@ class Supervisor:
 
     def add_listener(self, fn: Listener) -> None:
         self._listeners.append(fn)
+
+    def add_change_listener(self, fn: ChangeListener) -> None:
+        """Called with the server id when something the page shows changes other than its
+        state (a stop countdown starting or ending)."""
+        self._change_listeners.append(fn)
 
     def state(self, server_id: int) -> ServerState:
         return self._slot(server_id).state
@@ -194,7 +224,7 @@ class Supervisor:
     def status(self, server_id: int) -> ServerStatus:
         slot = self._slot(server_id)
         with self._mu:
-            run, state = slot.run, slot.state
+            run, state, countdown = slot.run, slot.state, slot.countdown
         rss = None
         if run is not None and run.game is not None:
             with contextlib.suppress(psutil.Error):
@@ -209,6 +239,7 @@ class Supervisor:
             has_console=bool(run and run.host is not None),
             rss_bytes=rss,
             last_exit_code=slot.last_exit_code,
+            warning=countdown.as_dict() if countdown else None,
         )
 
     # -- actions ----------------------------------------------------------------
@@ -218,26 +249,51 @@ class Supervisor:
         slot = self._slot(server_id)
         if slot.state is ServerState.UPDATING:  # don't wait out a SteamCMD run for the lock
             raise InvalidState(f"{server.name} is updating")
+        if slot.countdown is not None:  # nor a stop warning's countdown
+            raise InvalidState(f"{server.name} is about to stop")
         with slot.lock:
             return self._start_locked(server, slot)
 
-    def stop(self, server_id: int) -> StopResult:
+    def stop(self, server_id: int, *, warn: bool = False) -> StopResult:
+        """Graceful stop. ``warn``: send the server's stop warning first (R-25)."""
         server = self._store.get_server(server_id)
         slot = self._slot(server_id)
         with slot.lock:
+            if warn and not self._warn(server, slot, "stop"):
+                return StopResult(graceful=False, killed=True, ended_by="kill")
             return self._stop_locked(server, slot)
 
-    def restart(self, server_id: int) -> StartResult:
+    def restart(self, server_id: int, *, warn: bool = False) -> StartResult | None:
+        """Stop, then start. None if it was killed during the stop warning: a kill means
+        down, so it isn't started again."""
         server = self._store.get_server(server_id)
         slot = self._slot(server_id)
         with slot.lock:
+            if warn and not self._warn(server, slot, "restart"):
+                return None
             self._stop_locked(server, slot)
             return self._start_locked(server, slot)
 
+    def counting_down(self, server_id: int) -> bool:
+        return self._slot(server_id).countdown is not None
+
+    def stop_now(self, server_id: int) -> bool:
+        """Skip the rest of a stop warning's countdown: the stop (restart, update) goes
+        ahead at once. False if none is counting down."""
+        countdown = self._slot(server_id).countdown
+        if countdown is None:
+            return False
+        countdown.skip.set()
+        return True
+
     def kill(self, server_id: int) -> StopResult:
         """Kill at once, no recipe. Doesn't wait for the server's lock, so it also ends a
-        stop that is stuck waiting on a recipe step."""
+        stop that is stuck waiting on a recipe step, or a stop warning's countdown."""
         slot = self._slot(server_id)
+        countdown = slot.countdown
+        if countdown is not None:
+            countdown.killed = True
+            countdown.skip.set()
         run = slot.run
         if run is None:
             return StopResult(graceful=True, killed=False, ended_by="not running")
@@ -550,27 +606,8 @@ class Supervisor:
 
     def _do_step(self, server: Server, slot: _Slot, run: _Run, step: StopStep) -> bool:
         """Carry out one stop step. False if it couldn't be done (so don't wait on it)."""
-        if step.action is StopAction.STDIN:
-            if run.host is not None:
-                try:
-                    run.host.send_line(step.command)
-                    return True
-                except HostError as e:
-                    log.warning("%s: stdin step failed: %s", server.name, e)
-            slot.console.system(f"Skipped stop step '{step.command}': no stdin",
-                                to_file=run.host is None)
-            return False
-        if step.action is StopAction.RCON:
-            if self._rcon_sender is None:
-                self._note(slot, run, f"Skipped stop step '{step.command}': RCON not available")
-                return False
-            try:
-                self._rcon_sender(server, step.command)
-            except Exception as e:
-                self._note(slot, run, f"RCON '{step.command}' failed: {e}")
-                return False
-            self._note(slot, run, f"(rcon) {step.command}")
-            return True
+        if step.action is not StopAction.CTRL_BREAK:
+            return self._send(server, slot, run, step.action, step.command, "stop step")
         self._note(slot, run, "Sending Ctrl+Break")
         if run.host is not None:
             try:
@@ -579,6 +616,81 @@ class Supervisor:
             except HostError as e:
                 log.warning("%s: Ctrl+Break through the host failed: %s", server.name, e)
         return run.pid is not None and procs.send_ctrl_break(run.pid)
+
+    def _send(self, server: Server, slot: _Slot, run: _Run, action: StopAction, command: str,
+              what: str) -> bool:
+        """Send a stop step's or warning's command by stdin or RCON. False (with a note in
+        the console) if it couldn't be sent."""
+        if action is StopAction.STDIN:
+            if run.host is not None:
+                try:
+                    run.host.send_line(command)  # the host echoes it into the console
+                    return True
+                except HostError as e:
+                    log.warning("%s: stdin %s failed: %s", server.name, what, e)
+            slot.console.system(f"Skipped {what} '{command}': no stdin",
+                                to_file=run.host is None)
+            return False
+        if self._rcon_sender is None:
+            self._note(slot, run, f"Skipped {what} '{command}': RCON not available")
+            return False
+        try:
+            self._rcon_sender(server, command)
+        except Exception as e:
+            self._note(slot, run, f"RCON '{command}' failed: {e}")
+            return False
+        self._note(slot, run, f"(rcon) {command}")
+        return True
+
+    def _warn(self, server: Server, slot: _Slot, kind: str,
+              abort: threading.Event | None = None) -> bool:
+        """The stop warning (R-25, D-61), with the server's lock held: send the warning at
+        each of its minutes before the stop, then wait for the stop time. Only for a
+        Running server that has a warning. A warning that can't be sent ends the countdown
+        and the stop goes ahead, as with a stop step that can't be done. False if the
+        action should not go ahead: killed meanwhile, or ``abort`` set (update cancelled)."""
+        warning = server.stop_warning
+        run = slot.run
+        if (warning is None or not warning.minutes or run is None
+                or slot.state is not ServerState.RUNNING):
+            return True
+        countdown = _Countdown(kind, time.time() + warning.lead_s)
+        with self._mu:
+            slot.countdown = countdown
+        self._changed(server.id)
+        self._note(slot, run, f"{_WARN_VERB[kind]} in {warning.minutes[0]:g} min; "
+                              "warning players")
+        log.info("%s: %s in %g min, warning players", server.name, kind, warning.minutes[0])
+
+        def wait_until(when: float) -> bool:  # True: the countdown ends now
+            while time.time() < when:
+                if (countdown.skip.wait(min(0.25, when - time.time())) or run.exited.is_set()
+                        or (abort is not None and abort.is_set())):
+                    return True
+            return countdown.skip.is_set()
+
+        try:
+            for minutes in warning.minutes:
+                if wait_until(countdown.stop_at - minutes * 60):
+                    break
+                if not self._send(server, slot, run, warning.action, warning.text(minutes),
+                                  "warning"):
+                    self._note(slot, run, f"Couldn't warn players; the {kind} goes ahead now")
+                    break
+            else:
+                wait_until(countdown.stop_at)
+        finally:
+            with self._mu:
+                slot.countdown = None
+            self._changed(server.id)
+        if countdown.killed:
+            return False
+        if abort is not None and abort.is_set():
+            self._note(slot, run, f"{kind.capitalize()} cancelled; the server keeps running")
+            return False
+        if countdown.skip.is_set():
+            self._note(slot, run, "Stop now: the rest of the warning is skipped")
+        return True
 
     def _kill_run(self, server_id: int, run: _Run) -> None:
         run.killed = True
@@ -767,6 +879,13 @@ class Supervisor:
             except Exception:
                 log.exception("State listener failed")
 
+    def _changed(self, server_id: int) -> None:
+        for fn in list(self._change_listeners):
+            try:
+                fn(server_id)
+            except Exception:
+                log.exception("Change listener failed")
+
     def _save_state(self) -> None:
         with self._mu:
             data = {}
@@ -812,6 +931,12 @@ class UpdateHold:
         self.state_before = slot.state
         # Starting counts: it was meant to be up, so it comes back after the update.
         self.was_running = slot.state in (ServerState.STARTING, ServerState.RUNNING)
+
+    def warn(self, abort: threading.Event | None = None) -> bool:
+        """The stop warning before the update (R-25). False if the update should not go
+        on: ``abort`` was set (cancelled; the server is left running)."""
+        self._sup._warn(self._server, self._slot, "update", abort)
+        return not (abort is not None and abort.is_set())
 
     def stop(self) -> StopResult:
         """Stop it with its stop recipe (kill at the end, as for any stop) and go to

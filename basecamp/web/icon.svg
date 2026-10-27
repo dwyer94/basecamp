@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Basecamp: a tent under a mountain. Same shapes as tools/make_icons.py. -->
+  <rect width="100" height="100" rx="18" fill="#2357d9"/>
+  <polygon points="14,78 44,26 74,78" fill="#7ca0f0"/>
+  <polygon points="36,40 44,26 52,40 47,37 44,41 41,37" fill="#ffffff"/>
+  <polygon points="40,78 64,42 88,78" fill="#ffffff"/>
+  <polygon points="58,78 64,60 70,78" fill="#2357d9"/>
+</svg>

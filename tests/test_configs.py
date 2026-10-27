@@ -19,7 +19,7 @@ from basecamp.configs import ConfigFiles, NotAllowed
 from basecamp.models import ServerConfig
 from basecamp.settings import Settings
 from basecamp.supervisor import Supervisor
-from tests.conftest import fake_config, wait_for
+from tests.conftest import fake_config, stop_everything, wait_for
 
 BASE = "http://127.0.0.1:8150"
 PALWORLD_LINE = ("OptionSettings=(Difficulty=None,DayTimeSpeedRate=1.000000,"
@@ -251,10 +251,7 @@ def client(store, settings) -> Iterator[TestClient]:
     with TestClient(app, base_url=BASE, client=("127.0.0.1", 50123)) as c:
         c.sup = sup  # type: ignore[attr-defined]
         yield c
-    for s in store.list_servers():
-        if sup.state(s.id).value in ("starting", "running", "stopping"):
-            sup.kill(s.id)
-    sup.detach()
+    stop_everything(sup, store)
 
 
 def test_api_list_read_save_restore_and_audit(client, server, game):
@@ -281,6 +278,16 @@ def test_api_list_read_save_restore_and_audit(client, server, game):
     actions = [e["action"] for e in client.get(f"/api/audit?server_id={server.id}").json()]
     assert actions.count("config.read") == 2
     assert {"config.save", "config.restore"} <= set(actions)
+
+
+def test_api_bad_json_save_is_refused_and_audited(client, server):
+    loaded = client.get(f"/api/servers/{server.id}/configs/0").json()
+    res = client.put(f"/api/servers/{server.id}/configs/0",
+                     json={"text": '{"name": ', "base_sha256": loaded["sha256"]})
+    assert res.status_code == 400 and "Not valid JSON" in res.json()["detail"]
+    entry = client.get(f"/api/audit?server_id={server.id}").json()[0]
+    assert entry["action"] == "config.invalid"
+    assert entry["detail"].startswith("server.json: Not valid JSON")
 
 
 @pytest.mark.parametrize("path", [

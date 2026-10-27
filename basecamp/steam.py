@@ -18,12 +18,21 @@ An update holds the server's action lock throughout (``Supervisor.updating``):
 
 A first install (R-11) runs the same command into an empty folder of a stopped server.
 Discord gets "update started / finished / failed" through the notifier's ``update`` event.
+Before the stop, the server's stop warning (R-25) counts down while it keeps running.
+
+Build checks (R-34, D-65) go through the same queue, so SteamCMD still runs one at a time:
+``steamcmd +login anonymous +app_info_update 1 +app_info_print <appid> +quit``, reading
+``depots > branches > <branch> > buildid``. They don't touch the server or its lock. Each
+Steam server is checked every ``steam_check_h`` hours and on "Check for update"; the last
+answer is kept in ``<data>\\steam-latest.json``. A failed check means "unknown".
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
+import os
 import queue
 import re
 import subprocess
@@ -64,11 +73,13 @@ class SteamError(Exception):
 class Kind(StrEnum):
     INSTALL = "install"
     UPDATE = "update"
+    CHECK = "check"  # Steam's latest build ID (R-34); no steam_runs row, no server lock
 
 
 class Phase(StrEnum):
     QUEUED = "queued"
     BACKUP = "backup"
+    WARNING = "warning"  # the stop warning's countdown (R-25)
     STOPPING = "stopping"
     STEAMCMD = "steamcmd"
     STARTING = "starting"
@@ -131,6 +142,61 @@ def steam_command(settings: Settings, server: Server) -> list[str]:
     return cmd
 
 
+def check_command(settings: Settings, app_id: int) -> list[str]:
+    exe = settings.steamcmd_exe
+    cmd = [str(exe)]
+    if exe.suffix.lower() == ".py":
+        cmd = [str(procs.host_python()), "-I", str(exe)]
+    return [*cmd, "+login", "anonymous", "+app_info_update", "1",
+            "+app_info_print", str(app_id), "+quit"]
+
+
+_VDF_TOKEN = re.compile(r'"((?:[^"\\]|\\.)*)"|([{}])')
+
+
+def parse_app_info(text: str, app_id: int) -> dict | None:
+    """The ``"<appid>" { ... }`` block of ``app_info_print`` output as nested dicts (keys
+    lower-cased), or None if it isn't there. SteamCMD prints other lines around it."""
+    tokens = [(m[1], m[2]) for m in _VDF_TOKEN.finditer(text)]
+    for i in range(len(tokens) - 1):
+        if tokens[i][0] == str(app_id) and tokens[i + 1][1] == "{":
+            block, _ = _vdf_block(tokens, i + 2)
+            return block
+    return None
+
+
+def _vdf_block(tokens: list[tuple[str | None, str | None]], i: int) -> tuple[dict, int]:
+    out: dict = {}
+    while i < len(tokens):
+        key, brace = tokens[i]
+        if brace == "}":
+            return out, i + 1
+        if key is None:  # a stray "{"
+            i += 1
+            continue
+        if i + 1 < len(tokens) and tokens[i + 1][1] == "{":
+            out[key.lower()], i = _vdf_block(tokens, i + 2)
+        elif i + 1 < len(tokens) and tokens[i + 1][0] is not None:
+            out[key.lower()] = tokens[i + 1][0]
+            i += 2
+        else:
+            i += 1
+    return out, i
+
+
+def branch_build(info: dict | None, branch: str) -> str | None:
+    """``depots > branches > <branch> > buildid``, or None."""
+    try:
+        build = info["depots"]["branches"][branch.lower()]["buildid"]  # type: ignore[index]
+    except (KeyError, TypeError):
+        return None
+    return build if isinstance(build, str) and build.isdigit() else None
+
+
+def _branch(server: Server) -> str:
+    return server.steam_beta.strip() or "public"
+
+
 def _check_steam(server: Server) -> None:
     if server.kind is not ServerKind.STEAM:
         raise SteamError("Only Steam servers can be installed or updated (R-33)")
@@ -163,11 +229,14 @@ class SteamRunner:
         self._running: Job | None = None
         self._listeners: list[Callable[[], None]] = []
         self._closed = False
+        self._latest_path = settings.data_dir / "steam-latest.json"
+        self._latest: dict[str, dict] = self._load_latest()
         stale = store.end_unfinished_steam_runs()
         if stale:
             log.warning("Marked %d SteamCMD run(s) from before the restart interrupted", stale)
         self._thread = threading.Thread(target=self._work, name="steamcmd", daemon=True)
         self._thread.start()
+        self._scheduler: threading.Thread | None = None
 
     # -- queries ----------------------------------------------------------------
 
@@ -181,9 +250,10 @@ class SteamRunner:
 
     def busy(self, server_id: int) -> bool:
         """An install or update has begun on it (queued doesn't count: the server runs
-        as normal until its turn)."""
+        as normal until its turn). A build check never counts."""
         with self._mu:
-            return self._running is not None and self._running.server_id == server_id
+            job = self._running
+            return job is not None and job.server_id == server_id and job.kind is not Kind.CHECK
 
     def jobs(self) -> list[dict]:
         with self._mu:
@@ -196,11 +266,19 @@ class SteamRunner:
         with self._mu:
             job = self._job_locked(server.id)
             job_view = self._as_dict(job) if job is not None else None
+            checking = self._check_locked(server.id) is not None
         last = self._store.last_steam_run(server.id)
         install = Path(server.install_dir) if server.install_dir.strip() else None
         exe = self._settings.steamcmd_exe
+        build = installed_build(server)
+        latest = self.latest(server)
+        known = latest.get("build_id") if latest else None
         return {
-            "build_id": installed_build(server),
+            "build_id": build,
+            # R-34: Steam's build for this app and branch; None = not checked or unknown.
+            "latest": latest,
+            "update_available": None if not (build and known) else build != known,
+            "checking": checking,
             "installed": bool(install and install.is_dir() and any(install.iterdir())),
             "job": job_view,
             "last": _run_view(last) if last else None,
@@ -209,6 +287,15 @@ class SteamRunner:
             "steamcmd": str(exe),
             "steamcmd_found": exe.is_file(),
         }
+
+    def latest(self, server: Server) -> dict | None:
+        """The last build check for the server's current app and branch."""
+        with self._mu:
+            entry = self._latest.get(str(server.id))
+        if (entry is None or entry.get("app_id") != server.steam_app_id
+                or entry.get("branch") != _branch(server)):
+            return None
+        return dict(entry)
 
     def log_text(self, server_id: int, run_id: int) -> str:
         path = self._settings.steam_log_dir(server_id) / f"{run_id}.log"
@@ -249,6 +336,66 @@ class SteamRunner:
         log.info("%s: %s queued by %s (run %d)", server.name, kind, who, run_id)
         self._changed()
         return job
+
+    def check(self, server_id: int, who: str = "") -> bool:
+        """Queue a build check (R-34). False if one is queued already. Raises KeyError (no
+        server) or SteamError (not a Steam server)."""
+        server = self._store.get_server(server_id)
+        if server.kind is not ServerKind.STEAM or not server.steam_app_id:
+            raise SteamError("Only Steam servers with an app ID can be checked")
+        with self._mu:
+            if self._closed:
+                raise SteamError("Basecamp is shutting down")
+            if self._check_locked(server_id) is not None:
+                return False
+            self._queue.append(Job(0, server_id, Kind.CHECK, who))
+            self._wake.notify_all()
+        log.debug("%s: build check queued%s", server.name, f" by {who}" if who else "")
+        self._changed()
+        return True
+
+    def check_due(self) -> list[int]:
+        """Queue a check for every installed Steam server whose last one is older than
+        ``steam_check_h``. Returns the ids queued."""
+        every_s = self._settings.steam_check_h * 3600
+        if every_s <= 0:
+            return []
+        queued = []
+        now = time.time()
+        for server in self._store.list_servers():
+            if server.kind is not ServerKind.STEAM or not server.steam_app_id:
+                continue
+            if installed_build(server) is None:
+                continue
+            latest = self.latest(server)
+            if latest is not None and now - float(latest.get("checked_at", 0)) < every_s:
+                continue
+            with contextlib.suppress(SteamError, KeyError):
+                if self.check(server.id):
+                    queued.append(server.id)
+        return queued
+
+    def start_scheduler(self, first_delay_s: float = 120.0) -> None:
+        """Checks builds every few minutes for servers that are due. The first look waits a
+        bit, so start-on-boot servers get the disk first."""
+
+        def loop() -> None:
+            delay = first_delay_s
+            while True:
+                with self._mu:
+                    if self._closed:
+                        return
+                    self._wake.wait(delay)
+                    if self._closed:
+                        return
+                try:
+                    self.check_due()
+                except Exception:
+                    log.exception("Build check scheduler failed")
+                delay = self._settings.steam_check_poll_s
+
+        self._scheduler = threading.Thread(target=loop, name="steam checks", daemon=True)
+        self._scheduler.start()
 
     def cancel(self, server_id: int) -> bool:
         """Take a queued job off the queue, or stop a running one. A job that is past
@@ -310,13 +457,17 @@ class SteamRunner:
                     return
                 job = self._running = self._queue[0]
             try:
-                self._run_job(job)
+                if job.kind is Kind.CHECK:
+                    self._run_check(job)
+                else:
+                    self._run_job(job)
             except Exception:
-                log.exception("SteamCMD run %d failed", job.run_id)
-                self._store.update_steam_run(job.run_id, result="failed", ended_at=True,
-                                             message="Basecamp error; see basecamp.log")
-                self._sup.console(job.server_id).system(
-                    "The run failed with a Basecamp error; see basecamp.log")
+                log.exception("SteamCMD %s for server %d failed", job.kind, job.server_id)
+                if job.kind is not Kind.CHECK:
+                    self._store.update_steam_run(job.run_id, result="failed", ended_at=True,
+                                                 message="Basecamp error; see basecamp.log")
+                    self._sup.console(job.server_id).system(
+                        "The run failed with a Basecamp error; see basecamp.log")
             finally:
                 with self._mu:
                     self._running = None
@@ -372,6 +523,13 @@ class SteamRunner:
             if job.cancel.is_set():
                 self._end(job, server, "cancelled", "Cancelled before anything changed")
                 return
+            if updating:
+                job.phase = Phase.WARNING
+                self._changed()
+                if not hold.warn(job.cancel):
+                    self._end(job, server, "cancelled", "Cancelled during the warning; "
+                              "nothing changed")
+                    return
             job.phase = Phase.STOPPING
             self._changed()
             try:
@@ -444,6 +602,86 @@ class SteamRunner:
             what = "Update" if job.kind is Kind.UPDATE else "Install"
             self._notify(server, f"{icon} {message}" if result == "ok"
                          else f"{icon} {what} of **{server.name}** {result}: {message}")
+
+    # -- build checks (R-34) ------------------------------------------------------
+
+    def _run_check(self, job: Job) -> None:
+        try:
+            server = self._store.get_server(job.server_id)
+        except KeyError:
+            return
+        job.started_at = time.time()
+        job.phase = Phase.STEAMCMD
+        self._changed()
+        app_id, branch = server.steam_app_id, _branch(server)
+        entry: dict = {"app_id": app_id, "branch": branch, "build_id": None,
+                       "checked_at": time.time(), "error": ""}
+        exe = self._settings.steamcmd_exe
+        if not app_id:
+            return
+        if not exe.is_file():
+            entry["error"] = "SteamCMD not found"
+        else:
+            output, error = self._capture(job, check_command(self._settings, app_id))
+            build = branch_build(parse_app_info(output, app_id), branch)
+            if build is None:
+                tail = " | ".join(output.strip().splitlines()[-3:])
+                entry["error"] = error or f"no build ID for branch {branch!r}"
+                log.warning("%s: build check gave no build ID (%s): %s", server.name,
+                            entry["error"], tail[-300:])
+            else:
+                entry["build_id"] = build
+                log.info("%s: Steam has build %s on %s", server.name, build, branch)
+        entry["checked_at"] = time.time()
+        with self._mu:
+            self._latest[str(server.id)] = entry
+            data = dict(self._latest)
+        self._save_latest(data)
+
+    def _capture(self, job: Job, cmd: list[str]) -> tuple[str, str]:
+        """Run a short SteamCMD command; (its output, an error or "")."""
+        exe = self._settings.steamcmd_exe
+        try:
+            proc = subprocess.Popen(cmd, cwd=exe.parent, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+        except OSError as e:
+            return "", f"couldn't run SteamCMD: {e}"
+        with self._mu:
+            job.proc = proc
+            closed = self._closed
+        if closed:
+            _kill(proc)
+        try:
+            out, _ = proc.communicate(timeout=self._settings.steam_check_timeout_s)
+            error = "" if proc.returncode == 0 else f"exit code {proc.returncode}"
+        except subprocess.TimeoutExpired:
+            _kill(proc)
+            out, _ = proc.communicate()
+            error = "timed out"
+        finally:
+            with self._mu:
+                job.proc = None
+        return out.decode("utf-8", errors="replace"), error
+
+    def _load_latest(self) -> dict[str, dict]:
+        try:
+            data = json.loads(self._latest_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as e:
+            log.warning("Can't read %s: %s", self._latest_path, e)
+            return {}
+        return {k: v for k, v in data.items() if isinstance(v, dict)} if isinstance(
+            data, dict) else {}
+
+    def _save_latest(self, data: dict) -> None:
+        try:
+            tmp = self._latest_path.with_name(self._latest_path.name + ".tmp")
+            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.replace(tmp, self._latest_path)
+        except OSError as e:
+            log.warning("Can't write %s: %s", self._latest_path, e)
 
     # -- running SteamCMD -------------------------------------------------------
 
@@ -550,7 +788,13 @@ class SteamRunner:
         return list(self._queue)
 
     def _job_locked(self, server_id: int) -> Job | None:
-        return next((j for j in self._queue if j.server_id == server_id), None)
+        """The server's install or update (build checks aren't counted)."""
+        return next((j for j in self._queue
+                     if j.server_id == server_id and j.kind is not Kind.CHECK), None)
+
+    def _check_locked(self, server_id: int) -> Job | None:
+        return next((j for j in self._queue
+                     if j.server_id == server_id and j.kind is Kind.CHECK), None)
 
     def _as_dict(self, job: Job) -> dict:
         return job.as_dict(self._queue.index(job))  # 0 = running (or next)

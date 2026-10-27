@@ -64,6 +64,7 @@ basecamp/
   backups.py         zip save folders, schedule, retention, restore (D-35, D-36)
   configs.py         config file guard (R-43), encodings, copies kept on save, restore (D-48..D-51)
   notify.py          Discord webhook: secrets.toml, queue, retry (D-37, D-38)
+  livestatus.py      the live status message in Discord, edited in place (D-63)
   auth.py            who is asking: admin or friend (D-28, D-29)
   templates.py       game templates (built-in + data folder), appmanifest import
   api/app.py         FastAPI app: REST routes, status and console WebSockets, pages
@@ -72,6 +73,8 @@ basecamp/
 migrations/          numbered SQL files, add-only
 templates/           built-in game templates, one JSON per game (docs/08-templates.md)
 tools/fake_server.py fake game server for tests: prints, reads stdin, binds a UDP port, can "crash"
+tools/fake_steamcmd.py, fake_discord.py   fake SteamCMD (installs, updates, app_info_print) and webhook
+tools/make_icons.py  draws the home-screen PNG icons in basecamp/web/ (R-72)
 tests/
 scripts/             release.ps1 + build_release.py and new-signing-key.ps1 (dev PC), later install / uninstall for the prod PC
 CHANGES.md           release notes, one section per version
@@ -94,6 +97,8 @@ All under `C:\BasecampData\` (dev PC: `.\data\`):
 | `db-backups\` | `before-<version>.db`: copy of `basecamp.db` taken as Basecamp exits for a self-update, for rollback (newest 5, D-55) |
 | `selfupdate.json` | Self-update state: the latest release seen and its ETag, the version unpacked and ready, what was posted to Discord, the last update and rollback (D-57) |
 | `updates\` | Only without the launcher (dev runs): releases unpacked and checked, which can't be installed from there (D-60) |
+| `steam-latest.json` | The last build check per server: app, branch, Steam's build ID or the error, when (D-65) |
+| `live-status.json` | The live status message's id and a hash of the webhook it is on (D-63) |
 | `state.json` | Running servers: host PID + exe + create time, control port and token, game PID + exe + create time. Written on every change, used to reattach after a Basecamp restart |
 | `hosts\<id>\` | `spec.json` (what the host runs, with its control token), `host.json` (control port), `exit.json` (how the last run ended, until Basecamp collects it), `host.log` |
 | `hosts\bin\` | Copies of `host.py` by content hash; running hosts run from here, never from a version folder |
@@ -153,13 +158,15 @@ Built in Phase 3 (`basecamp/steam.py`).
   `steamcmd.exe +force_install_dir "<install>" +login anonymous +app_update <appid> [-beta <branch>] [validate] +quit`
 - **Update** (R-30, R-32), holding the server's action lock throughout (D-41):
   1. back up the save with `Backups.make(server, "pre-update")` (R-51). No save folder set, or not created yet: a console note and on. A backup that fails stops the update with nothing changed (D-42);
-  2. stop it with its own stop recipe (R-04a): Stopping, then **Updating**;
-  3. run SteamCMD;
-  4. start it again only if it was running (or starting) before. On failure it stays Stopped, the run is marked failed with SteamCMD's message and output, and the backup is kept.
+  2. the server's stop warning, if it has one (R-25, D-61): it keeps running while players are warned; cancelling here leaves it running;
+  3. stop it with its own stop recipe (R-04a): Stopping, then **Updating**;
+  4. run SteamCMD;
+  5. start it again only if it was running (or starting) before. On failure it stays Stopped, the run is marked failed with SteamCMD's message and output, and the backup is kept.
 - **Install** (R-11): a stopped server whose install folder is missing or empty. Same command, no backup, not started afterwards (D-46).
 - SteamCMD's output goes into the server's console (shown in green), so the console WebSocket streams it; the phase and download percent go out on the status WebSocket (D-45). Each run also has its own log file.
 - Success = exit code 0 and `Success! App '<appid>' fully installed` (or "already up to date"). SteamCMD sometimes updates itself first and exits (code 7, "Update complete, launching Steamcmd"); the runner runs it once more (D-44).
-- Installed build ID is read from `<install>\steamapps\appmanifest_<appid>.acf` and shown on the cards and the server page (the update-available check is **Later**).
+- Installed build ID is read from `<install>\steamapps\appmanifest_<appid>.acf` and shown on the cards and the server page.
+- **Build checks** (R-34, D-65) use the same queue: `steamcmd +login anonymous +app_info_update 1 +app_info_print <appid> +quit`, reading `depots > branches > <branch> > buildid` (branch = the server's beta branch, else `public`). Every `steam_check_h` (6) hours for installed Steam servers, and on **Check for update**. A check takes no lock and never makes the server busy. Different from the installed build = **update available**; a failed check = "unknown".
 - Timeout 60 min per run (`steamcmd_timeout_s`); **Cancel update** takes a queued run off the queue, or kills the SteamCMD process tree (D-44).
 - Every run is a row in `steam_runs` (who, result, builds before and after, backup). A failed or interrupted run marks the server until a later run succeeds; Start still works, after a confirm (D-43).
 - The SteamCMD path is `steamcmd_path` in the data folder's `settings.toml` (D-47). Tests and the dev PC use `tools/fake_steamcmd.py`.
@@ -168,7 +175,8 @@ Built in Phase 3 (`basecamp/steam.py`).
 
 - **stdin**: the host writes the command plus `\r\n` to the game's pipe. Works after a Basecamp restart too; not for a bare-adopted game whose host is gone.
 - **RCON**: Source RCON protocol over TCP to `127.0.0.1:<rcon port>`. Works for Palworld and many Source/Unreal-based servers. Not for Satisfactory (its own HTTPS API, Later) or Valheim (no RCON without mods). The console's command box sends via RCON if configured, else stdin.
-- Stop recipes use the same two channels.
+- Stop recipes and stop warnings (R-25) use the same two channels.
+- **Not built yet:** the RCON client. RCON stop steps and warnings are skipped with a console note (D-18, D-61), so stops end with Ctrl+Break.
 
 ## API
 
@@ -179,17 +187,17 @@ Built in Phases 2 to 5: everything here except `/api/events`.
 | GET | `/api/me` | everyone (who you are) |
 | GET | `/api/servers` · `/api/servers/{id}` | friend (trimmed fields, D-30) / admin (full) |
 | POST | `/api/servers` · PUT/DELETE `/api/servers/{id}` | admin |
-| POST | `/api/servers/{id}/start` · `/stop` · `/restart` · `/kill` · `/update` · `/install` | admin (stop/restart/kill answer 202, D-32; update/install answer 202 with the run id and queue; start/stop/restart answer 409 while an install or update runs, D-41) |
-| POST | `/api/servers/{id}/steam/cancel` · GET `/api/servers/{id}/steam/runs/{run}/log` · GET `/api/steam` (SteamCMD path and queue) | admin |
+| POST | `/api/servers/{id}/start` · `/stop` · `/restart` · `/kill` · `/update` · `/install` | admin (stop/restart/kill answer 202, D-32; update/install answer 202 with the run id and queue; start/stop/restart answer 409 while an install or update runs, D-41, or a stop warning counts down, D-62). `/stop?now=true` skips the warning, and during a countdown skips the rest of it |
+| POST | `/api/servers/{id}/steam/cancel` · `/steam/check` (build check, 202) · GET `/api/servers/{id}/steam/runs/{run}/log` · GET `/api/steam` (SteamCMD path and queue) | admin |
 | POST | `/api/servers/{id}/command` · GET `/api/servers/{id}/console?after=` | admin |
 | WS | `/ws/servers/{id}/console?after=` | admin (replay + live, send `{"text": ...}`) |
 | WS | `/ws/status` | everyone (status changes; friends get trimmed fields) |
 | GET | `/api/servers/{id}/configs` (the list, with any guard refusal per entry) · GET/PUT `/api/servers/{id}/configs/{n}` (read: text, encoding, hash, copies; save: `{text, base_sha256, force}`, 400 bad JSON, 403 guard, 409 changed on disk) | admin |
 | GET | `/api/servers/{id}/configs/{n}/copies/{name}` · POST `.../copies/{name}/restore` | admin |
-| GET/POST | `/api/servers/{id}/backups` (list, back up now) · POST `/backups/{b}/restore` · DELETE `/backups/{b}` | admin (restore: 409 unless stopped) |
+| GET/POST | `/api/servers/{id}/backups` (list, back up now) · POST `/backups/{b}/restore` · DELETE `/backups/{b}` · GET `/backups/{b}/download` (the zip, streamed, D-64) | admin (restore: 409 unless stopped) |
 | GET/PUT | `/api/notify` (main webhook, masked) · PUT `/api/servers/{id}/webhook` · POST `/api/notify/test` | admin |
 | GET | `/api/templates` · POST `/api/drafts` (pre-filled form from a template or an install's appmanifest) | admin |
-| GET/PUT | `/api/settings` (join host, SteamCMD path, backup defaults, `apply_backup_defaults`; the masked Discord info; read-only admin logins) | admin |
+| GET/PUT | `/api/settings` (join host, SteamCMD path, backup defaults, `apply_backup_defaults`, `discord_live_status`; the masked Discord info and the live status message's state; read-only admin logins) | admin |
 | GET | `/api/events` · `/api/audit` | admin |
 | GET | `/healthz` | localhost |
 
@@ -197,10 +205,11 @@ Built in Phases 2 to 5: everything here except `/api/events`.
 
 Two pages, both phone-first (one column, big buttons, works at 375 px wide):
 
-- **Dashboard** (admin): a card per server: name, status pill, uptime, CPU/RAM, join address with **Copy** and **Copy for Discord**, buttons Start / Stop / Restart / Update. Tap a card for the server page: **Console**, **Config files**, **Backups** (back up now, restore, delete), **History**. A pending crash restart shows its time, with **Cancel restart**. A config file opens in an editor page: Save (JSON checked), Reload, wrap view, fields view for Palworld's `OptionSettings` line, **Restart now** after a save while running, earlier copies with View and Restore. A **Settings** page holds the join host, backup defaults, SteamCMD path and the Discord webhook (per-server webhooks under Advanced).
+- **Dashboard** (admin): a card per server: name, status pill, uptime, CPU/RAM, join address with **Copy** and **Copy for Discord**, buttons Start / Stop / Restart / Update. Tap a card for the server page: **Console**, **Config files**, **Backups** (back up now, restore, delete), **History**. A pending crash restart shows its time, with **Cancel restart**. A config file opens in an editor page: Save (JSON checked), Reload, wrap view, fields view for Palworld's `OptionSettings` line, **Restart now** after a save while running, earlier copies with View and Restore. A **Settings** page holds the join host, backup defaults, SteamCMD path and the Discord webhook (per-server webhooks under Advanced) with the live status message switch. A stop warning counting down shows on the card with the time left and **Stop now**; an **update available** (or "update: unknown") tag sits next to the status pill, and the server page's SteamCMD section has **Check for update**. Backups have **Download**.
 - **Friend view**: the same cards with only name, status, join address + Copy.
 - Confirm dialogs on Stop, Update and Restore. Live updates over the status WebSocket, no refreshing.
 - Built with plain HTML/CSS/JS, no library and no CDN (D-34).
+- Both pages link a web app manifest (`/static/manifest.webmanifest`) and icons, so "Add to home screen" opens Basecamp full screen like an app (R-72, D-66).
 
 ## Testing on the dev PC
 

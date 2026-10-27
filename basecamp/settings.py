@@ -23,7 +23,7 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 DEFAULT_STEAMCMD = r"%USERPROFILE%\Desktop\SteamCmd\steamcmd.exe"
 # What the Settings page may change (D-52). The rest stays a settings.toml edit + restart.
 PAGE_SETTINGS = ("join_host", "steamcmd_path", "default_backup_every_h", "default_backup_keep",
-                 "update_beta", "update_auto_hour")
+                 "update_beta", "update_auto_hour", "discord_live_status")
 _save_lock = threading.Lock()
 
 
@@ -65,10 +65,19 @@ class Settings:
     backup_check_s: float = 60.0
     # R-62: waits between tries of a Discord message that failed (one try per entry, + 1).
     notify_retry_s: tuple[float, ...] = (5.0, 30.0, 120.0)
+    # R-63: keep one message on the main webhook showing every server (Settings page), edited
+    # at most once per live_status_every_s.
+    discord_live_status: bool = False
+    live_status_every_s: float = 10.0
     # R-31: steamcmd.exe ("" = %USERPROFILE%\Desktop\SteamCmd\steamcmd.exe), and how
     # long one SteamCMD run may take before it is killed.
     steamcmd_path: str = ""
     steamcmd_timeout_s: float = 3600.0
+    # R-34: how often each installed Steam server's latest build is checked (0 = only on
+    # "Check for update"), how often the scheduler looks, and how long one check may take.
+    steam_check_h: float = 6.0
+    steam_check_poll_s: float = 300.0
+    steam_check_timeout_s: float = 120.0
     # Backup schedule and retention a new server starts with (R-50); each server can change
     # its own. Set on the Settings page.
     default_backup_every_h: float = 0.0

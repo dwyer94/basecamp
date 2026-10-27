@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import json
 import socket
 import subprocess
 import sys
-import threading
 import time
 from collections.abc import Callable, Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -19,6 +16,9 @@ from basecamp.supervisor import Supervisor
 
 REPO = Path(__file__).resolve().parent.parent
 FAKE_SERVER = REPO / "tools" / "fake_server.py"
+sys.path.insert(0, str(REPO / "tools"))
+from fake_discord import FakeDiscord as FakeWebhook  # noqa: E402  (tools/ isn't a package)
+
 # The base interpreter, not the venv's python.exe (which is itself a launcher that starts
 # the base one as a child). Fake servers are stdlib only.
 PYTHON = Path(getattr(sys, "_base_executable", sys.executable))
@@ -78,53 +78,25 @@ def store(settings: Settings) -> Iterator[Store]:
     store.close()
 
 
-@pytest.fixture
-def sup(store: Store, settings: Settings) -> Iterator[Supervisor]:
-    sup = Supervisor(store, settings)
-    yield sup
+def stop_everything(sup: Supervisor, store: Store) -> None:
+    """Teardown: leave no game or host running. Kill each active server, then wait for its
+    lock, so a restart (or stop countdown) still in flight on another thread is over, and
+    kill again whatever that restart started."""
     for server in store.list_servers():
+        if sup.state(server.id) in ACTIVE_STATES:
+            sup.kill(server.id)
+        with sup.hold(server.id):
+            pass
         if sup.state(server.id) in ACTIVE_STATES:
             sup.kill(server.id)
     sup.detach()
 
 
-class FakeWebhook:
-    """A local HTTP endpoint that takes Discord webhook posts. ``answers`` is a list of
-    (status, json body) to give before falling back to 204."""
-
-    def __init__(self) -> None:
-        self.posts: list[dict] = []
-        self.answers: list[tuple[int, dict | None]] = []
-        self.lock = threading.Lock()
-        hook = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self) -> None:
-                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                with hook.lock:
-                    status, answer = hook.answers.pop(0) if hook.answers else (204, None)
-                    if status == 204:
-                        hook.posts.append(body)
-                payload = json.dumps(answer).encode() if answer is not None else b""
-                self.send_response(status)
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-
-            def log_message(self, *args: object) -> None:
-                pass
-
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/api/webhooks/1/test"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-
-    def texts(self) -> list[str]:
-        with self.lock:
-            return [p["content"] for p in self.posts]
-
-    def close(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
+@pytest.fixture
+def sup(store: Store, settings: Settings) -> Iterator[Supervisor]:
+    sup = Supervisor(store, settings)
+    yield sup
+    stop_everything(sup, store)
 
 
 @pytest.fixture

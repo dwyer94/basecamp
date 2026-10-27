@@ -24,7 +24,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from basecamp.models import LogSource, Port, ServerKind, StopStep
+from basecamp.models import LogSource, Port, ServerKind, StopStep, StopWarning
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ TemplateSource = Literal["built-in", "data folder"]
 _CHECKABLE = {
     "steam_app_id", "exe", "args", "working_dir", "real_exe_name", "ports", "join_port_label",
     "log_source", "log_file", "ready_pattern", "ready_after_s", "stop_recipe", "config_files",
-    "save_dir", "rcon_port", "min_free_ram_mb",
+    "save_dir", "rcon_port", "min_free_ram_mb", "stop_warning",
 }
 
 
@@ -56,6 +56,7 @@ class Template(BaseModel):
     ready_pattern: str = ""
     ready_after_s: float = Field(default=60.0, ge=0)
     stop_recipe: list[StopStep] = Field(default_factory=list)
+    stop_warning: StopWarning | None = None
     config_files: list[str] = Field(default_factory=list)
     save_dir: str = ""
     rcon_port: int | None = Field(default=None, ge=1, le=65535)
@@ -192,6 +193,8 @@ def draft(template: Template, install_dir: str, name: str = "") -> dict:
         "ready_after_s": template.ready_after_s,
         "min_free_ram_mb": template.min_free_ram_mb,
         "stop_recipe": [s.model_dump(mode="json") for s in template.stop_recipe],
+        "stop_warning": (template.stop_warning.model_dump(mode="json")
+                         if template.stop_warning else None),
         "notes": template.notes,
     }
 

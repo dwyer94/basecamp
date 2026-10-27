@@ -90,3 +90,14 @@ def test_read_manifests(tmp_path):
     [manifest] = read_manifests(tmp_path)
     assert (manifest.app_id, manifest.name, manifest.build_id) == (
         2394010, "Palworld Dedicated Server", "999")
+
+
+def test_stop_warning_defaults_are_unverified_and_off(tmp_path):
+    loaded = load_templates(TEMPLATES_DIR, tmp_path)
+    for game, command in (("palworld", "Broadcast"), ("v-rising", "announce")):
+        template = loaded.get(game).template
+        assert template.stop_warning.command.startswith(command)
+        assert template.stop_warning.minutes == []  # the owner turns it on per server
+        assert "stop_warning" in template.unverified
+        assert draft(template, r"C:\x")["stop_warning"]["command"].startswith(command)
+    assert draft(loaded.get("enshrouded").template, "")["stop_warning"] is None

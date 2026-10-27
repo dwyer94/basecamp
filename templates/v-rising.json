@@ -18,6 +18,7 @@
   "stop_recipe": [
     {"action": "ctrl_break", "wait_s": 60}
   ],
+  "stop_warning": {"action": "rcon", "command": "announce Server restarting in {minutes} min", "minutes": []},
   "config_files": [
     "save-data\\Settings\\ServerHostSettings.json",
     "save-data\\Settings\\ServerGameSettings.json"
@@ -29,5 +30,5 @@
     "https://github.com/StunlockStudios/vrising-dedicated-server-instructions/blob/master/1.1.x-pc/INSTRUCTIONS.md",
     "https://steamdb.info/app/1829350/"
   ],
-  "unverified": ["ready_pattern", "stop_recipe", "ports"]
+  "unverified": ["ready_pattern", "stop_recipe", "ports", "stop_warning"]
 }

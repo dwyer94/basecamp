@@ -134,3 +134,11 @@ details.card > summary { cursor: pointer; font-weight: 600; min-height: 28px; }
 .offline { color: var(--danger); font-size: 13px; }
 pre.notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow-y: auto;
   font-size: 13px; margin: 6px 0 0; }
+/* Phase 6.5: stop countdown (R-25), update badge (R-34), warning fields. */
+.card-head .tags { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tag.update { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.update-text { color: var(--accent); font-weight: 600; }
+.notice.countdown { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.notice.countdown strong { font-variant-numeric: tabular-nums; }
+.notice.countdown button { margin-left: auto; }
+.row.warn > select { flex: none; width: 96px; }

@@ -34,6 +34,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-21** States: **Stopped**, **Starting**, **Running**, **Stopping**, **Updating**, **Crashed**. Shown on the dashboard with uptime, CPU and RAM per server.
 - **R-22** **Graceful stop**, as a per-server recipe: e.g. send `save` (stdin or RCON), wait 10 s, send `shutdown`/`quit`, wait up to 60 s for exit, then Ctrl+Break, then kill. Default recipe if none is set: Ctrl+Break, wait 30 s, kill.
 - **R-23** **Live console**: shows server output live (last 2,000 lines kept in memory, full log on disk, rotated). Admin can type a command and send it via stdin or RCON.
+- **R-25** **Warn players before a stop** (Phase 6.5): per server, a command sent by stdin or RCON with the minutes left filled in (e.g. `broadcast Restarting in {minutes} min`), at a lead time and reminders (e.g. 5 and 1 min; none = off). It runs before stops, restarts and updates started from Basecamp, never before a crash restart. The page shows a countdown with **Stop now**, which skips the rest; **Kill** skips it too.
 - **R-24** **Copy join address**: one button copies `<tailscale-ip>:<join port>`. A second button copies a Discord-ready line, e.g. `Palworld is up → <tailscale-ip>:8211 (password in pins)`. The address shown uses whichever connection method is configured ([03-friend-access.md](03-friend-access.md)), so it changes if you add a relay later.
 
 ## Updates
@@ -42,7 +43,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-31** Only one SteamCMD run at a time (SteamCMD doesn't like parallel runs); other updates queue.
 - **R-32** If the update fails, don't start the server on half-updated files; mark it and show the SteamCMD output. The save backup from R-30 is kept.
 - **R-33** Custom (non-Steam) servers: no update button in v1. **Later**: an optional per-server "update command" (a script you write).
-- **R-34** **Later**: "update available" badge (compare installed build ID with Steam's) and scheduled update checks, e.g. 5 am nightly.
+- **R-34** **Update-available badge** (Phase 6.5): compare the installed build ID with Steam's for the server's branch, checked every 6 h and on **Check for update**, through the SteamCMD queue. A failed check shows "unknown". **Later**: scheduled updates, e.g. 5 am nightly.
 
 ## Config files
 
@@ -56,6 +57,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-50** Per server: save folder, schedule (e.g. every 6 h), how many to keep (default 10).
 - **R-51** Always back up before an update.
 - **R-52** List backups and restore one (server must be stopped; current save is backed up first).
+- **R-54** **Download a backup** from the page (admin only, Phase 6.5): the zip as it is, streamed from disk, audited. Only backups listed in that server's backups folder can be asked for.
 - **R-53** Backups go to `C:\BasecampData\backups\<server>\` (the `backups_root` setting can move them, Q-08). **Later**: copy them to another drive or the dev PC.
 
 ## Discord
@@ -63,11 +65,13 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-60** One webhook URL (optionally per server). Messages: server up (with join address), stopped, crashed, gave up restarting, update started/finished/failed, Basecamp started after a reboot.
 - **R-61** Per-server toggle for which events post.
 - **R-62** Webhook failures never block anything; they're logged and retried a few times.
+- **R-63** **Live status message** (Phase 6.5, off by default, on the Settings page): one message on the main webhook showing every server's state and join address, edited in place (at most every 10 s), posted again if someone deletes it. Event messages post as before.
 
 ## Friend view
 
 - **R-70** Read-only page: each server's name, status, join address with copy button, uptime, and player count where the game supports it (**Later** for player count).
 - **R-71** No start/stop, no console, no config, no paths, no RCON passwords.
+- **R-72** **Add to home screen** (Phase 6.5): both pages have a web app manifest and icons, so a phone opens Basecamp like an app. No offline mode (no service worker).
 
 ## Security
 
@@ -89,7 +93,7 @@ Details in [07-updates.md](07-updates.md).
 ## Out of scope for v1 (Later list)
 
 - Player count / player list (A2S query, Palworld REST API, RCON `players`)
-- Update-available badge and scheduled updates (R-34)
+- Scheduled updates (R-34; the update-available badge is built)
 - Scheduled restarts (e.g. daily 4 am)
 - Update commands for custom servers (R-33)
 - Steam login for games that need a real account (most dedicated servers are anonymous)

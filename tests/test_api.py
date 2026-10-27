@@ -17,7 +17,7 @@ from basecamp.api.app import create_app
 from basecamp.models import ServerState
 from basecamp.settings import Settings
 from basecamp.supervisor import Supervisor
-from tests.conftest import fake_config, wait_for
+from tests.conftest import fake_config, stop_everything, wait_for
 
 ADMIN = "owner@example.com"
 FRIEND = "pal@example.com"
@@ -43,10 +43,7 @@ def client(store, web_settings) -> Iterator[TestClient]:
     with TestClient(app, base_url=BASE, client=("127.0.0.1", 50123)) as c:
         c.sup = sup  # type: ignore[attr-defined]
         yield c
-    for server in store.list_servers():
-        if sup.state(server.id).value in ("starting", "running", "stopping"):
-            sup.kill(server.id)
-    sup.detach()
+    stop_everything(sup, store)
 
 
 def add_fake(client: TestClient, name: str = "fake", **fields) -> dict:
@@ -376,6 +373,52 @@ def test_backup_and_restore_over_the_api(client, tmp_path):
     actions = [e["action"] for e in client.get(f"/api/audit?server_id={sid}").json()]
     assert {"backup", "backup.restore", "backup.delete"} <= set(actions)
 
+
+
+def test_backup_download_streams_the_zip_and_is_audited(client, tmp_path, web_settings):
+    saves = tmp_path / "Saved"
+    saves.mkdir()
+    (saves / "world.sav").write_bytes(b"x" * 300_000)
+    sid = add_fake(client, save_dir=str(saves))["id"]
+    name = client.post(f"/api/servers/{sid}/backups").json()["backup"]["name"]
+    path = web_settings.server_backup_dir(sid) / name
+    url = f"/api/servers/{sid}/backups/{name}/download"
+    assert client.get(url, headers=AS_FRIEND).status_code == 403
+    res = client.get(url, headers=AS_ADMIN)
+    assert res.status_code == 200
+    assert res.content == path.read_bytes()
+    assert res.headers["content-type"] == "application/zip"
+    assert f'filename="{name}"' in res.headers["content-disposition"]
+    audit = [e for e in client.get(f"/api/audit?server_id={sid}").json()
+             if e["action"] == "backup.download"]
+    assert len(audit) == 1 and audit[0]["detail"] == name and audit[0]["who"] == ADMIN
+    # Only names the backups folder lists for this server.
+    (web_settings.data_dir / "basecamp.db.zip").write_bytes(b"no")
+    for bad in ("..%2F..%2Fbasecamp.db", "nope.zip", "20200101-000000-manual.zip",
+                "..%5C..%5Csecrets.toml"):
+        assert client.get(f"/api/servers/{sid}/backups/{bad}/download").status_code == 404
+    assert client.get(f"/api/servers/999/backups/{name}/download").status_code == 404
+    other = add_fake(client, name="other")["id"]
+    assert client.get(f"/api/servers/{other}/backups/{name}/download").status_code == 404
+
+
+def test_add_to_home_screen_files(client):
+    page = client.get("/").text
+    assert '<link rel="manifest" href="/static/manifest.webmanifest">' in page
+    assert 'rel="apple-touch-icon"' in page
+    assert 'rel="manifest"' in client.get("/", headers=AS_FRIEND).text  # friends too
+    res = client.get("/static/manifest.webmanifest")
+    assert res.status_code == 200 and res.headers["content-type"].startswith(
+        "application/manifest+json")
+    manifest = res.json()
+    assert manifest["start_url"] == "/" and manifest["display"] == "standalone"
+    for icon in manifest["icons"]:
+        got = client.get(icon["src"])
+        assert got.status_code == 200 and got.headers["content-type"] == icon["type"]
+        if icon["type"] == "image/png":
+            size = int.from_bytes(got.content[16:20], "big")
+            assert f"{size}x{size}" == icon["sizes"]
+    assert client.get("/static/apple-touch-icon.png").content[:8] == b"\x89PNG\r\n\x1a\n"
 
 def test_webhook_is_validated_masked_and_never_logged(client, web_settings):
     token = "abcdefSECRETTOKEN123"
