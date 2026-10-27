@@ -55,8 +55,8 @@
 | Q-04 | Do your games run correctly headless (no one logged in) with output piped? | Phase 0 test |
 | Q-05 | Any non-Steam servers today? How do you update them? | Owner |
 | Q-06 | Do any games need a real Steam login (not anonymous) to download? | Phase 0 |
-| Q-07 | One Discord channel for everything, or one per game? Built so either works (D-37): set the main webhook, and a server's own one if it should post elsewhere | Owner, when setting up the webhook |
-| Q-08 | Backups on the same disk OK for v1? (Copying off the PC is Later.) Built with a `backups_root` setting in `settings.toml`, default `<data>\backups` (same disk), so another drive is a one-line change | Owner, Phase 7 |
+| Q-07 | ~~One Discord channel for everything, or one per game?~~ **One channel for everything** (owner, 2026-10-27): set only the main webhook. Per-server webhooks stay available (D-37) | Answered |
+| Q-08 | ~~Backups on the same disk OK for v1?~~ **Yes, all on the same disk** (owner, 2026-10-27): keep the default `backups_root` (`<data>\backups`). Copying off the PC stays on the Later list | Answered |
 | Q-09 | ~~Does each game keep running when Basecamp exits and its pipes break?~~ Mostly moot since D-25: the host owns the pipes, so Basecamp exiting no longer breaks them. Still worth one check: does a game survive its **host** dying (the rare fallback in D-25)? | Phase 0 (low priority) |
 | Q-10 | Does the "At startup" task's job object allow breakaway (D-21), and does ending the task kill the hosts or game servers? (R-04a says it must not) | Phase 0 test |
 | Q-11 | On the prod PC, does `tailscale serve` send `X-Forwarded-For` and keep the `*.ts.net` `Host` when it proxies to Basecamp, and does a request from a tagged device arrive without a login? D-28 relies on either signal to tell Serve traffic from the PC itself. Check with `tools/q02_whoami.py`'s header list | Phase 7, before `tailscale serve` points at Basecamp |
