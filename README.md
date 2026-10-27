@@ -4,7 +4,7 @@ Home base for the game servers you host for friends.
 
 Basecamp is a small Windows app that runs on an always-on Windows PC (the "host PC"). It starts when the PC boots, before anyone logs in, and brings back up every game server you've marked "start on boot". You control it from a web page that works on desktop and phone, over Tailscale.
 
-**Status:** Phases 1 and 2 built and tested on the dev PC: the core supervisor, the web API and the admin and friend pages, and templates for Palworld, Enshrouded, V Rising, RuneScape: Dragonwilds and Windrose. Each running server has its own small host process, so games and their consoles carry on through Basecamp restarts and updates. See [docs/05-plan.md](docs/05-plan.md).
+**Status:** Phases 1, 2 and 4 built and tested on the dev PC: the core supervisor, the web API and the admin and friend pages, templates for Palworld, Enshrouded, V Rising, RuneScape: Dragonwilds and Windrose, and save backups, crash auto-restart and Discord messages. Phase 3 (SteamCMD) is next. Each running server has its own small host process, so games and their consoles carry on through Basecamp restarts and updates. See [docs/05-plan.md](docs/05-plan.md).
 
 ## What it does (v1)
 
@@ -57,6 +57,14 @@ uv venv --python 3.13 .venv
 [basecamp]
 join_host = "<tailscale-ip>"
 admin_logins = ["you@example.com"]
+# backups_root = "D:\\BasecampBackups"   # default: .\data\backups
+```
+
+- The Discord webhook is set on the page's **Discord** screen and kept in `.\data\secrets.toml`, never in the repo. To try messages without Discord, point it at a local endpoint by editing `secrets.toml` (the page only accepts discord.com URLs):
+
+```toml
+[discord]
+webhook_url = "http://127.0.0.1:<port>/api/webhooks/1/test"
 ```
 
 Tests run real processes against [tools/fake_server.py](tools/fake_server.py), never real games.

@@ -64,6 +64,8 @@ Things that could change the design. Do these first, mostly by hand on the prod 
 
 **Done when:** a fake server that crashes is restarted twice then marked Crashed with a Discord message; a backup is made, listed and restored; the friend view shows no admin data (test checks the JSON).
 
+**Status:** built on the dev PC (2026-10-27), before Phase 3 (D-40), and checked in a browser at `127.0.0.1:8150` against a local fake webhook. Checked: the edit form's backup and Discord fields, back up now, a scheduled backup, restore with its safety backup, three crashes (two restarts, then Crashed, with the Discord messages), the Discord page and its test message, phone width. The friend view and its trimmed fields were done in Phase 2. Not tried: a real Discord channel. Decisions D-35..D-40.
+
 ## Phase 5 · Config editor and templates
 
 - Config files tab: open, edit, JSON check, versioned copies, "restart now" (R-40..R-43). Path guard test: can't read anything outside the server's list.

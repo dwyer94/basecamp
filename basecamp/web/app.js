@@ -161,7 +161,7 @@ function serverPage(root, id) {
     history.replaceChildren(rows.length ? el("table", {},
       el("tbody", {}, rows.map((r) => el("tr", {},
         el("td", {}, new Date(r.ts).toLocaleString()), el("td", {}, r.who),
-        el("td", {}, r.action), el("td", {}, r.action === "console" ? r.detail : "")))))
+        el("td", {}, r.action), el("td", {}, r.action === "console" || r.action.startsWith("backup") ? r.detail : "")))))
       : el("p", { class: "muted" }, "Nothing yet."));
   };
 
@@ -197,7 +197,7 @@ function serverPage(root, id) {
     const schedule = res.every_h > 0
       ? `Every ${res.every_h} h while running, keeping the newest ${res.keep}.`
       : `No schedule (set one under Edit). Keeping the newest ${res.keep}.`;
-    backupBox.replaceChildren(
+    backupBox.replaceChildren(el("div", {},
       !res.save_dir ? notice("No save folder set. Set one under Edit to make backups.")
         : !res.save_dir_exists ? notice(`Save folder not found: ${res.save_dir}`) : null,
       el("p", { class: "muted" }, res.save_dir ? el("span", {}, "From ", el("code", {}, res.save_dir), ". ") : null,
@@ -213,7 +213,8 @@ function serverPage(root, id) {
             title: stopped ? "" : "Stop the server first", onclick: () => restore(b) }, "Restore"),
           el("button", { class: "small danger", disabled: backupBusy, onclick: () => removeBackup(b) }, "Delete")))))))
         : el("p", { class: "muted" }, "No backups yet."),
-      res.backups.length && !stopped ? el("div", { class: "hint" }, "Stop the server to restore a backup.") : null);
+      res.backups.length && !stopped ? el("div", { class: "hint" }, "Stop the server to restore a backup.") : null));
+    loadHistory();
   };
 
   root.replaceChildren(head,
@@ -241,7 +242,7 @@ function serverPage(root, id) {
       el("p", { class: "muted" }, c.exe_path, c.args ? ` ${c.args}` : "",
         s.pid ? ` · PID ${s.pid}` : ""));
     input.disabled = !(s.has_console && s.state !== "stopped" && s.state !== "crashed");
-    if (s.state !== lastState) { lastState = s.state; loadHistory(); loadBackups(); }
+    if (s.state !== lastState) { lastState = s.state; loadBackups(); }  // and the history
   };
   update();
   return { update, close: () => sock.close() };

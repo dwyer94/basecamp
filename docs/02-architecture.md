@@ -51,18 +51,19 @@ basecamp/
   main.py            app start: run migrations, load config, start supervisor, start web server
   selfupdate.py      check GitHub Releases, download, verify signature, unpack, hand over to launcher
   settings.py        paths, port, data folder (env vars / settings.toml)
-  db.py              SQLite: servers, events, audit log, backup records
+  db.py              SQLite: servers, events, audit log
   models.py          pydantic models: Server, Port, StopRecipe, ...
-  supervisor.py      process lifecycle, state machine, crash restart, reattach/adoption
+  supervisor.py      process lifecycle, state machine, reattach/adoption
+  crashes.py         crash auto-restart policy, a supervisor listener (D-39)
   host.py            per-server host process (stdlib only): owns the game's pipes, console log, control channel
   hostclient.py      Basecamp's side of the host control channel
   winctrl.py         fallback Ctrl+Break helper (bare adopted games)
   console.py         in-memory console per server (mirrors the host's lines), subscribers
   rcon.py            Source RCON client (Palworld, Satisfactory-style, many others)
   steam.py           SteamCMD runner, appmanifest parser, update queue
-  backups.py         zip save folders, retention, restore
+  backups.py         zip save folders, schedule, retention, restore (D-35, D-36)
   configs.py         read/write allowed config files, versioned copies
-  notify.py          Discord webhook with retry
+  notify.py          Discord webhook: secrets.toml, queue, retry (D-37, D-38)
   auth.py            who is asking: admin or friend (D-28, D-29)
   templates.py       game templates (built-in + data folder), appmanifest import
   api/app.py         FastAPI app: REST routes, status and console WebSockets, pages
@@ -82,11 +83,12 @@ All under `C:\BasecampData\` (dev PC: `.\data\`):
 
 | Path | What |
 |---|---|
-| `basecamp.db` | SQLite: servers, settings, event history, audit log, backup index |
-| `secrets.toml` | Discord webhook, RCON passwords, admin password hash (Plan B). Kept out of the repo |
+| `basecamp.db` | SQLite: servers, settings, event history, audit log |
+| `secrets.toml` | Discord webhook URLs (D-37), later RCON passwords. Kept out of the repo |
+| `boot.json` | The PC boot time Basecamp last started under, for the "started after a restart" message |
 | `logs\basecamp.log` | The app's own log, rotated |
 | `logs\servers\<id>\console.log` | Each server's output, rotated (10 MB × 5) |
-| `backups\<id>\` | Save backups (`YYYYMMDD-HHMMSS-<reason>.zip`) |
+| `backups\<id>\` | Save backups (`YYYYMMDD-HHMMSS-<reason>.zip`, D-35). `backups_root` in settings.toml can put them elsewhere |
 | `config-history\<id>\` | Old copies of config files saved from the editor |
 | `db-backups\` | Copy of `basecamp.db` taken before each self-update, for rollback |
 | `state.json` | Running servers: host PID + exe + create time, control port and token, game PID + exe + create time. Written on every change, used to reattach after a Basecamp restart |
@@ -156,7 +158,7 @@ A game only stops when it's stopped from Basecamp, crashes, or the PC shuts down
 
 ## API
 
-Built in Phase 2: everything up to `/healthz` except `/update`, `/install`, configs, backups, settings and events, which come with their phases.
+Built in Phases 2 and 4: everything here except `/update`, `/install`, configs, settings and events, which come with their phases.
 
 | Method | Path | Who |
 |---|---|---|
@@ -168,7 +170,8 @@ Built in Phase 2: everything up to `/healthz` except `/update`, `/install`, conf
 | WS | `/ws/servers/{id}/console?after=` | admin (replay + live, send `{"text": ...}`) |
 | WS | `/ws/status` | everyone (status changes; friends get trimmed fields) |
 | GET/PUT | `/api/servers/{id}/configs/{n}` | admin |
-| GET/POST | `/api/servers/{id}/backups` · `/backups/{b}/restore` | admin |
+| GET/POST | `/api/servers/{id}/backups` (list, back up now) · POST `/backups/{b}/restore` · DELETE `/backups/{b}` | admin (restore: 409 unless stopped) |
+| GET/PUT | `/api/notify` (main webhook, masked) · PUT `/api/servers/{id}/webhook` · POST `/api/notify/test` | admin |
 | GET | `/api/templates` · POST `/api/drafts` (pre-filled form from a template or an install's appmanifest) | admin |
 | GET/PUT | `/api/settings` | admin |
 | GET | `/api/events` · `/api/audit` | admin |
@@ -178,10 +181,10 @@ Built in Phase 2: everything up to `/healthz` except `/update`, `/install`, conf
 
 Two pages, both phone-first (one column, big buttons, works at 375 px wide):
 
-- **Dashboard** (admin): a card per server: name, status pill, uptime, CPU/RAM, join address with **Copy** and **Copy for Discord**, buttons Start / Stop / Restart / Update. Tap a card for the server page: tabs **Console**, **Config files**, **Backups**, **Settings**, **History**.
+- **Dashboard** (admin): a card per server: name, status pill, uptime, CPU/RAM, join address with **Copy** and **Copy for Discord**, buttons Start / Stop / Restart / Update. Tap a card for the server page: **Console**, **Backups** (back up now, restore, delete), **History**; later **Config files**. A pending crash restart shows its time, with **Cancel restart**. A **Discord** page sets the webhooks.
 - **Friend view**: the same cards with only name, status, join address + Copy.
 - Confirm dialogs on Stop, Update and Restore. Live updates over the status WebSocket, no refreshing.
-- Built with plain HTML/CSS/JS (maybe a small vendored library like htmx or Alpine.js, served from Basecamp itself, no CDN).
+- Built with plain HTML/CSS/JS, no library and no CDN (D-34).
 
 ## Testing on the dev PC
 

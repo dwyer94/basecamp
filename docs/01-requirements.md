@@ -56,7 +56,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-50** Per server: save folder, schedule (e.g. every 6 h), how many to keep (default 10).
 - **R-51** Always back up before an update.
 - **R-52** List backups and restore one (server must be stopped; current save is backed up first).
-- **R-53** Backups go to `C:\BasecampData\backups\<server>\`. **Later**: copy them to another drive or the dev PC.
+- **R-53** Backups go to `C:\BasecampData\backups\<server>\` (the `backups_root` setting can move them, Q-08). **Later**: copy them to another drive or the dev PC.
 
 ## Discord
 
