@@ -76,6 +76,8 @@ Things that could change the design. Do these first, mostly by hand on the prod 
 
 **Done when:** you can change a Palworld setting from the phone, restart, and see it take effect.
 
+**Status:** config editor and settings page built on the dev PC (2026-10-27), 173 tests, and checked in a browser at `127.0.0.1:8150` against `tools/fake_server.py` with fake config files: open a JSON file and a Palworld-style `PalWorldSettings.ini` (UTF-16 with a BOM, CRLF, one long `OptionSettings` line), edit it as text and as fields, a bad JSON save refused, a save while running offering **Restart now** (restarted through the normal path), restore of an older copy, the settings page saving to `settings.toml` and applying at once, phone width. Saved files kept their encoding, BOM and line endings byte for byte. **Not done:** the done-when check itself (a Palworld setting from the phone) needs the prod PC and the `tailscale serve` address (Phase 7). The template fields still marked `unverified` need the prod PC too; the owner has a read-only checklist for that in `private/`. Not tried: a symlinked config file (the dev PC can't make symlinks without Developer Mode; junctions are tested). Decisions D-48..D-52.
+
 ## Phase 6 · Self-update from GitHub Releases
 
 See [07-updates.md](07-updates.md).

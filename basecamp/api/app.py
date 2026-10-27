@@ -26,15 +26,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from basecamp import __version__, auth, notify, templates
+from basecamp import __version__, auth, configs, notify, templates
 from basecamp.api import views
 from basecamp.backups import BackupError, Backups, save_folder
+from basecamp.configs import ConfigFiles
 from basecamp.console import ConsoleLine
 from basecamp.crashes import CrashPolicy
 from basecamp.db import Store
-from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig
+from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig, ServerState
 from basecamp.notify import Notifier
-from basecamp.settings import Settings
+from basecamp.settings import PAGE_SETTINGS, Settings
 from basecamp.steam import Kind, SteamError, SteamRunner
 from basecamp.supervisor import InvalidState, PortInUse, Supervisor, SupervisorError
 
@@ -52,6 +53,28 @@ class CommandIn(BaseModel):
 
 class WebhookIn(BaseModel):
     webhook_url: str = Field(default="", max_length=300)  # "" removes it
+
+
+class ConfigSaveIn(BaseModel):
+    text: str = Field(max_length=configs.MAX_BYTES)
+    # The file's hash as the page loaded it ("" = it didn't exist); a mismatch is a 409
+    # unless force is set (the admin chose to overwrite what the game wrote).
+    base_sha256: str = ""
+    force: bool = False
+
+
+_JOIN_HOST = r"^[A-Za-z0-9._\-\[\]:]*$"
+
+
+class SettingsIn(BaseModel):
+    """The Settings page (D-52). Fields left out are not changed."""
+
+    join_host: str | None = Field(default=None, max_length=253, pattern=_JOIN_HOST)
+    steamcmd_path: str | None = Field(default=None, max_length=400, pattern=r"^[^\x00-\x1f]*$")
+    default_backup_every_h: float | None = Field(default=None, ge=0, le=24 * 30)
+    default_backup_keep: int | None = Field(default=None, ge=1, le=1000)
+    # Also give every existing server the backup defaults.
+    apply_backup_defaults: bool = False
 
 
 class DraftIn(BaseModel):
@@ -111,13 +134,15 @@ class _Hub:
 def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                notifier: Notifier | None = None, backups: Backups | None = None,
                crashes: CrashPolicy | None = None,
-               steam: SteamRunner | None = None) -> FastAPI:
+               steam: SteamRunner | None = None,
+               config_files: ConfigFiles | None = None) -> FastAPI:
     """The services are made by main.run; tests may leave them out (no crash restarts)."""
     hub = _Hub()
     cpu = views.CpuSampler()
     notifier = notifier or Notifier(settings, store)
     backups = backups or Backups(store, sup, settings, notifier.server_event)
     steam = steam or SteamRunner(store, sup, settings, backups, notifier)
+    config_files = config_files or ConfigFiles(settings)
     sup.add_listener(hub.poke)
     steam.add_listener(hub.poke)
 
@@ -206,6 +231,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                                 "version": __version__}
         if w.is_admin:
             info["join_host"] = settings.join_host
+            info["backup_defaults"] = {"backup_every_h": settings.default_backup_every_h,
+                                       "backup_keep": settings.default_backup_keep}
         return info
 
     # -- servers ---------------------------------------------------------------------
@@ -431,6 +458,103 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             raise backup_error(e) from None
         audit(w, "backup.delete", server_id, name)
 
+    # -- config files (R-40..R-43, D-48..D-51) -------------------------------------------
+
+    def config_file(server_id: int, n: int, w: auth.Who, action: str, fn: Callable[[Any], dict],
+                    detail: str = "") -> dict:
+        """Runs ``fn(server)`` for config file ``n``, mapping errors and auditing it. A
+        refused path is audited too (R-43)."""
+        server = get_server(server_id)
+        if not 0 <= n < len(server.config_files):
+            raise HTTPException(404, "No such config file")
+        name = server.config_files[n].replace("\\", "/").rsplit("/", 1)[-1]
+        try:
+            result = fn(server)
+        except FileNotFoundError:
+            raise HTTPException(404, "No such copy") from None
+        except configs.NotAllowed as e:
+            audit(w, "config.refused", server_id, f"{name}: {e}")
+            raise HTTPException(403, str(e)) from None
+        except configs.Conflict as e:
+            raise HTTPException(409, str(e)) from None
+        except configs.ConfigError as e:
+            raise HTTPException(400, str(e)) from None
+        audit(w, action, server_id, f"{name}{detail}")
+        result["running"] = sup.state(server_id) in (ServerState.STARTING, ServerState.RUNNING)
+        return result
+
+    @app.get("/api/servers/{server_id}/configs")
+    def list_configs(server_id: int, w: Admin) -> dict:
+        server = get_server(server_id)
+        return {"files": config_files.list(server), "keep": settings.config_copies_keep}
+
+    @app.get("/api/servers/{server_id}/configs/{n}")
+    def read_config(server_id: int, n: int, w: Admin) -> dict:
+        return config_file(server_id, n, w, "config.read",
+                           lambda s: config_files.read(s, n))
+
+    @app.put("/api/servers/{server_id}/configs/{n}")
+    def save_config(server_id: int, n: int, body: ConfigSaveIn, w: Admin) -> dict:
+        base = None if body.force else body.base_sha256
+        return config_file(server_id, n, w, "config.save",
+                           lambda s: config_files.save(s, n, body.text, base),
+                           " (overwrote changes on disk)" if body.force else "")
+
+    @app.get("/api/servers/{server_id}/configs/{n}/copies/{name}")
+    def read_config_copy(server_id: int, n: int, name: str, w: Admin) -> dict:
+        return config_file(server_id, n, w, "config.read",
+                           lambda s: config_files.read_copy(s, n, name), f", copy {name}")
+
+    @app.post("/api/servers/{server_id}/configs/{n}/copies/{name}/restore")
+    def restore_config(server_id: int, n: int, name: str, w: Admin) -> dict:
+        return config_file(server_id, n, w, "config.restore",
+                           lambda s: config_files.restore(s, n, name), f" from {name}")
+
+    # -- settings page (D-52) -----------------------------------------------------------
+
+    def settings_info() -> dict:
+        exe = settings.steamcmd_exe
+        return {**{key: getattr(settings, key) for key in PAGE_SETTINGS},
+                "steamcmd": str(exe), "steamcmd_found": exe.is_file(),
+                "admin_logins": list(settings.admin_logins),
+                "config_copies_keep": settings.config_copies_keep,
+                "backups_dir": str(settings.backups_dir),
+                "settings_file": str(settings.data_dir / "settings.toml"),
+                "notify": notify_info()}
+
+    @app.get("/api/settings")
+    def read_settings(w: Admin) -> dict:
+        return settings_info()
+
+    @app.put("/api/settings")
+    def write_settings(body: SettingsIn, w: Admin) -> dict:
+        values = body.model_dump(exclude_none=True, exclude={"apply_backup_defaults"})
+        if "join_host" in values:
+            values["join_host"] = values["join_host"].strip()
+        if "steamcmd_path" in values:
+            values["steamcmd_path"] = values["steamcmd_path"].strip().strip('"')
+        changed = {k: v for k, v in values.items() if getattr(settings, k) != v}
+        if changed:
+            try:
+                settings.save_page_settings(changed)
+            except (OSError, ValueError) as e:
+                raise HTTPException(500, f"Couldn't save settings.toml: {e}") from None
+            audit(w, "settings", None, ", ".join(sorted(changed)))  # names only
+        updated = []
+        if body.apply_backup_defaults:
+            for server in store.list_servers():
+                data = server.model_dump(exclude={"id", "created_at", "updated_at"})
+                data.update(backup_every_h=settings.default_backup_every_h,
+                            backup_keep=settings.default_backup_keep)
+                store.update_server(server.id, ServerConfig.model_validate(data))
+                updated.append(server.name)
+            audit(w, "settings.backups_to_all", None,
+                  f"every {settings.default_backup_every_h} h, keep "
+                  f"{settings.default_backup_keep}: {len(updated)} server(s)")
+        if changed or updated:
+            hub.poke()  # join addresses on every page
+        return {**settings_info(), "changed": sorted(changed), "servers_updated": updated}
+
     # -- Discord (R-60..R-62) ---------------------------------------------------------
 
     def check_webhook(url: str) -> str:
@@ -538,6 +662,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         except KeyError:
             raise HTTPException(404, f"No template {template_id!r}") from None
         draft = templates.draft(chosen.template, install, body.name)
+        draft.update(backup_every_h=settings.default_backup_every_h,
+                     backup_keep=settings.default_backup_keep)
         if install and not Path(draft["exe_path"]).is_file():
             messages.append(f"{draft['exe_path']} doesn't exist (yet). For a new install, save "
                             "the server and press Install on its page; otherwise fix the exe path.")
@@ -654,4 +780,5 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     app.state.backups = backups
     app.state.notifier = notifier
     app.state.steam = steam
+    app.state.configs = config_files
     return app

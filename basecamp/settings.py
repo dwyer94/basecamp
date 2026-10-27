@@ -8,7 +8,10 @@ they belong in ``<data>\\secrets.toml`` (read by the modules that need them, fro
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
+import re
+import threading
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +21,9 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 # Built-in game templates (R-13), shipped the same way; <data>/templates/ can add or override.
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 DEFAULT_STEAMCMD = r"%USERPROFILE%\Desktop\SteamCmd\steamcmd.exe"
+# What the Settings page may change (D-52). The rest stays a settings.toml edit + restart.
+PAGE_SETTINGS = ("join_host", "steamcmd_path", "default_backup_every_h", "default_backup_keep")
+_save_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -52,7 +58,7 @@ class Settings:
     crash_restart_delay_s: float = 10.0
     crash_limit: int = 3
     crash_window_s: float = 600.0
-    # R-53: where save backups go ("" = <data>ackups). Q-08: another drive is fine here.
+    # R-53: where save backups go ("" = <data>\backups). Q-08: another drive is fine here.
     backups_root: str = ""
     # How often the backup scheduler looks for servers that are due (R-50).
     backup_check_s: float = 60.0
@@ -62,6 +68,12 @@ class Settings:
     # long one SteamCMD run may take before it is killed.
     steamcmd_path: str = ""
     steamcmd_timeout_s: float = 3600.0
+    # Backup schedule and retention a new server starts with (R-50); each server can change
+    # its own. Set on the Settings page.
+    default_backup_every_h: float = 0.0
+    default_backup_keep: int = 10
+    # R-41: old copies kept per config file saved from the page.
+    config_copies_keep: int = 20
 
     @property
     def db_path(self) -> Path:
@@ -114,6 +126,30 @@ class Settings:
     def ensure_dirs(self) -> None:
         (self.logs_dir / "servers").mkdir(parents=True, exist_ok=True)
 
+    def save_page_settings(self, values: dict[str, object]) -> None:
+        """Write page-editable settings to settings.toml and apply them at once (D-52).
+
+        Everything in Basecamp holds this one Settings object, so it is changed in place;
+        readers take the value each time they need it. settings.toml is edited line by line
+        so its comments and other keys stay as they are.
+        """
+        unknown = set(values) - set(PAGE_SETTINGS)
+        if unknown:
+            raise ValueError(f"Not a page setting: {', '.join(sorted(unknown))}")
+        with _save_lock:
+            path = self.data_dir / "settings.toml"
+            old = path.read_text(encoding="utf-8") if path.is_file() else ""
+            new = _set_toml_keys(old, "basecamp", values)
+            parsed = tomllib.loads(new).get("basecamp", {})
+            if any(parsed.get(k) != v for k, v in values.items()):  # never write a mangled file
+                raise ValueError("settings.toml couldn't be updated safely; edit it by hand")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(new, encoding="utf-8")
+            os.replace(tmp, path)
+            for key, value in values.items():
+                object.__setattr__(self, key, value)
+
     @classmethod
     def load(cls, data_dir: Path | str | None = None, **overrides: object) -> Settings:
         """Build settings from the data folder's settings.toml, then explicit overrides."""
@@ -141,3 +177,51 @@ class Settings:
         if "notify_retry_s" in values:
             values["notify_retry_s"] = tuple(float(x) for x in values["notify_retry_s"])  # type: ignore[union-attr]
         return cls(data_dir=data_dir, **values)  # type: ignore[arg-type]
+
+
+_HEADER = re.compile(r"^\s*\[\s*([^\]]+?)\s*\]\s*(#.*)?$")
+
+
+def _set_toml_keys(text: str, table: str, values: dict[str, object]) -> str:
+    """``text`` with ``key = value`` lines set under ``[table]`` (added if missing)."""
+    lines = text.splitlines()
+    start = end = None
+    for i, line in enumerate(lines):
+        m = _HEADER.match(line)
+        if m and start is None and m[1] == table:
+            start = i
+        elif m and start is not None:
+            end = i
+            break
+    if start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(f"[{table}]")
+        start = len(lines) - 1
+    if end is None:
+        end = len(lines)
+    for key, value in values.items():
+        line = f"{key} = {_toml_value(value)}"
+        pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
+        for i in range(start + 1, end):
+            if pattern.match(lines[i]):
+                lines[i] = line
+                break
+        else:
+            last = start  # after the table's last non-blank line
+            for i in range(start + 1, end):
+                if lines[i].strip():
+                    last = i
+            lines.insert(last + 1, line)
+            end += 1
+    return "\n".join(lines) + "\n"
+
+
+def _toml_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return repr(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)  # JSON escapes are valid TOML strings
+    raise TypeError(f"can't write {type(value).__name__} to settings.toml")

@@ -62,7 +62,7 @@ basecamp/
   rcon.py            Source RCON client (Palworld, Satisfactory-style, many others)
   steam.py           SteamCMD runner and queue, install and update flow, build ID (D-41..D-47)
   backups.py         zip save folders, schedule, retention, restore (D-35, D-36)
-  configs.py         read/write allowed config files, versioned copies
+  configs.py         config file guard (R-43), encodings, copies kept on save, restore (D-48..D-51)
   notify.py          Discord webhook: secrets.toml, queue, retry (D-37, D-38)
   auth.py            who is asking: admin or friend (D-28, D-29)
   templates.py       game templates (built-in + data folder), appmanifest import
@@ -90,7 +90,7 @@ All under `C:\BasecampData\` (dev PC: `.\data\`):
 | `logs\servers\<id>\console.log` | Each server's output, rotated (10 MB × 5). SteamCMD output lands here too |
 | `logs\steamcmd\<id>\<run>.log` | The output of one SteamCMD install or update (the page's **Output** link) |
 | `backups\<id>\` | Save backups (`YYYYMMDD-HHMMSS-<reason>.zip`, D-35). `backups_root` in settings.toml can put them elsewhere |
-| `config-history\<id>\` | Old copies of config files saved from the editor |
+| `config-history\<id>\<file>-<hash>\` | Old copies of a config file, one per save or restore, newest 20 kept (D-50) |
 | `db-backups\` | Copy of `basecamp.db` taken before each self-update, for rollback |
 | `state.json` | Running servers: host PID + exe + create time, control port and token, game PID + exe + create time. Written on every change, used to reattach after a Basecamp restart |
 | `hosts\<id>\` | `spec.json` (what the host runs, with its control token), `host.json` (control port), `exit.json` (how the last run ended, until Basecamp collects it), `host.log` |
@@ -170,7 +170,7 @@ Built in Phase 3 (`basecamp/steam.py`).
 
 ## API
 
-Built in Phases 2, 3 and 4: everything here except configs, settings and events, which come with their phases.
+Built in Phases 2 to 5: everything here except `/api/events`.
 
 | Method | Path | Who |
 |---|---|---|
@@ -182,11 +182,12 @@ Built in Phases 2, 3 and 4: everything here except configs, settings and events,
 | POST | `/api/servers/{id}/command` · GET `/api/servers/{id}/console?after=` | admin |
 | WS | `/ws/servers/{id}/console?after=` | admin (replay + live, send `{"text": ...}`) |
 | WS | `/ws/status` | everyone (status changes; friends get trimmed fields) |
-| GET/PUT | `/api/servers/{id}/configs/{n}` | admin |
+| GET | `/api/servers/{id}/configs` (the list, with any guard refusal per entry) · GET/PUT `/api/servers/{id}/configs/{n}` (read: text, encoding, hash, copies; save: `{text, base_sha256, force}`, 400 bad JSON, 403 guard, 409 changed on disk) | admin |
+| GET | `/api/servers/{id}/configs/{n}/copies/{name}` · POST `.../copies/{name}/restore` | admin |
 | GET/POST | `/api/servers/{id}/backups` (list, back up now) · POST `/backups/{b}/restore` · DELETE `/backups/{b}` | admin (restore: 409 unless stopped) |
 | GET/PUT | `/api/notify` (main webhook, masked) · PUT `/api/servers/{id}/webhook` · POST `/api/notify/test` | admin |
 | GET | `/api/templates` · POST `/api/drafts` (pre-filled form from a template or an install's appmanifest) | admin |
-| GET/PUT | `/api/settings` | admin |
+| GET/PUT | `/api/settings` (join host, SteamCMD path, backup defaults, `apply_backup_defaults`; the masked Discord info; read-only admin logins) | admin |
 | GET | `/api/events` · `/api/audit` | admin |
 | GET | `/healthz` | localhost |
 
@@ -194,7 +195,7 @@ Built in Phases 2, 3 and 4: everything here except configs, settings and events,
 
 Two pages, both phone-first (one column, big buttons, works at 375 px wide):
 
-- **Dashboard** (admin): a card per server: name, status pill, uptime, CPU/RAM, join address with **Copy** and **Copy for Discord**, buttons Start / Stop / Restart / Update. Tap a card for the server page: **Console**, **Backups** (back up now, restore, delete), **History**; later **Config files**. A pending crash restart shows its time, with **Cancel restart**. A **Discord** page sets the webhooks.
+- **Dashboard** (admin): a card per server: name, status pill, uptime, CPU/RAM, join address with **Copy** and **Copy for Discord**, buttons Start / Stop / Restart / Update. Tap a card for the server page: **Console**, **Config files**, **Backups** (back up now, restore, delete), **History**. A pending crash restart shows its time, with **Cancel restart**. A config file opens in an editor page: Save (JSON checked), Reload, wrap view, fields view for Palworld's `OptionSettings` line, **Restart now** after a save while running, earlier copies with View and Restore. A **Settings** page holds the join host, backup defaults, SteamCMD path and the Discord webhook (per-server webhooks under Advanced).
 - **Friend view**: the same cards with only name, status, join address + Copy.
 - Confirm dialogs on Stop, Update and Restore. Live updates over the status WebSocket, no refreshing.
 - Built with plain HTML/CSS/JS, no library and no CDN (D-34).

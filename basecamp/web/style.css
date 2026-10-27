@@ -31,6 +31,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--bg);
@@ -73,7 +74,7 @@ button, .button {
   font: inherit; font-size: 15px; padding: 10px 16px; min-height: 44px;
   border-radius: 8px; border: 1px solid var(--line); background: var(--card);
   color: var(--text); cursor: pointer; text-decoration: none; display: inline-flex;
-  align-items: center;
+  align-items: center; white-space: nowrap;
 }
 button.primary, .button.primary { background: var(--accent); color: var(--accent-text);
   border-color: var(--accent); }
@@ -121,5 +122,13 @@ td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line
   background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px;
   font-size: 15px; z-index: 10; max-width: calc(100% - 32px);
 }
+/* Config editor: long lines (Palworld's one-line OptionSettings) scroll, never wrap into
+   the file. "Wrap long lines" only changes how it looks. */
+textarea.editor { min-height: 60vh; font-size: 13px; line-height: 1.4; white-space: pre;
+  overflow: auto; overflow-wrap: normal; tab-size: 4; resize: vertical; }
+textarea.editor[wrap="soft"] { white-space: pre-wrap; overflow-wrap: anywhere; }
+.opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 12px; }
+.opts label { overflow-wrap: anywhere; }
+details.card > summary { cursor: pointer; font-weight: 600; min-height: 28px; }
 .empty { text-align: center; color: var(--muted); padding: 30px 0; }
 .offline { color: var(--danger); font-size: 13px; }

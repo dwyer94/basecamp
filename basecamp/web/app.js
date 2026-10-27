@@ -1,6 +1,7 @@
-// Admin page: dashboard, server page with live console and backups, add/edit form,
-// templates, Discord, audit.
-// Hash routes: #  #server/<id>  #new  #edit/<id>  #templates  #discord  #audit
+// Admin page: dashboard, server page with live console, config files and backups, config
+// editor, add/edit form, templates, settings (with Discord), audit.
+// Hash routes: #  #server/<id>  #config/<id>/<n>  #new  #edit/<id>  #templates  #settings
+//              #audit  (#discord is the settings page)
 "use strict";
 
 let me = {};
@@ -131,7 +132,8 @@ function actionButtons(s) {
 function addressBlock(s) {
   if (!s.join_address) {
     return el("div", { class: "hint" }, me.join_host
-      ? "No join port set." : "Join address: set join_host in the data folder's settings.toml.");
+      ? "No join port set." : el("span", {}, "Join address: set the join host on the ",
+        el("a", { href: "#settings" }, "Settings"), " page."));
   }
   return el("div", { class: "address" },
     el("code", {}, s.join_address),
@@ -163,7 +165,7 @@ function dashboard(root) {
     el("div", { class: "buttons", style: "margin-bottom:12px" },
       el("a", { class: "button primary", href: "#new" }, "Add server"),
       el("a", { class: "button", href: "#templates" }, "Templates"),
-      el("a", { class: "button", href: "#discord" }, "Discord"),
+      el("a", { class: "button", href: "#settings" }, "Settings"),
       el("a", { class: "button", href: "#audit" }, "Audit log")),
     list);
   const update = () => {
@@ -192,6 +194,7 @@ function serverPage(root, id) {
   const consoleState = el("div", { class: "hint" });
   const history = el("div");
   const backupBox = el("div");
+  const configBox = el("div");
   const steamBox = el("div");
   let backupBusy = false;
   let lastSeq = 0;
@@ -232,7 +235,7 @@ function serverPage(root, id) {
     history.replaceChildren(rows.length ? el("table", {},
       el("tbody", {}, rows.map((r) => el("tr", {},
         el("td", {}, new Date(r.ts).toLocaleString()), el("td", {}, r.who),
-        el("td", {}, r.action), el("td", {}, r.action === "console" || r.action.startsWith("backup") ? r.detail : "")))))
+        el("td", {}, r.action), el("td", {}, ["console", "backup", "config"].some((a) => r.action.startsWith(a)) ? r.detail : "")))))
       : el("p", { class: "muted" }, "Nothing yet."));
   };
 
@@ -288,15 +291,31 @@ function serverPage(root, id) {
     loadHistory();
   };
 
+  const loadConfigs = async () => {
+    let res;
+    try { res = await api("GET", `/api/servers/${id}/configs`); } catch (e) {
+      configBox.replaceChildren(notice(e.message, "error")); return;
+    }
+    configBox.replaceChildren(res.files.length ? el("table", {}, el("tbody", {}, res.files.map((f) => el("tr", {},
+      el("td", {}, el("strong", {}, f.name), el("div", { class: "hint" }, f.path || f.entry)),
+      el("td", {}, f.error ? el("span", { class: "unverified" }, f.error)
+        : f.exists ? el("span", {}, fmtSize(f.size_bytes), el("div", { class: "hint" }, new Date(f.modified * 1000).toLocaleString()))
+          : el("span", { class: "hint" }, "doesn't exist yet")),
+      el("td", {}, f.error ? null : el("a", { class: "button small", href: `#config/${id}/${f.n}` }, "Open"))))))
+      : el("p", { class: "muted" }, "None listed. Add paths under Edit → Files → Config files."));
+  };
+
   root.replaceChildren(head,
     el("h2", {}, "Console"), out,
     el("div", { class: "command" }, input, el("button", { class: "primary", onclick: send }, "Send")),
     consoleState,
     steamBox,
+    el("h2", {}, "Config files"), configBox,
     el("h2", {}, "Backups"), backupBox,
     el("h2", {}, "History"), history);
 
   let lastState = null;
+  loadConfigs();
   const update = () => {
     const s = servers.find((x) => x.id === id);
     if (!s) {
@@ -328,7 +347,8 @@ function steamSection(s) {
   const last = st.last;
   return el("div", {},
     el("h2", {}, "SteamCMD"),
-    !st.steamcmd_found ? notice(`SteamCMD not found at ${st.steamcmd}. Set steamcmd_path in the data folder's settings.toml.`, "error") : null,
+    !st.steamcmd_found ? notice(el("span", {}, `SteamCMD not found at ${st.steamcmd}. Set its path on the `,
+      el("a", { href: "#settings" }, "Settings"), " page."), "error") : null,
     el("p", { class: "muted" }, `App ${c.steam_app_id || "?"}`,
       c.steam_beta ? `, beta branch ${c.steam_beta}` : "", c.steam_validate ? ", validate on update" : "",
       ". Installed build: ", el("strong", {}, st.build_id || (st.installed ? "unknown" : "not installed")),
@@ -378,7 +398,7 @@ function serverForm(root, id) {
   let values = { ...BLANK };
 
   const fill = (data) => {
-    values = { ...BLANK, ...data };
+    values = { ...BLANK, ...(me.backup_defaults || {}), ...data };
     renderForm();
   };
 
@@ -499,7 +519,7 @@ function serverForm(root, id) {
           inputs.notify_off = () => boxes.map((b) => $("input", b)).filter((i) => !i.checked).map((i) => i.dataset.ev);
           return el("div", {}, boxes);
         })(),
-        el("div", { class: "hint" }, "The webhook is set on the Discord page.")),
+        el("div", { class: "hint" }, "The webhook and the defaults for new servers are on the Settings page.")),
       field("Notes", (() => {
         const t = el("textarea", {}); t.value = values.notes || "";
         inputs.notes = () => t.value; return t;
@@ -556,7 +576,7 @@ function serverForm(root, id) {
     api("GET", `/api/servers/${id}`).then((s) => fill(s.config))
       .catch((e) => root.replaceChildren(notice(e.message, "error")));
   } else {
-    renderForm();
+    fill({});
     api("GET", "/api/templates").then((res) => {
       for (const t of res.templates) {
         tplSelect.append(el("option", { value: t.id },
@@ -589,17 +609,264 @@ async function templatesPage(root) {
       el("div", { class: "muted" }, t.docs.map((d) => el("div", {}, el("a", { href: d, target: "_blank", rel: "noreferrer" }, d)))))));
 }
 
-// -- Discord ---------------------------------------------------------------------------
+// -- config editor (R-40..R-43) -------------------------------------------------------------
 
-async function discordPage(root) {
-  const res = await api("GET", "/api/notify");
+// Palworld keeps its whole config on one OptionSettings=(Key=Value,...) line. Split it into
+// fields (top-level commas only; quoted strings and (a,b) lists stay whole) and back.
+const OPTION_LINE = /^(\s*OptionSettings\s*=\s*\()(.*)(\)\s*)$/;
+
+function parseOptionLine(line) {
+  const m = line.match(OPTION_LINE);
+  if (!m) return null;
+  const items = [];
+  let depth = 0, quoted = false, cur = "";
+  for (const ch of m[2]) {
+    if (quoted) { cur += ch; if (ch === '"') quoted = false; continue; }
+    if (ch === '"') quoted = true;
+    else if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === "," && depth === 0) { items.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur) items.push(cur);
+  const pairs = items.map((it) => {
+    const i = it.indexOf("=");
+    return i > 0 ? { key: it.slice(0, i), raw: it.slice(i + 1) } : null;
+  });
+  if (quoted || depth !== 0 || !pairs.length || pairs.some((p) => !p)) return null;
+  return { head: m[1], tail: m[3], pairs };
+}
+
+function optionLine(parsed) {
+  return parsed.head + parsed.pairs.map((p) => `${p.key}=${p.raw}`).join(",") + parsed.tail;
+}
+
+function optionFields(parsed, onChange) {
+  const filter = el("input", { placeholder: "Filter settings", autocomplete: "off", spellcheck: "false" });
+  const rows = parsed.pairs.map((p) => {
+    const isQuoted = /^".*"$/.test(p.raw);
+    const isBool = /^(True|False)$/.test(p.raw);
+    let input;
+    if (isBool) {
+      input = el("select", {}, ["True", "False"].map((v) => el("option", { value: v, selected: p.raw === v }, v)));
+    } else {
+      input = el("input", { value: isQuoted ? p.raw.slice(1, -1) : p.raw, autocomplete: "off", spellcheck: "false" });
+    }
+    input.addEventListener("input", () => {
+      let v = input.value;
+      if (isQuoted) v = `"${v.replace(/"/g, "")}"`;  // the format has no escapes
+      p.raw = v;
+      onChange();
+    });
+    return el("div", { class: "opt", "data-key": p.key.toLowerCase() },
+      el("label", {}, p.key, isQuoted ? el("span", { class: "hint" }, " (text)") : null), input);
+  });
+  filter.addEventListener("input", () => {
+    const q = filter.value.trim().toLowerCase();
+    for (const r of rows) r.hidden = q && !r.dataset.key.includes(q);
+  });
+  return el("div", {}, filter, el("div", { class: "opts" }, rows));
+}
+
+function configPage(root, id, n) {
+  let file = null;          // the file as last loaded or saved
+  let saved = "";           // its text, to tell unsaved edits
+  const head = el("div", { class: "card" });
+  const messages = el("div");
+  const area = el("textarea", { class: "editor", wrap: "off", spellcheck: "false",
+    autocapitalize: "off", autocomplete: "off", "aria-label": "File contents" });
+  const fieldsBox = el("div", { hidden: true });
+  const copiesBox = el("div");
+  const copyView = el("div");
+  const wrapBox = el("input", { type: "checkbox" });
+  const fieldsBtn = el("button", { type: "button", hidden: true }, "Edit as fields");
+  const saveBtn = el("button", { class: "primary", type: "button" }, "Save");
+  const server = () => servers.find((x) => x.id === id);
+  const dirty = () => file !== null && area.value !== saved;
+  const base = `/api/servers/${id}/configs/${n}`;
+
+  wrapBox.addEventListener("change", () => area.setAttribute("wrap", wrapBox.checked ? "soft" : "off"));
+
+  const optionIndex = () => area.value.split("\n").findIndex((l) => OPTION_LINE.test(l));
+  let fieldsOn = false;
+  const showFields = (on) => {
+    fieldsOn = on;
+    if (on) {
+      const lines = area.value.split("\n");
+      const i = optionIndex();
+      const parsed = i >= 0 ? parseOptionLine(lines[i]) : null;
+      if (!parsed) { toast("Couldn't read the OptionSettings line as fields"); fieldsOn = false; }
+      else {
+        fieldsBox.replaceChildren(optionFields(parsed, () => {
+          const now = area.value.split("\n");
+          now[i] = optionLine(parsed);
+          area.value = now.join("\n");
+          renderHead();
+        }));
+      }
+    }
+    fieldsBox.hidden = !fieldsOn;
+    area.hidden = fieldsOn;
+    fieldsBtn.textContent = fieldsOn ? "Edit as text" : "Edit as fields";
+  };
+  fieldsBtn.addEventListener("click", () => showFields(!fieldsOn));
+  area.addEventListener("input", () => renderHead());
+
+  const renderHead = () => {
+    const s = server();
+    head.replaceChildren(
+      el("div", { class: "card-head" },
+        el("a", { class: "name", href: `#server/${id}` }, s ? s.name : `Server ${id}`),
+        s ? statePill(s.state) : null),
+      file ? el("div", {},
+        el("div", { style: "margin-top:6px" }, el("strong", {}, file.name), " ",
+          el("span", { class: "tag" }, file.kind), " ", dirty() ? el("span", { class: "tag unverified" }, "unsaved") : null),
+        el("div", { class: "hint" }, el("code", {}, file.path)),
+        el("div", { class: "hint" }, file.exists ? file.encoding : "Doesn't exist yet: saving creates it.",
+          file.kind === "json" ? " · JSON is checked before saving." : "")) : null);
+  };
+
+  const restartOffer = (what = "Saved") => el("div", { class: "notice ok" },
+    `${what}. The server is running; it reads the file when it starts. `,
+    el("div", { class: "buttons" },
+      el("button", { class: "primary", onclick: async (e) => {
+        const s = server();
+        if (!s || !confirm(`Restart ${s.name} now?`)) return;
+        e.target.disabled = true;
+        try { await api("POST", `/api/servers/${id}/restart`); toast(`Restart: ${s.name}`); messages.replaceChildren(); }
+        catch (err) { alert(err.message); e.target.disabled = false; }
+      } }, "Restart now"),
+      el("button", { onclick: () => messages.replaceChildren() }, "Later")));
+
+  const load = async () => {
+    try { file = await api("GET", base); } catch (e) {
+      root.replaceChildren(head, notice(e.message, "error"), el("a", { href: `#server/${id}` }, "Back"));
+      renderHead();
+      return;
+    }
+    area.value = file.text;
+    saved = area.value;
+    const hasLine = optionIndex() >= 0 && parseOptionLine(area.value.split("\n")[optionIndex()]);
+    fieldsBtn.hidden = !hasLine;
+    if (fieldsOn) showFields(Boolean(hasLine));
+    renderHead();
+    renderCopies(file.copies);
+  };
+
+  const save = async (force = false) => {
+    saveBtn.disabled = true;
+    try {
+      const res = await api("PUT", base, { text: area.value, base_sha256: file.sha256, force });
+      file.sha256 = res.sha256;
+      file.exists = true;
+      saved = area.value;
+      renderHead();
+      renderCopies(res.copies);
+      messages.replaceChildren(res.running ? restartOffer()
+        : notice(res.copy ? "Saved. The old file was kept as a copy below." : "Saved.", "ok"));
+    } catch (e) {
+      if (/changed on disk/.test(e.message)) {
+        if (confirm(`${e.message}. Overwrite it with your version? (Its current contents are kept as a copy.)`)) {
+          saveBtn.disabled = false; return save(true);
+        }
+        messages.replaceChildren(notice(`${e.message}. Not saved. Reload to see it (your edits are lost), or save again to overwrite.`, "error"));
+      } else {
+        messages.replaceChildren(notice(e.message, "error"));
+      }
+    }
+    saveBtn.disabled = false;
+  };
+  saveBtn.addEventListener("click", () => save());
+
+  const reload = () => {
+    if (dirty() && !confirm("Throw away your unsaved edits?")) return;
+    messages.replaceChildren();
+    load();
+  };
+
+  const viewCopy = async (c) => {
+    try {
+      const res = await api("GET", `${base}/copies/${encodeURIComponent(c.name)}`);
+      const pre = el("textarea", { class: "editor", wrap: "off", readonly: true, "aria-label": "Copy contents" });
+      pre.value = res.text;
+      copyView.replaceChildren(el("div", { class: "card" },
+        el("div", { class: "card-head" }, el("span", { class: "name" }, `Copy from ${new Date(c.created * 1000).toLocaleString()}`),
+          el("button", { class: "small", onclick: () => copyView.replaceChildren() }, "Close")),
+        el("div", { class: "hint" }, res.encoding), pre));
+      copyView.scrollIntoView();
+    } catch (e) { alert(e.message); }
+  };
+
+  const restore = async (c) => {
+    if (dirty() && !confirm("You have unsaved edits; restoring throws them away. Go on?")) return;
+    if (!confirm(`Put back the copy from ${new Date(c.created * 1000).toLocaleString()}? The current file is kept as a copy first.`)) return;
+    try {
+      const res = await api("POST", `${base}/copies/${encodeURIComponent(c.name)}/restore`);
+      copyView.replaceChildren();
+      await load();
+      messages.replaceChildren(res.running ? restartOffer("Restored")
+        : notice("Restored. The file it replaced was kept as a copy.", "ok"));
+    } catch (e) { alert(e.message); }
+  };
+
+  const renderCopies = (copies) => {
+    copiesBox.replaceChildren(copies.length ? el("table", {}, el("tbody", {}, copies.map((c, i) => el("tr", {},
+      el("td", {}, new Date(c.created * 1000).toLocaleString(), " ", i === 0 ? el("span", { class: "tag" }, "newest") : null,
+        el("div", { class: "hint" }, c.reason === "restore" ? "before a restore" : "before a save")),
+      el("td", {}, fmtSize(c.size_bytes)),
+      el("td", {}, el("div", { class: "buttons", style: "margin:0" },
+        el("button", { class: "small", onclick: () => viewCopy(c) }, "View"),
+        el("button", { class: "small", onclick: () => restore(c) }, "Restore")))))))
+      : el("p", { class: "muted" }, "None yet. Each save keeps the old file here."));
+  };
+
+  const onLeave = (e) => { if (dirty()) { e.preventDefault(); e.returnValue = ""; } };
+  window.addEventListener("beforeunload", onLeave);
+
+  root.replaceChildren(head, messages,
+    el("div", { class: "buttons", style: "margin:0 0 8px" }, saveBtn,
+      el("button", { type: "button", onclick: reload }, "Reload"), fieldsBtn,
+      el("label", { class: "check", style: "margin:0" }, wrapBox, "Wrap long lines")),
+    area, fieldsBox,
+    el("h2", {}, "Earlier copies"),
+    el("p", { class: "muted" }, "The newest 20 are kept. Restore puts one back exactly as it was."),
+    copiesBox, copyView);
+  renderHead();
+  load();
+  return { update: renderHead, dirty, close: () => window.removeEventListener("beforeunload", onLeave) };
+}
+
+// -- settings (D-52) and Discord (R-60..R-62) ------------------------------------------------
+
+async function settingsPage(root) {
+  const res = await api("GET", "/api/settings");
+  const n = res.notify;
+  const joinInput = el("input", { value: res.join_host, placeholder: "e.g. 100.x.y.z", autocomplete: "off", spellcheck: "false" });
+  const everyInput = el("input", { type: "number", min: "0", step: "any", value: res.default_backup_every_h });
+  const keepInput = el("input", { type: "number", min: "1", value: res.default_backup_keep });
+  const allBox = el("input", { type: "checkbox" });
+  const steamInput = el("input", { value: res.steamcmd_path, placeholder: "%USERPROFILE%\\Desktop\\SteamCmd\\steamcmd.exe", autocomplete: "off", spellcheck: "false" });
+  const saveSettings = async () => {
+    if (allBox.checked && !confirm(`Give all ${servers.length} servers this backup schedule and count?`)) return;
+    try {
+      const out = await api("PUT", "/api/settings", {
+        join_host: joinInput.value.trim(), steamcmd_path: steamInput.value.trim(),
+        default_backup_every_h: Number(everyInput.value || 0), default_backup_keep: Number(keepInput.value || 1),
+        apply_backup_defaults: allBox.checked });
+      me = await api("GET", "/api/me");
+      toast(out.changed.length || out.servers_updated.length
+        ? `Saved${out.servers_updated.length ? `; ${out.servers_updated.length} servers updated` : ""}` : "Nothing changed");
+      settingsPage(root);
+    } catch (e) { alert(e.message); }
+  };
+
   const urlInput = el("input", { placeholder: "https://discord.com/api/webhooks/…", autocomplete: "off" });
   const save = async (serverId, input) => {
     const path = serverId ? `/api/servers/${serverId}/webhook` : "/api/notify";
     try {
       await api("PUT", path, { webhook_url: input.value.trim() });
       toast(input.value.trim() ? "Webhook saved" : "Webhook removed");
-      discordPage(root);
+      settingsPage(root);
     } catch (e) { alert(e.message); }
   };
   const test = async (serverId) => {
@@ -609,7 +876,7 @@ async function discordPage(root) {
     } catch (e) { alert(e.message); }
   };
   const serverRows = servers.map((s) => {
-    const own = res.servers[String(s.id)];
+    const own = n.servers[String(s.id)];
     const input = el("input", { placeholder: own ? "Leave empty and save to remove" : "Optional: its own webhook", autocomplete: "off" });
     return el("div", { class: "card" },
       el("div", { class: "card-head" }, el("span", { class: "name" }, s.name)),
@@ -619,20 +886,49 @@ async function discordPage(root) {
         el("button", { class: "small", onclick: () => save(s.id, input) }, "Save"),
         own ? el("button", { class: "small", onclick: () => test(s.id) }, "Test") : null));
   });
-  root.replaceChildren(el("h2", {}, "Discord"),
-    el("p", { class: "muted" }, "Messages go to a channel webhook (Channel settings → Integrations → Webhooks). The URL is kept in the data folder's secrets.toml, never shown in full here."),
+  const saveMain = () => {
+    if (!urlInput.value.trim() && !(n.configured && confirm("Remove the main webhook? Nothing will post to Discord."))) return;
+    save(null, urlInput);
+  };
+  const ownCount = Object.keys(n.servers).length;
+  root.replaceChildren(el("h2", {}, "Settings"),
     el("div", { class: "card" },
-      el("div", { class: "card-head" }, el("span", { class: "name" }, "Main webhook"),
-        el("span", { class: "tag" }, res.configured ? "set" : "not set")),
-      res.configured ? el("div", { class: "hint" }, el("code", {}, res.webhook)) : null,
-      field(res.configured ? "Replace with" : "Webhook URL", urlInput, res.configured ? "Leave empty and save to remove it." : null),
+      el("div", { class: "card-head" }, el("span", { class: "name" }, "Join address")),
+      field("Join host", joinInput, "The host PC's Tailscale IP (or name) friends type in. The Copy buttons give <join host>:<the server's join port>."),
+      el("div", { class: "card-head", style: "margin-top:18px" }, el("span", { class: "name" }, "Backups")),
+      el("div", { class: "hint" }, "What a new server starts with; each server can change its own under Edit."),
+      field("Back up every (hours)", everyInput, "While the server runs. 0 = only by hand and before updates."),
+      field("Backups to keep", keepInput),
+      el("label", { class: "check" }, allBox, `Also give all ${servers.length} existing servers this schedule and count`),
+      el("div", { class: "hint" }, "Stored in ", el("code", {}, res.backups_dir), "."),
+      el("div", { class: "card-head", style: "margin-top:18px" }, el("span", { class: "name" }, "SteamCMD")),
+      field("steamcmd.exe", steamInput, "Empty = the default (the greyed-out text)."),
+      el("div", { class: res.steamcmd_found ? "hint" : "hint unverified" },
+        res.steamcmd_found ? "Found: " : "Not found: ", el("code", {}, res.steamcmd)),
+      el("div", { class: "buttons" }, el("button", { class: "primary", onclick: saveSettings }, "Save settings"))),
+
+    el("h2", {}, "Discord"),
+    el("div", { class: "card" },
+      el("div", { class: "card-head" }, el("span", { class: "name" }, "Webhook"),
+        el("span", { class: "tag" }, n.configured ? "set" : "not set")),
+      el("div", { class: "hint" }, "One channel gets every message. Make a webhook in Discord (Channel settings → Integrations → Webhooks). It's kept in the data folder's secrets.toml and never shown in full."),
+      n.configured ? el("div", { class: "hint" }, el("code", {}, n.webhook)) : null,
+      field(n.configured ? "Replace with" : "Webhook URL", urlInput, n.configured ? "Leave empty and save to remove it." : null),
       el("div", { class: "buttons" },
-        el("button", { class: "primary", onclick: () => save(null, urlInput) }, "Save"),
-        res.configured ? el("button", { onclick: () => test(null) }, "Send a test") : null),
-      el("div", { class: "hint" }, `Sent ${res.sent}, failed ${res.failed}, waiting ${res.pending} since Basecamp started.`)),
-    el("h2", {}, "Per server"),
-    el("p", { class: "muted" }, "A server's own webhook replaces the main one. Which events post is set in each server's Edit form."),
-    ...serverRows);
+        el("button", { class: "primary", onclick: saveMain }, "Save webhook"),
+        n.configured ? el("button", { onclick: () => test(null) }, "Send a test") : null),
+      el("div", { class: "hint" }, `Sent ${n.sent}, failed ${n.failed}, waiting ${n.pending} since Basecamp started.`)),
+    el("details", { class: "card", open: ownCount > 0 },
+      el("summary", {}, `Advanced: a webhook per server${ownCount ? ` (${ownCount} set)` : ""}`),
+      el("p", { class: "muted" }, "A server's own webhook replaces the main one for that server. Which events post is set in each server's Edit form."),
+      ...serverRows),
+
+    el("h2", {}, "Set in settings.toml"),
+    el("div", { class: "card" },
+      el("p", { class: "muted", style: "margin-top:0" }, "Change these in ", el("code", {}, res.settings_file), " and restart Basecamp."),
+      el("table", {}, el("tbody", {},
+        el("tr", {}, el("td", {}, "Admin logins"), el("td", {}, res.admin_logins.length ? res.admin_logins.join(", ") : "none (only this PC)")),
+        el("tr", {}, el("td", {}, "Config copies kept"), el("td", {}, String(res.config_copies_keep)))))));
 }
 
 // -- audit log -------------------------------------------------------------------------
@@ -652,18 +948,26 @@ async function auditPage(root) {
 
 // -- routing ------------------------------------------------------------------------
 
+let lastHash = location.hash;
+
 function route() {
+  if (page && page.dirty && page.dirty() && !confirm("Leave without saving your edits?")) {
+    history.replaceState(null, "", lastHash || "#");
+    return;
+  }
+  lastHash = location.hash;
   if (page && page.close) page.close();
   page = null;
   const root = $("#view");
-  const [name, arg] = location.hash.replace(/^#\/?/, "").split("/");
+  const [name, arg, arg2] = location.hash.replace(/^#\/?/, "").split("/");
   const id = arg ? Number(arg) : null;
   window.scrollTo(0, 0);
   if (name === "server" && id) page = serverPage(root, id);
+  else if (name === "config" && id && /^\d+$/.test(arg2 || "")) page = configPage(root, id, Number(arg2));
   else if (name === "new") page = serverForm(root, null);
   else if (name === "edit" && id) page = serverForm(root, id);
   else if (name === "templates") templatesPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
-  else if (name === "discord") discordPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
+  else if (name === "settings" || name === "discord") settingsPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
   else if (name === "audit") auditPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
   else page = dashboard(root);
 }
