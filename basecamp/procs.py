@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import socket
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -114,24 +113,12 @@ def kill_tree(*procs: psutil.Process | None, timeout: float = 5.0) -> None:
 
 
 def port_in_use(port: int, protocol: Protocol) -> bool:
-    """True if something on this PC already holds the port (R-03)."""
-    kind = socket.SOCK_DGRAM if protocol is Protocol.UDP else socket.SOCK_STREAM
-    sock = socket.socket(socket.AF_INET, kind)
-    try:
-        # Exclusive bind fails if any socket holds the port, wildcard or specific address.
-        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        sock.bind(("0.0.0.0", port))
-    except OSError:
-        return True
-    finally:
-        sock.close()
-    return _listed_in_use(port, protocol)
+    """True if something on this PC already holds the port (R-03).
 
-
-def _listed_in_use(port: int, protocol: Protocol) -> bool:
-    # Second opinion from the OS tables, for sockets bound to one specific address.
-    kind = "udp4" if protocol is Protocol.UDP else "tcp4"
+    Reads the OS socket tables only. Never test-binds the port: a bind on 0.0.0.0
+    makes Windows offer to add an allow rule for Basecamp's Python (D-87).
+    """
+    kind = "udp" if protocol is Protocol.UDP else "tcp"
     try:
         conns = psutil.net_connections(kind=kind)
     except (psutil.Error, OSError):

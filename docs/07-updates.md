@@ -116,7 +116,7 @@ Releases are built on the dev PC rather than GitHub Actions so the signing key n
 
 ## Updating the Python runtime or launcher
 
-Rare. Run `scripts\install.ps1` again in an admin PowerShell on the prod PC. It replaces `python\` and `launcher.py`, keeps `versions\`, data and settings. Running hosts use `python\pythonw.exe`, so the files are in use while any server runs: `install.ps1` must either ask for the servers to be stopped first, or install the new runtime beside the old one (e.g. `python-3.13.x\`) and leave the old one until no host uses it.
+Rare. Run `scripts\install.ps1` again in an admin PowerShell on the prod PC. It replaces `python\` and `launcher.py`, keeps `versions\`, data and settings. Running hosts use `python\pythonw.exe`, so the files are in use while any server runs: `install.ps1` refuses to replace the runtime while anything runs from it, so stop the servers from Basecamp first (D-82).
 
 ## Testing on the dev PC
 

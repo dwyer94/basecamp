@@ -13,7 +13,7 @@ from tests.conftest import PYTHON, free_port
 
 def test_port_in_use_udp_and_tcp():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
-        udp.bind(("0.0.0.0", 0))
+        udp.bind(("127.0.0.1", 0))
         port = udp.getsockname()[1]
         assert procs.port_in_use(port, Protocol.UDP)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp:
