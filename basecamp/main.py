@@ -18,6 +18,7 @@ from basecamp.crashes import CrashPolicy
 from basecamp.db import Store
 from basecamp.logs import setup_logging
 from basecamp.notify import Notifier
+from basecamp.selfupdate import SelfUpdater
 from basecamp.settings import Settings
 from basecamp.steam import SteamRunner
 from basecamp.supervisor import Supervisor
@@ -25,7 +26,9 @@ from basecamp.supervisor import Supervisor
 log = logging.getLogger(__name__)
 
 
-def run(settings: Settings | None = None, stop: threading.Event | None = None) -> None:
+def run(settings: Settings | None = None, stop: threading.Event | None = None) -> int:
+    """Runs until ``stop`` is set; returns the exit code (3 = the launcher should start the
+    update named in pending.txt, docs/07-updates.md)."""
     settings = settings or Settings.load()
     stop = stop or threading.Event()
     setup_logging(settings)
@@ -49,8 +52,10 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
         notifier.post(":arrow_forward: Basecamp started after the PC restarted"
                       + (f"; starting {', '.join(names)}" if names else ""))
     backups.start_scheduler()
+    updater = SelfUpdater(settings, store, notifier, stop)
+    updater.start()
     app = create_app(store, supervisor, settings, notifier=notifier, backups=backups,
-                     crashes=crashes, steam=steam)
+                     crashes=crashes, steam=steam, updater=updater)
     config = uvicorn.Config(app, host=settings.host,
                             port=settings.port, log_config=None, access_log=False,
                             ws_ping_interval=20,
@@ -75,10 +80,12 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
         # Game servers keep running (D-09); the next start adopts them.
         log.info("Basecamp stopping; game servers are left running")
         backups.stop_scheduler()
+        updater.close()
         steam.close()
         notifier.close()
         supervisor.detach()
         store.close()
+    return updater.finish_exit()
 
 
 def first_start_since_boot(settings: Settings) -> bool:

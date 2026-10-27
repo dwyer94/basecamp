@@ -86,9 +86,11 @@ See [07-updates.md](07-updates.md).
 - Migrations runner and pre-update DB backup.
 - `scripts/release.ps1`: checks, version bump, tag, build zip with vendored deps, manifest, Ed25519 signature, `gh release create`.
 - `selfupdate.py`: poll with ETag, beta channel, download, verify, unpack, banner + Discord, Install button, optional auto-install hour (R-90..R-94).
-- Make the signing key on the dev PC and back it up.
+- Make the signing key on the dev PC and back it up (owner: `scripts\new-signing-key.ps1`).
 
 **Done when:** on the dev PC, a local "prod-like" folder (`C:\BasecampTest\`) updates from a real release v0.1.0 → v0.2.0 with a fake server still running and adopted; a deliberately broken v0.3.0 (fails `/healthz`) rolls back to v0.2.0 by itself; a zip with a bad signature is refused.
+
+**Status:** built on the dev PC (2026-10-27): `launcher.py`, `basecamp/selfupdate.py`, `scripts/build_release.py`, `release.ps1`, `new-signing-key.ps1`, the dashboard banner and the Settings page's update section; 34 new tests, 207 in all (launcher swap, health check, rollback with the DB copy, back-off, pruning; signature, manifest, zip paths, migrations on a copy, ETag, beta channel, install hand-over, auto-install, API). The done-when ran against a local fake release source instead of GitHub (`tools/e2e_selfupdate.py`, throwaway key, real vendored dependencies, launcher on the base Python): v0.1.0 → v0.2.0 in about 2 s with the fake game keeping its PID and console and the new migration applied; a broken v0.3.0 (`/healthz` answers 500) rolled back to v0.2.0 and its DB copy by itself after 60 s with the game still running; a v0.4.0 with a bad signature was refused with nothing unpacked; 21/21 checks. The run also caught a bug, now fixed: the broken v0.3.0 announced its own update before its health check had failed (D-57). **Waiting on the owner:** making the real signing key (`scripts\new-signing-key.ps1`) and backing it up, and a go to publish a real v0.1.0 (and v0.2.0) on GitHub to prove that path. Not tried: GitHub's own redirects and rate limits, auto-install at its hour in a live run (unit-tested), a launcher started by Task Scheduler under `pythonw.exe` (Phase 7). Decisions D-53..D-60.
 
 ## Phase 7 · Prod PC install (with you, one step at a time)
 

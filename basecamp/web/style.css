@@ -132,3 +132,5 @@ textarea.editor[wrap="soft"] { white-space: pre-wrap; overflow-wrap: anywhere; }
 details.card > summary { cursor: pointer; font-weight: 600; min-height: 28px; }
 .empty { text-align: center; color: var(--muted); padding: 30px 0; }
 .offline { color: var(--danger); font-size: 13px; }
+pre.notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow-y: auto;
+  font-size: 13px; margin: 6px 0 0; }

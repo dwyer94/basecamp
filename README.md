@@ -4,7 +4,7 @@ Home base for the game servers you host for friends.
 
 Basecamp is a small Windows app that runs on an always-on Windows PC (the "host PC"). It starts when the PC boots, before anyone logs in, and brings back up every game server you've marked "start on boot". You control it from a web page that works on desktop and phone, over Tailscale.
 
-**Status:** Phases 1 to 4 built and tested on the dev PC: the core supervisor, the web API and the admin and friend pages, templates for Palworld, Enshrouded, V Rising, RuneScape: Dragonwilds and Windrose, SteamCMD installs and one-click updates, and save backups, crash auto-restart and Discord messages. Phase 5's config editor and settings page are built too; checking the game templates on the host PC is still open. Each running server has its own small host process, so games and their consoles carry on through Basecamp restarts and updates. See [docs/05-plan.md](docs/05-plan.md).
+**Status:** Phases 1 to 4 built and tested on the dev PC: the core supervisor, the web API and the admin and friend pages, templates for Palworld, Enshrouded, V Rising, RuneScape: Dragonwilds and Windrose, SteamCMD installs and one-click updates, and save backups, crash auto-restart and Discord messages. Phase 5's config editor and settings page are built too; checking the game templates on the host PC is still open. Phase 6's self-update from GitHub Releases (launcher, signed releases, automatic rollback) is built and tested end to end against a local fake release source; the first real release waits for the signing key. Each running server has its own small host process, so games and their consoles carry on through Basecamp restarts and updates. See [docs/05-plan.md](docs/05-plan.md).
 
 ## What it does (v1)
 
@@ -68,5 +68,7 @@ admin_logins = ["you@example.com"]
 [discord]
 webhook_url = "http://127.0.0.1:<port>/api/webhooks/1/test"
 ```
+
+- Self-update: `python -m basecamp` checks for releases but can't install them (no launcher). To try the whole flow, `tools\e2e_selfupdate.py --root C:\BasecampTest --work <scratch folder>` builds test releases with a throwaway key, serves them from [tools/fake_releases.py](tools/fake_releases.py) and runs them under the launcher ([docs/07-updates.md](docs/07-updates.md)). Releases are made with `scripts\release.ps1 <version>` (owner only; it publishes to GitHub after asking).
 
 Tests run real processes against [tools/fake_server.py](tools/fake_server.py) and [tools/fake_steamcmd.py](tools/fake_steamcmd.py), never real games or SteamCMD.

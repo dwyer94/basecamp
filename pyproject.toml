@@ -9,6 +9,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dynamic = ["version"]
 dependencies = [
+    "cryptography>=43",
     "fastapi>=0.115",
     "psutil>=6.1",
     "pydantic>=2.9",
@@ -28,7 +29,7 @@ dev = [
 packages = ["basecamp", "basecamp.api"]
 
 [tool.setuptools.package-data]
-basecamp = ["web/*"]
+basecamp = ["web/*", "release_key.pub"]
 
 [tool.setuptools.dynamic]
 version = { attr = "basecamp.__version__" }

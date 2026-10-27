@@ -35,6 +35,7 @@ from basecamp.crashes import CrashPolicy
 from basecamp.db import Store
 from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig, ServerState
 from basecamp.notify import Notifier
+from basecamp.selfupdate import SelfUpdater, UpdateError
 from basecamp.settings import PAGE_SETTINGS, Settings
 from basecamp.steam import Kind, SteamError, SteamRunner
 from basecamp.supervisor import InvalidState, PortInUse, Supervisor, SupervisorError
@@ -73,6 +74,8 @@ class SettingsIn(BaseModel):
     steamcmd_path: str | None = Field(default=None, max_length=400, pattern=r"^[^\x00-\x1f]*$")
     default_backup_every_h: float | None = Field(default=None, ge=0, le=24 * 30)
     default_backup_keep: int | None = Field(default=None, ge=1, le=1000)
+    update_beta: bool | None = None
+    update_auto_hour: int | None = Field(default=None, ge=-1, le=23)  # -1 = off
     # Also give every existing server the backup defaults.
     apply_backup_defaults: bool = False
 
@@ -135,7 +138,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                notifier: Notifier | None = None, backups: Backups | None = None,
                crashes: CrashPolicy | None = None,
                steam: SteamRunner | None = None,
-               config_files: ConfigFiles | None = None) -> FastAPI:
+               config_files: ConfigFiles | None = None,
+               updater: SelfUpdater | None = None) -> FastAPI:
     """The services are made by main.run; tests may leave them out (no crash restarts)."""
     hub = _Hub()
     cpu = views.CpuSampler()
@@ -143,6 +147,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     backups = backups or Backups(store, sup, settings, notifier.server_event)
     steam = steam or SteamRunner(store, sup, settings, backups, notifier)
     config_files = config_files or ConfigFiles(settings)
+    updater = updater or SelfUpdater(settings, store, notifier)
     sup.add_listener(hub.poke)
     steam.add_listener(hub.poke)
 
@@ -520,7 +525,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                 "config_copies_keep": settings.config_copies_keep,
                 "backups_dir": str(settings.backups_dir),
                 "settings_file": str(settings.data_dir / "settings.toml"),
-                "notify": notify_info()}
+                "notify": notify_info(), "update": updater.view()}
 
     @app.get("/api/settings")
     def read_settings(w: Admin) -> dict:
@@ -671,6 +676,35 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             messages.append("Not yet checked against a real install: "
                             + ", ".join(chosen.template.unverified) + ".")
         return {"draft": draft, "messages": messages, "unverified": chosen.template.unverified}
+
+    # -- Basecamp's own updates (R-90..R-94) -------------------------------------------
+
+    @app.get("/api/update")
+    def update_info(w: Admin) -> dict:
+        return updater.view()
+
+    @app.post("/api/update/check", status_code=202)
+    def update_check(w: Admin) -> dict:
+        started = updater.check_async()
+        if started:
+            audit(w, "update.check")
+        return updater.view()
+
+    @app.post("/api/update/install", status_code=202)
+    def update_install(w: Admin) -> dict:
+        try:
+            version = updater.install(w.label)
+        except UpdateError as e:
+            audit(w, "update.refused", None, str(e))
+            raise HTTPException(409, str(e)) from None
+        audit(w, "update.install", None, f"{updater.current} -> {version}")
+        return updater.view()
+
+    @app.post("/api/update/dismiss")
+    def update_dismiss(w: Admin) -> dict:
+        updater.dismiss()
+        audit(w, "update.dismiss")
+        return updater.view()
 
     # -- audit log (R-83) ------------------------------------------------------------
 

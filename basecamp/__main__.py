@@ -1,3 +1,5 @@
+import sys
+
 from basecamp.main import run
 
-run()
+sys.exit(run())

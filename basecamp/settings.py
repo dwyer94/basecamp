@@ -22,7 +22,8 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 DEFAULT_STEAMCMD = r"%USERPROFILE%\Desktop\SteamCmd\steamcmd.exe"
 # What the Settings page may change (D-52). The rest stays a settings.toml edit + restart.
-PAGE_SETTINGS = ("join_host", "steamcmd_path", "default_backup_every_h", "default_backup_keep")
+PAGE_SETTINGS = ("join_host", "steamcmd_path", "default_backup_every_h", "default_backup_keep",
+                 "update_beta", "update_auto_hour")
 _save_lock = threading.Lock()
 
 
@@ -74,6 +75,13 @@ class Settings:
     default_backup_keep: int = 10
     # R-41: old copies kept per config file saved from the page.
     config_copies_keep: int = 20
+    # R-90..R-94: Basecamp's own updates. The repo is public, so no token. update_api is
+    # only changed to point the dev PC at a local fake release server (tools/fake_releases.py).
+    update_repo: str = "dwyer94/basecamp"
+    update_api: str = "https://api.github.com"
+    update_check_h: float = 6.0  # 0 = only "Check now"
+    update_beta: bool = False  # pre-releases count too
+    update_auto_hour: int = -1  # 0-23: install a new release at that hour; -1 = off
 
     @property
     def db_path(self) -> Path:

@@ -157,11 +157,85 @@ function metaLine(s) {
       : s.steam.installed ? "build unknown" : "not installed") : null);
 }
 
+// -- Basecamp's own updates (R-90..R-92) ---------------------------------------------
+
+// After Install, Basecamp exits and the launcher starts the new version: wait for it.
+async function waitForVersion(from, box) {
+  box.replaceChildren(notice("Installing… Basecamp restarts; the page reloads when it's back."));
+  const deadline = Date.now() + 5 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const now = await api("GET", "/api/me");
+      if (now.version !== from) { location.reload(); return; }
+      const u = await api("GET", "/api/update");
+      if (u.status !== "installing") { location.reload(); return; }
+    } catch (e) { /* down while it restarts */ }
+  }
+  box.replaceChildren(notice("Basecamp hasn't come back after 5 minutes. Check the launcher's log on the host PC.", "error"));
+}
+
+async function installUpdate(u, box) {
+  const v = u.ready_version;
+  const again = u.failed_versions.includes(v)
+    ? `\n\n${v} already failed its health check once and rolled back.` : "";
+  if (!confirm(`Install Basecamp ${v}? The page goes away for a minute; game servers keep running.${again}`)) return;
+  try {
+    await api("POST", "/api/update/install");
+    waitForVersion(u.current, box);
+  } catch (e) { alert(e.message); }
+}
+
+async function dismissUpdate(box) {
+  try { await api("POST", "/api/update/dismiss"); updateBanner(box); } catch (e) { alert(e.message); }
+}
+
+function releaseNotes(latest) {
+  if (!latest || !latest.notes) return null;
+  return el("details", {}, el("summary", {}, "Release notes"),
+    el("pre", { class: "notes" }, latest.notes));
+}
+
+async function updateBanner(box) {
+  let u;
+  try { u = await api("GET", "/api/update"); } catch (e) { return; }
+  if (u.status === "installing") { waitForVersion(u.current, box); return; }
+  const parts = [];
+  if (u.failure) {
+    parts.push(el("div", { class: "notice error" },
+      `Basecamp ${u.failure.to} wasn't healthy (${u.failure.reason}), so it rolled back to ${u.failure.from}`
+        + (u.failure.db_restored ? " and its database copy." : "."),
+      " ", el("button", { class: "small", onclick: () => dismissUpdate(box) }, "Dismiss")));
+  }
+  if (u.install_error) {
+    parts.push(el("div", { class: "notice error" }, u.install_error, " ",
+      el("button", { class: "small", onclick: () => dismissUpdate(box) }, "Dismiss")));
+  }
+  const latest = u.latest;
+  if (u.ready) {
+    parts.push(el("div", { class: "notice ok" },
+      el("strong", {}, `Basecamp ${u.ready_version} is ready to install`), ` (this PC runs ${u.current}). `,
+      u.can_install
+        ? el("button", { class: "small primary", onclick: () => installUpdate(u, box) }, "Install")
+        : el("span", { class: "muted" }, "Basecamp isn't running under the launcher here, so it can't install."),
+      releaseNotes(latest)));
+  } else if (u.available && (u.status === "checking" || u.status === "downloading")) {
+    parts.push(notice(`Downloading Basecamp ${latest.version}…`));
+  } else if (u.available && u.status === "failed") {
+    parts.push(el("div", { class: "notice error" }, `Basecamp ${latest.version} is out but can't be installed: ${u.error}`,
+      releaseNotes(latest)));
+  }
+  box.replaceChildren(...parts);
+}
+
 // -- dashboard ----------------------------------------------------------------------
 
 function dashboard(root) {
   const list = el("div");
+  const banner = el("div");
+  updateBanner(banner);
   root.replaceChildren(
+    banner,
     el("div", { class: "buttons", style: "margin-bottom:12px" },
       el("a", { class: "button primary", href: "#new" }, "Add server"),
       el("a", { class: "button", href: "#templates" }, "Templates"),
@@ -845,6 +919,11 @@ async function settingsPage(root) {
   const everyInput = el("input", { type: "number", min: "0", step: "any", value: res.default_backup_every_h });
   const keepInput = el("input", { type: "number", min: "1", value: res.default_backup_keep });
   const allBox = el("input", { type: "checkbox" });
+  const betaBox = el("input", { type: "checkbox", checked: res.update_beta });
+  const hourSelect = el("select", {},
+    el("option", { value: "-1", selected: res.update_auto_hour === -1 }, "Off (install by hand)"),
+    [...Array(24).keys()].map((h) => el("option", { value: String(h), selected: res.update_auto_hour === h },
+      `${String(h).padStart(2, "0")}:00`)));
   const steamInput = el("input", { value: res.steamcmd_path, placeholder: "%USERPROFILE%\\Desktop\\SteamCmd\\steamcmd.exe", autocomplete: "off", spellcheck: "false" });
   const saveSettings = async () => {
     if (allBox.checked && !confirm(`Give all ${servers.length} servers this backup schedule and count?`)) return;
@@ -852,6 +931,7 @@ async function settingsPage(root) {
       const out = await api("PUT", "/api/settings", {
         join_host: joinInput.value.trim(), steamcmd_path: steamInput.value.trim(),
         default_backup_every_h: Number(everyInput.value || 0), default_backup_keep: Number(keepInput.value || 1),
+        update_beta: betaBox.checked, update_auto_hour: Number(hourSelect.value),
         apply_backup_defaults: allBox.checked });
       me = await api("GET", "/api/me");
       toast(out.changed.length || out.servers_updated.length
@@ -891,6 +971,31 @@ async function settingsPage(root) {
     save(null, urlInput);
   };
   const ownCount = Object.keys(n.servers).length;
+  const updateBox = el("div");
+  let checkNow = null;
+  const showUpdate = (u) => {
+    const status = { idle: "up to date", checking: "checking…", downloading: "downloading…",
+      ready: `${u.ready_version} is ready to install (see the dashboard)`, failed: u.error, installing: "installing…" }[u.status];
+    updateBox.replaceChildren(
+      el("div", { class: "hint" }, `This is Basecamp ${u.current}. `,
+        u.last_check ? `Last checked ${new Date(u.last_check).toLocaleString()}: ` : "Not checked yet. ",
+        el("span", { class: u.status === "failed" ? "unverified" : "" }, status || u.status)),
+      ...(u.has_key ? [] : [el("div", { class: "hint unverified" }, "This build has no release key, so it can't check updates.")]),
+      el("div", { class: "hint" }, u.check_h > 0 ? `Checks every ${u.check_h} h.` : "Automatic checks are off (update_check_h = 0)."),
+      el("div", { class: "buttons" }, el("button", { class: "small", onclick: checkNow }, "Check now")));
+  };
+  checkNow = async () => {
+    try {
+      let u = await api("POST", "/api/update/check");
+      showUpdate(u);
+      for (let i = 0; i < 150 && ["checking", "downloading"].includes(u.status); i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        u = await api("GET", "/api/update");
+        showUpdate(u);
+      }
+    } catch (e) { alert(e.message); }
+  };
+  showUpdate(res.update);
   root.replaceChildren(el("h2", {}, "Settings"),
     el("div", { class: "card" },
       el("div", { class: "card-head" }, el("span", { class: "name" }, "Join address")),
@@ -905,6 +1010,10 @@ async function settingsPage(root) {
       field("steamcmd.exe", steamInput, "Empty = the default (the greyed-out text)."),
       el("div", { class: res.steamcmd_found ? "hint" : "hint unverified" },
         res.steamcmd_found ? "Found: " : "Not found: ", el("code", {}, res.steamcmd)),
+      el("div", { class: "card-head", style: "margin-top:18px" }, el("span", { class: "name" }, "Basecamp updates")),
+      updateBox,
+      el("label", { class: "check" }, betaBox, "Beta channel: offer pre-releases too"),
+      field("Auto-install", hourSelect, "When a new release is out, install it at this hour (this PC's time). A version that rolled back once is never auto-installed."),
       el("div", { class: "buttons" }, el("button", { class: "primary", onclick: saveSettings }, "Save settings"))),
 
     el("h2", {}, "Discord"),

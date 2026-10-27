@@ -73,7 +73,7 @@ migrations/          numbered SQL files, add-only
 templates/           built-in game templates, one JSON per game (docs/08-templates.md)
 tools/fake_server.py fake game server for tests: prints, reads stdin, binds a UDP port, can "crash"
 tests/
-scripts/             release.ps1 (dev PC), install / uninstall PowerShell for the prod PC
+scripts/             release.ps1 + build_release.py and new-signing-key.ps1 (dev PC), later install / uninstall for the prod PC
 CHANGES.md           release notes, one section per version
 ```
 
@@ -91,7 +91,9 @@ All under `C:\BasecampData\` (dev PC: `.\data\`):
 | `logs\steamcmd\<id>\<run>.log` | The output of one SteamCMD install or update (the page's **Output** link) |
 | `backups\<id>\` | Save backups (`YYYYMMDD-HHMMSS-<reason>.zip`, D-35). `backups_root` in settings.toml can put them elsewhere |
 | `config-history\<id>\<file>-<hash>\` | Old copies of a config file, one per save or restore, newest 20 kept (D-50) |
-| `db-backups\` | Copy of `basecamp.db` taken before each self-update, for rollback |
+| `db-backups\` | `before-<version>.db`: copy of `basecamp.db` taken as Basecamp exits for a self-update, for rollback (newest 5, D-55) |
+| `selfupdate.json` | Self-update state: the latest release seen and its ETag, the version unpacked and ready, what was posted to Discord, the last update and rollback (D-57) |
+| `updates\` | Only without the launcher (dev runs): releases unpacked and checked, which can't be installed from there (D-60) |
 | `state.json` | Running servers: host PID + exe + create time, control port and token, game PID + exe + create time. Written on every change, used to reattach after a Basecamp restart |
 | `hosts\<id>\` | `spec.json` (what the host runs, with its control token), `host.json` (control port), `exit.json` (how the last run ended, until Basecamp collects it), `host.log` |
 | `hosts\bin\` | Copies of `host.py` by content hash; running hosts run from here, never from a version folder |
