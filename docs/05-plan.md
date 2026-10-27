@@ -55,6 +55,8 @@ Things that could change the design. Do these first, mostly by hand on the prod 
 
 **Done when:** tests pass with a fake steamcmd; one real install + update of a small dedicated server works on the dev PC.
 
+**Status:** built on the dev PC (2026-10-27) and tested with `tools/fake_steamcmd.py`; checked in a browser at `127.0.0.1:8150`: install into an empty folder, update of a running server (backup, stop, SteamCMD, started again, build 1000 → 1001 → 1002), a failed update (left stopped and marked, backup kept, output link), cancel during a hung SteamCMD, the self-update retry, phone width. **Not done yet:** the real install and update with SteamCMD on the dev PC (waits for the owner's go on the download). Decisions D-41..D-47.
+
 ## Phase 4 · Backups, crash restart, Discord, friend view
 
 - Backups: zip save folder, schedule, retention, restore with safety backup (R-50..R-52).

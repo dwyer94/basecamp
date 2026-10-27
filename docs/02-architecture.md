@@ -60,7 +60,7 @@ basecamp/
   winctrl.py         fallback Ctrl+Break helper (bare adopted games)
   console.py         in-memory console per server (mirrors the host's lines), subscribers
   rcon.py            Source RCON client (Palworld, Satisfactory-style, many others)
-  steam.py           SteamCMD runner, appmanifest parser, update queue
+  steam.py           SteamCMD runner and queue, install and update flow, build ID (D-41..D-47)
   backups.py         zip save folders, schedule, retention, restore (D-35, D-36)
   configs.py         read/write allowed config files, versioned copies
   notify.py          Discord webhook: secrets.toml, queue, retry (D-37, D-38)
@@ -87,7 +87,8 @@ All under `C:\BasecampData\` (dev PC: `.\data\`):
 | `secrets.toml` | Discord webhook URLs (D-37), later RCON passwords. Kept out of the repo |
 | `boot.json` | The PC boot time Basecamp last started under, for the "started after a restart" message |
 | `logs\basecamp.log` | The app's own log, rotated |
-| `logs\servers\<id>\console.log` | Each server's output, rotated (10 MB × 5) |
+| `logs\servers\<id>\console.log` | Each server's output, rotated (10 MB × 5). SteamCMD output lands here too |
+| `logs\steamcmd\<id>\<run>.log` | The output of one SteamCMD install or update (the page's **Output** link) |
 | `backups\<id>\` | Save backups (`YYYYMMDD-HHMMSS-<reason>.zip`, D-35). `backups_root` in settings.toml can put them elsewhere |
 | `config-history\<id>\` | Old copies of config files saved from the editor |
 | `db-backups\` | Copy of `basecamp.db` taken before each self-update, for rollback |
@@ -144,11 +145,22 @@ A game only stops when it's stopped from Basecamp, crashes, or the PC shuts down
 
 ## SteamCMD
 
-- One runner, one queue. Command:
+Built in Phase 3 (`basecamp/steam.py`).
+
+- One runner thread, one queue (R-31). Command:
   `steamcmd.exe +force_install_dir "<install>" +login anonymous +app_update <appid> [-beta <branch>] [validate] +quit`
-- Output streams to the page. Success = exit code 0 and `Success! App '<appid>' fully installed` (or "already up to date"). SteamCMD sometimes updates itself first and exits; the runner retries once if that happens.
-- Installed build ID is read from `<install>\steamapps\appmanifest_<appid>.acf` and shown on the server page (the update-available check is **Later**).
-- Timeout 60 min; cancel button kills the SteamCMD process tree.
+- **Update** (R-30, R-32), holding the server's action lock throughout (D-41):
+  1. back up the save with `Backups.make(server, "pre-update")` (R-51). No save folder set, or not created yet: a console note and on. A backup that fails stops the update with nothing changed (D-42);
+  2. stop it with its own stop recipe (R-04a): Stopping, then **Updating**;
+  3. run SteamCMD;
+  4. start it again only if it was running (or starting) before. On failure it stays Stopped, the run is marked failed with SteamCMD's message and output, and the backup is kept.
+- **Install** (R-11): a stopped server whose install folder is missing or empty. Same command, no backup, not started afterwards (D-46).
+- SteamCMD's output goes into the server's console (shown in green), so the console WebSocket streams it; the phase and download percent go out on the status WebSocket (D-45). Each run also has its own log file.
+- Success = exit code 0 and `Success! App '<appid>' fully installed` (or "already up to date"). SteamCMD sometimes updates itself first and exits (code 7, "Update complete, launching Steamcmd"); the runner runs it once more (D-44).
+- Installed build ID is read from `<install>\steamapps\appmanifest_<appid>.acf` and shown on the cards and the server page (the update-available check is **Later**).
+- Timeout 60 min per run (`steamcmd_timeout_s`); **Cancel update** takes a queued run off the queue, or kills the SteamCMD process tree (D-44).
+- Every run is a row in `steam_runs` (who, result, builds before and after, backup). A failed or interrupted run marks the server until a later run succeeds; Start still works, after a confirm (D-43).
+- The SteamCMD path is `steamcmd_path` in the data folder's `settings.toml` (D-47). Tests and the dev PC use `tools/fake_steamcmd.py`.
 
 ## RCON and stdin commands
 
@@ -158,14 +170,15 @@ A game only stops when it's stopped from Basecamp, crashes, or the PC shuts down
 
 ## API
 
-Built in Phases 2 and 4: everything here except `/update`, `/install`, configs, settings and events, which come with their phases.
+Built in Phases 2, 3 and 4: everything here except configs, settings and events, which come with their phases.
 
 | Method | Path | Who |
 |---|---|---|
 | GET | `/api/me` | everyone (who you are) |
 | GET | `/api/servers` · `/api/servers/{id}` | friend (trimmed fields, D-30) / admin (full) |
 | POST | `/api/servers` · PUT/DELETE `/api/servers/{id}` | admin |
-| POST | `/api/servers/{id}/start` · `/stop` · `/restart` · `/kill` · `/update` · `/install` | admin (stop/restart/kill answer 202, D-32) |
+| POST | `/api/servers/{id}/start` · `/stop` · `/restart` · `/kill` · `/update` · `/install` | admin (stop/restart/kill answer 202, D-32; update/install answer 202 with the run id and queue; start/stop/restart answer 409 while an install or update runs, D-41) |
+| POST | `/api/servers/{id}/steam/cancel` · GET `/api/servers/{id}/steam/runs/{run}/log` · GET `/api/steam` (SteamCMD path and queue) | admin |
 | POST | `/api/servers/{id}/command` · GET `/api/servers/{id}/console?after=` | admin |
 | WS | `/ws/servers/{id}/console?after=` | admin (replay + live, send `{"text": ...}`) |
 | WS | `/ws/status` | everyone (status changes; friends get trimmed fields) |

@@ -4,7 +4,7 @@ Home base for the game servers you host for friends.
 
 Basecamp is a small Windows app that runs on an always-on Windows PC (the "host PC"). It starts when the PC boots, before anyone logs in, and brings back up every game server you've marked "start on boot". You control it from a web page that works on desktop and phone, over Tailscale.
 
-**Status:** Phases 1, 2 and 4 built and tested on the dev PC: the core supervisor, the web API and the admin and friend pages, templates for Palworld, Enshrouded, V Rising, RuneScape: Dragonwilds and Windrose, and save backups, crash auto-restart and Discord messages. Phase 3 (SteamCMD) is next. Each running server has its own small host process, so games and their consoles carry on through Basecamp restarts and updates. See [docs/05-plan.md](docs/05-plan.md).
+**Status:** Phases 1 to 4 built and tested on the dev PC: the core supervisor, the web API and the admin and friend pages, templates for Palworld, Enshrouded, V Rising, RuneScape: Dragonwilds and Windrose, SteamCMD installs and one-click updates, and save backups, crash auto-restart and Discord messages. Phase 5 (config editor, settings page) is next. Each running server has its own small host process, so games and their consoles carry on through Basecamp restarts and updates. See [docs/05-plan.md](docs/05-plan.md).
 
 ## What it does (v1)
 
@@ -60,6 +60,7 @@ admin_logins = ["you@example.com"]
 # backups_root = "D:\\BasecampBackups"   # default: .\data\backups
 ```
 
+- SteamCMD's path is `steamcmd_path` in `.\data\settings.toml` (default `%USERPROFILE%\Desktop\SteamCmd\steamcmd.exe`). To try installs and updates without downloading anything, point it at the fake: `steamcmd_path = '<repo>\tools\fake_steamcmd.py'`. Set a server's beta branch to `fail`, `hang`, `selfupdate` or `uptodate` to see those cases.
 - The Discord webhook is set on the page's **Discord** screen and kept in `.\data\secrets.toml`, never in the repo. To try messages without Discord, point it at a local endpoint by editing `secrets.toml` (the page only accepts discord.com URLs):
 
 ```toml
@@ -67,4 +68,4 @@ admin_logins = ["you@example.com"]
 webhook_url = "http://127.0.0.1:<port>/api/webhooks/1/test"
 ```
 
-Tests run real processes against [tools/fake_server.py](tools/fake_server.py), never real games.
+Tests run real processes against [tools/fake_server.py](tools/fake_server.py) and [tools/fake_steamcmd.py](tools/fake_steamcmd.py), never real games or SteamCMD.
