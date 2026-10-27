@@ -11,18 +11,12 @@ import threading
 import psutil
 
 from basecamp.models import Server, ServerState
+from basecamp.notify import join_address
 from basecamp.settings import Settings
 from basecamp.supervisor import ServerStatus
 
 # Everything a friend can get for a server, here and on the status WebSocket (tested).
 FRIEND_FIELDS = ("id", "name", "state", "uptime_s", "join_address")
-
-
-def join_address(settings: Settings, server: Server) -> str | None:
-    """R-24: ``<join host>:<join port>``, or None until both are set."""
-    if not settings.join_host or server.join_port is None:
-        return None
-    return f"{settings.join_host}:{server.join_port}"
 
 
 def discord_line(settings: Settings, server: Server) -> str | None:
@@ -79,7 +73,7 @@ class CpuSampler:
 
 
 def admin_view(settings: Settings, server: Server, status: ServerStatus,
-               cpu: CpuSampler | None = None) -> dict:
+               cpu: CpuSampler | None = None, restart_at: float | None = None) -> dict:
     view = friend_view(settings, server, status)
     view.update(
         config=server.model_dump(mode="json", exclude={"id"}),
@@ -90,6 +84,7 @@ def admin_view(settings: Settings, server: Server, status: ServerStatus,
         rss_mb=round(status.rss_bytes / 2**20) if status.rss_bytes else None,
         cpu_percent=cpu.percent(status.pid) if cpu else None,
         last_exit_code=status.last_exit_code,
+        restart_at=restart_at,  # a crash restart is pending (R-05)
     )
     return view
 

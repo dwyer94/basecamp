@@ -26,11 +26,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from basecamp import __version__, auth, templates
+from basecamp import __version__, auth, notify, templates
 from basecamp.api import views
+from basecamp.backups import BackupError, Backups, save_folder
 from basecamp.console import ConsoleLine
+from basecamp.crashes import CrashPolicy
 from basecamp.db import Store
-from basecamp.models import ACTIVE_STATES, ServerConfig
+from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig
+from basecamp.notify import Notifier
 from basecamp.settings import Settings
 from basecamp.supervisor import InvalidState, PortInUse, Supervisor, SupervisorError
 
@@ -44,6 +47,10 @@ _CONSOLE_QUEUE_MAX = 5000  # a console client this far behind is dropped
 
 class CommandIn(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
+
+
+class WebhookIn(BaseModel):
+    webhook_url: str = Field(default="", max_length=300)  # "" removes it
 
 
 class DraftIn(BaseModel):
@@ -100,9 +107,14 @@ class _Hub:
             event.set()
 
 
-def create_app(store: Store, sup: Supervisor, settings: Settings) -> FastAPI:
+def create_app(store: Store, sup: Supervisor, settings: Settings, *,
+               notifier: Notifier | None = None, backups: Backups | None = None,
+               crashes: CrashPolicy | None = None) -> FastAPI:
+    """The services are made by main.run; tests may leave them out (no crash restarts)."""
     hub = _Hub()
     cpu = views.CpuSampler()
+    notifier = notifier or Notifier(settings, store)
+    backups = backups or Backups(store, sup, settings, notifier.server_event)
     sup.add_listener(hub.poke)
 
     @contextlib.asynccontextmanager
@@ -136,6 +148,14 @@ def create_app(store: Store, sup: Supervisor, settings: Settings) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "No such server") from None
 
+    def admin_view(server, status) -> dict:  # type: ignore[no-untyped-def]
+        restart_at = crashes.restart_at(server.id) if crashes else None
+        return views.admin_view(settings, server, status, cpu, restart_at)
+
+    def cancel_restart(server_id: int) -> None:
+        if crashes is not None:
+            crashes.cancel(server_id)
+
     def server_list(w: auth.Who) -> list[dict]:
         out = []
         servers = store.list_servers()
@@ -145,7 +165,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings) -> FastAPI:
             if status.pid is not None:
                 pids.add(status.pid)
             if w.is_admin:
-                out.append(views.admin_view(settings, server, status, cpu))
+                out.append(admin_view(server, status))
             else:
                 out.append(views.friend_view(settings, server, status))
         cpu.forget_others(pids)
@@ -188,7 +208,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings) -> FastAPI:
         server = get_server(server_id)
         status = sup.status(server_id)
         if w.is_admin:
-            return views.admin_view(settings, server, status, cpu)
+            return admin_view(server, status)
         return views.friend_view(settings, server, status)
 
     def save(config: ServerConfig, server_id: int | None = None) -> Any:
@@ -206,7 +226,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings) -> FastAPI:
         server = save(config)
         audit(w, "server.add", server.id, server.name)
         hub.poke()
-        return views.admin_view(settings, server, sup.status(server.id), cpu)
+        return admin_view(server, sup.status(server.id))
 
     @app.put("/api/servers/{server_id}")
     def update_server(server_id: int, config: ServerConfig, w: Admin) -> dict:
@@ -214,13 +234,14 @@ def create_app(store: Store, sup: Supervisor, settings: Settings) -> FastAPI:
         server = save(config, server_id)
         audit(w, "server.update", server_id, server.name)
         hub.poke()
-        return views.admin_view(settings, server, sup.status(server_id), cpu)
+        return admin_view(server, sup.status(server_id))
 
     @app.delete("/api/servers/{server_id}", status_code=204)
     def delete_server(server_id: int, w: Admin) -> None:
         server = get_server(server_id)
         if sup.state(server_id) in ACTIVE_STATES:
             raise HTTPException(409, "Stop the server before deleting it")
+        cancel_restart(server_id)
         store.delete_server(server_id)  # game files are never touched (R-14)
         audit(w, "server.delete", server_id, server.name)
         hub.poke()
@@ -257,6 +278,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings) -> FastAPI:
     def stop(server_id: int, w: Admin) -> dict:
         server = get_server(server_id)
         audit(w, "stop", server_id, server.name)
+        cancel_restart(server_id)
         in_background("stop", server_id, lambda: sup.stop(server_id))
         return {"accepted": True}
 
@@ -271,6 +293,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings) -> FastAPI:
     def kill(server_id: int, w: Admin) -> dict:
         server = get_server(server_id)
         audit(w, "kill", server_id, server.name)
+        cancel_restart(server_id)
         in_background("kill", server_id, lambda: sup.kill(server_id))
         return {"accepted": True}
 
@@ -290,6 +313,105 @@ def create_app(store: Store, sup: Supervisor, settings: Settings) -> FastAPI:
     def console(server_id: int, w: Admin, after: int = 0) -> list[dict]:
         get_server(server_id)
         return [_console_line(line) for line in sup.console(server_id).lines(after)]
+
+    # -- backups (R-50..R-53) -----------------------------------------------------------
+
+    def backup_error(e: Exception) -> HTTPException:
+        if isinstance(e, FileNotFoundError):
+            return HTTPException(404, "No such backup")
+        return HTTPException(409, str(e))
+
+    @app.get("/api/servers/{server_id}/backups")
+    def list_backups(server_id: int, w: Admin) -> dict:
+        server = get_server(server_id)
+        source = save_folder(server)
+        return {
+            "backups": [b.as_dict() for b in backups.list(server_id)],
+            "save_dir": str(source) if source else "",
+            "save_dir_exists": bool(source and source.is_dir()),
+            "folder": str(settings.server_backup_dir(server_id)),
+            "every_h": server.backup_every_h,
+            "keep": server.backup_keep,
+        }
+
+    @app.post("/api/servers/{server_id}/backups", status_code=201)
+    def make_backup(server_id: int, w: Admin) -> dict:
+        server = get_server(server_id)
+        try:
+            backup = backups.make(server, "manual")
+        except BackupError as e:
+            raise backup_error(e) from None
+        removed = backups.prune(server)
+        audit(w, "backup", server_id, backup.name)
+        return {"backup": backup.as_dict(), "removed": removed}
+
+    @app.post("/api/servers/{server_id}/backups/{name}/restore")
+    def restore_backup(server_id: int, name: str, w: Admin) -> dict:
+        server = get_server(server_id)
+        audit(w, "backup.restore", server_id, name)
+        try:
+            safety = backups.restore(server, name)
+        except (BackupError, FileNotFoundError) as e:
+            raise backup_error(e) from None
+        removed = backups.prune(server)
+        return {"restored": name, "safety_backup": safety.name if safety else None,
+                "removed": removed}
+
+    @app.delete("/api/servers/{server_id}/backups/{name}", status_code=204)
+    def delete_backup(server_id: int, name: str, w: Admin) -> None:
+        get_server(server_id)
+        try:
+            backups.delete(server_id, name)
+        except (BackupError, FileNotFoundError) as e:
+            raise backup_error(e) from None
+        audit(w, "backup.delete", server_id, name)
+
+    # -- Discord (R-60..R-62) ---------------------------------------------------------
+
+    def check_webhook(url: str) -> str:
+        url = url.strip()
+        if url and not notify.WEBHOOK_URL.match(url):
+            raise HTTPException(400, "That isn't a Discord webhook URL "
+                                     "(https://discord.com/api/webhooks/...)")
+        return url
+
+    def notify_info() -> dict:
+        main, per_server = notify.webhooks(settings)
+        return {"webhook": notify.mask(main), "configured": bool(main),
+                "servers": {str(k): notify.mask(v) for k, v in per_server.items()},
+                "events": [e.value for e in NotifyEvent],
+                "sent": notifier.sent, "failed": notifier.failed,
+                "pending": notifier.pending()}
+
+    @app.get("/api/notify")
+    def notify_settings(w: Admin) -> dict:
+        return notify_info()
+
+    @app.put("/api/notify")
+    def set_main_webhook(body: WebhookIn, w: Admin) -> dict:
+        url = check_webhook(body.webhook_url)
+        notify.set_webhook(settings, url)
+        audit(w, "notify.webhook", None, "set" if url else "removed")  # never the URL
+        return notify_info()
+
+    @app.put("/api/servers/{server_id}/webhook")
+    def set_server_webhook(server_id: int, body: WebhookIn, w: Admin) -> dict:
+        get_server(server_id)
+        url = check_webhook(body.webhook_url)
+        notify.set_webhook(settings, url, server_id)
+        audit(w, "notify.webhook", server_id, "set" if url else "removed")
+        return notify_info()
+
+    @app.post("/api/notify/test")
+    def test_webhook(w: Admin, server_id: int | None = None) -> dict:
+        url = notifier.url_for(server_id)
+        if not url:
+            raise HTTPException(409, "No webhook set")
+        ok, _, error = notify.send(url, ":wave: Test message from Basecamp")
+        audit(w, "notify.test", server_id, "sent" if ok else error)
+        if not ok:
+            raise HTTPException(502, f"Discord didn't take it: {error}")
+        return {"sent": True}
 
     # -- templates and import (R-13, R-15) --------------------------------------------
 
@@ -463,4 +585,6 @@ def create_app(store: Store, sup: Supervisor, settings: Settings) -> FastAPI:
         return JSONResponse({"detail": e.errors(include_url=False)}, status_code=422)
 
     app.state.hub = hub
+    app.state.backups = backups
+    app.state.notifier = notifier
     return app

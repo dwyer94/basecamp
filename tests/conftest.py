@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -83,3 +86,49 @@ def sup(store: Store, settings: Settings) -> Iterator[Supervisor]:
         if sup.state(server.id) in ACTIVE_STATES:
             sup.kill(server.id)
     sup.detach()
+
+
+class FakeWebhook:
+    """A local HTTP endpoint that takes Discord webhook posts. ``answers`` is a list of
+    (status, json body) to give before falling back to 204."""
+
+    def __init__(self) -> None:
+        self.posts: list[dict] = []
+        self.answers: list[tuple[int, dict | None]] = []
+        self.lock = threading.Lock()
+        hook = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                with hook.lock:
+                    status, answer = hook.answers.pop(0) if hook.answers else (204, None)
+                    if status == 204:
+                        hook.posts.append(body)
+                payload = json.dumps(answer).encode() if answer is not None else b""
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/api/webhooks/1/test"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def texts(self) -> list[str]:
+        with self.lock:
+            return [p["content"] for p in self.posts]
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture
+def webhook() -> Iterator[FakeWebhook]:
+    hook = FakeWebhook()
+    yield hook
+    hook.close()

@@ -1,5 +1,6 @@
-// Admin page: dashboard, server page with live console, add/edit form, templates, audit.
-// Hash routes: #  #server/<id>  #new  #edit/<id>  #templates  #audit
+// Admin page: dashboard, server page with live console and backups, add/edit form,
+// templates, Discord, audit.
+// Hash routes: #  #server/<id>  #new  #edit/<id>  #templates  #discord  #audit
 "use strict";
 
 let me = {};
@@ -36,7 +37,7 @@ function notice(text, kind = "") {
 }
 
 async function act(server, action) {
-  if (action === "stop" && !confirm(`Stop ${server.name}?`)) return;
+  if (action === "stop" && !server.restart_at && !confirm(`Stop ${server.name}?`)) return;
   if (action === "restart" && !confirm(`Restart ${server.name}?`)) return;
   if (action === "kill" && !confirm(`Kill ${server.name} without saving?`)) return;
   try {
@@ -52,8 +53,10 @@ function actionButtons(s) {
   const active = ["starting", "running", "stopping", "updating"].includes(s.state);
   return el("div", { class: "buttons" },
     el("button", { class: "primary", disabled: active, onclick: () => act(s, "start") }, "Start"),
-    el("button", { disabled: !active || s.state === "stopping", onclick: () => act(s, "stop") },
-      "Stop"),
+    s.restart_at
+      ? el("button", { onclick: () => act(s, "stop") }, "Cancel restart")
+      : el("button", { disabled: !active || s.state === "stopping", onclick: () => act(s, "stop") },
+        "Stop"),
     el("button", { disabled: !active, onclick: () => act(s, "restart") }, "Restart"));
 }
 
@@ -77,7 +80,9 @@ function metaLine(s) {
     s.state === "crashed" && s.last_exit_code !== null
       ? el("span", {}, `exit code ${s.last_exit_code}`) : null,
     s.adopted && !s.has_console && s.state === "running"
-      ? el("span", {}, "no console (restart to get it back)") : null);
+      ? el("span", {}, "no console (restart to get it back)") : null,
+    s.restart_at ? el("span", { class: "unverified" },
+      `restarting at ${new Date(s.restart_at * 1000).toLocaleTimeString()}`) : null);
 }
 
 // -- dashboard ----------------------------------------------------------------------
@@ -88,6 +93,7 @@ function dashboard(root) {
     el("div", { class: "buttons", style: "margin-bottom:12px" },
       el("a", { class: "button primary", href: "#new" }, "Add server"),
       el("a", { class: "button", href: "#templates" }, "Templates"),
+      el("a", { class: "button", href: "#discord" }, "Discord"),
       el("a", { class: "button", href: "#audit" }, "Audit log")),
     list);
   const update = () => {
@@ -115,6 +121,8 @@ function serverPage(root, id) {
     autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
   const consoleState = el("div", { class: "hint" });
   const history = el("div");
+  const backupBox = el("div");
+  let backupBusy = false;
   let lastSeq = 0;
   let follow = true;
   out.addEventListener("scroll", () => {
@@ -157,10 +165,62 @@ function serverPage(root, id) {
       : el("p", { class: "muted" }, "Nothing yet."));
   };
 
+  const backupNow = async () => {
+    backupBusy = true; loadBackups();
+    try {
+      const res = await api("POST", `/api/servers/${id}/backups`);
+      toast(`Backup made: ${res.backup.name}`);
+    } catch (e) { alert(e.message); }
+    backupBusy = false; loadBackups();
+  };
+  const restore = async (b) => {
+    if (!confirm(`Restore ${b.name}? The current save is backed up first, then replaced.`)) return;
+    backupBusy = true; loadBackups();
+    try {
+      const res = await api("POST", `/api/servers/${id}/backups/${encodeURIComponent(b.name)}/restore`);
+      toast(res.safety_backup ? `Restored. The save before it: ${res.safety_backup}` : "Restored");
+    } catch (e) { alert(e.message); }
+    backupBusy = false; loadBackups();
+  };
+  const removeBackup = async (b) => {
+    if (!confirm(`Delete backup ${b.name}?`)) return;
+    try { await api("DELETE", `/api/servers/${id}/backups/${encodeURIComponent(b.name)}`); } catch (e) { alert(e.message); }
+    loadBackups();
+  };
+  const loadBackups = async () => {
+    let res;
+    try { res = await api("GET", `/api/servers/${id}/backups`); } catch (e) {
+      backupBox.replaceChildren(notice(e.message, "error")); return;
+    }
+    const s = servers.find((x) => x.id === id);
+    const stopped = s && (s.state === "stopped" || s.state === "crashed");
+    const schedule = res.every_h > 0
+      ? `Every ${res.every_h} h while running, keeping the newest ${res.keep}.`
+      : `No schedule (set one under Edit). Keeping the newest ${res.keep}.`;
+    backupBox.replaceChildren(
+      !res.save_dir ? notice("No save folder set. Set one under Edit to make backups.")
+        : !res.save_dir_exists ? notice(`Save folder not found: ${res.save_dir}`) : null,
+      el("p", { class: "muted" }, res.save_dir ? el("span", {}, "From ", el("code", {}, res.save_dir), ". ") : null,
+        schedule, " Stored in ", el("code", {}, res.folder), "."),
+      el("div", { class: "buttons" },
+        el("button", { class: "primary", disabled: backupBusy || !res.save_dir_exists, onclick: backupNow },
+          backupBusy ? "Working…" : "Back up now")),
+      res.backups.length ? el("table", {}, el("tbody", {}, res.backups.map((b) => el("tr", {},
+        el("td", {}, new Date(b.created * 1000).toLocaleString(), el("div", { class: "hint" }, b.reason)),
+        el("td", {}, fmtSize(b.size_bytes), b.files !== null ? el("div", { class: "hint" }, `${b.files} files`) : null),
+        el("td", {}, el("div", { class: "buttons", style: "margin:0" },
+          el("button", { class: "small", disabled: backupBusy || !stopped || !res.save_dir,
+            title: stopped ? "" : "Stop the server first", onclick: () => restore(b) }, "Restore"),
+          el("button", { class: "small danger", disabled: backupBusy, onclick: () => removeBackup(b) }, "Delete")))))))
+        : el("p", { class: "muted" }, "No backups yet."),
+      res.backups.length && !stopped ? el("div", { class: "hint" }, "Stop the server to restore a backup.") : null);
+  };
+
   root.replaceChildren(head,
     el("h2", {}, "Console"), out,
     el("div", { class: "command" }, input, el("button", { class: "primary", onclick: send }, "Send")),
     consoleState,
+    el("h2", {}, "Backups"), backupBox,
     el("h2", {}, "History"), history);
 
   let lastState = null;
@@ -181,7 +241,7 @@ function serverPage(root, id) {
       el("p", { class: "muted" }, c.exe_path, c.args ? ` ${c.args}` : "",
         s.pid ? ` · PID ${s.pid}` : ""));
     input.disabled = !(s.has_console && s.state !== "stopped" && s.state !== "crashed");
-    if (s.state !== lastState) { lastState = s.state; loadHistory(); }
+    if (s.state !== lastState) { lastState = s.state; loadHistory(); loadBackups(); }
   };
   update();
   return { update, close: () => sock.close() };
@@ -189,13 +249,27 @@ function serverPage(root, id) {
 
 // -- add / edit form ----------------------------------------------------------------
 
+const EVENTS = {
+  up: "Server is up (with the join address)",
+  stopped: "Stopped from Basecamp",
+  crashed: "Crashed (and restarting)",
+  gave_up: "Gave up restarting",
+  backup_failed: "Scheduled backup failed",
+  update: "Update started / finished / failed",
+};
+
+function fmtSize(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
 const BLANK = {
   name: "", kind: "custom", template_id: "", install_dir: "", exe_path: "", args: "",
   working_dir: "", ports: [], join_port: null, start_on_boot: false, boot_order: 0,
   steam_app_id: null, steam_beta: "", steam_validate: false, config_files: [], save_dir: "",
   log_source: "stdout", log_file: "", rcon_host: "127.0.0.1", rcon_port: null,
   real_exe_name: "", ready_pattern: "", ready_after_s: 15, min_free_ram_mb: 0,
-  stop_recipe: [], notes: "",
+  stop_recipe: [], notes: "", backup_every_h: 0, backup_keep: 10, notify_off: [],
 };
 
 function field(label, input, hint) {
@@ -319,6 +393,20 @@ function serverForm(root, id) {
         field("Config files", lines("config_files"), "One path per line."),
         field("Save folder", text("save_dir")),
         field("RCON port", num("rcon_port"))),
+      el("fieldset", {}, el("legend", {}, "Backups and Discord"),
+        field("Back up every (hours)", num("backup_every_h", { min: 0, step: "any" }),
+          "While the server runs. 0 = only by hand (and before updates)."),
+        field("Backups to keep", num("backup_keep", { min: 1 })),
+        el("label", {}, "Post to Discord when"),
+        (() => {
+          const boxes = Object.entries(EVENTS).map(([key, label]) => {
+            const i = el("input", { type: "checkbox", checked: !(values.notify_off || []).includes(key), "data-ev": key });
+            return el("label", { class: "check" }, i, label);
+          });
+          inputs.notify_off = () => boxes.map((b) => $("input", b)).filter((i) => !i.checked).map((i) => i.dataset.ev);
+          return el("div", {}, boxes);
+        })(),
+        el("div", { class: "hint" }, "The webhook is set on the Discord page.")),
       field("Notes", (() => {
         const t = el("textarea", {}); t.value = values.notes || "";
         inputs.notes = () => t.value; return t;
@@ -408,6 +496,52 @@ async function templatesPage(root) {
       el("div", { class: "muted" }, t.docs.map((d) => el("div", {}, el("a", { href: d, target: "_blank", rel: "noreferrer" }, d)))))));
 }
 
+// -- Discord ---------------------------------------------------------------------------
+
+async function discordPage(root) {
+  const res = await api("GET", "/api/notify");
+  const urlInput = el("input", { placeholder: "https://discord.com/api/webhooks/…", autocomplete: "off" });
+  const save = async (serverId, input) => {
+    const path = serverId ? `/api/servers/${serverId}/webhook` : "/api/notify";
+    try {
+      await api("PUT", path, { webhook_url: input.value.trim() });
+      toast(input.value.trim() ? "Webhook saved" : "Webhook removed");
+      discordPage(root);
+    } catch (e) { alert(e.message); }
+  };
+  const test = async (serverId) => {
+    try {
+      await api("POST", `/api/notify/test${serverId ? `?server_id=${serverId}` : ""}`);
+      toast("Test message sent");
+    } catch (e) { alert(e.message); }
+  };
+  const serverRows = servers.map((s) => {
+    const own = res.servers[String(s.id)];
+    const input = el("input", { placeholder: own ? "Leave empty and save to remove" : "Optional: its own webhook", autocomplete: "off" });
+    return el("div", { class: "card" },
+      el("div", { class: "card-head" }, el("span", { class: "name" }, s.name)),
+      el("div", { class: "hint" }, own ? el("span", {}, "Own webhook: ", el("code", {}, own)) : "Uses the main webhook."),
+      input,
+      el("div", { class: "buttons" },
+        el("button", { class: "small", onclick: () => save(s.id, input) }, "Save"),
+        own ? el("button", { class: "small", onclick: () => test(s.id) }, "Test") : null));
+  });
+  root.replaceChildren(el("h2", {}, "Discord"),
+    el("p", { class: "muted" }, "Messages go to a channel webhook (Channel settings → Integrations → Webhooks). The URL is kept in the data folder's secrets.toml, never shown in full here."),
+    el("div", { class: "card" },
+      el("div", { class: "card-head" }, el("span", { class: "name" }, "Main webhook"),
+        el("span", { class: "tag" }, res.configured ? "set" : "not set")),
+      res.configured ? el("div", { class: "hint" }, el("code", {}, res.webhook)) : null,
+      field(res.configured ? "Replace with" : "Webhook URL", urlInput, res.configured ? "Leave empty and save to remove it." : null),
+      el("div", { class: "buttons" },
+        el("button", { class: "primary", onclick: () => save(null, urlInput) }, "Save"),
+        res.configured ? el("button", { onclick: () => test(null) }, "Send a test") : null),
+      el("div", { class: "hint" }, `Sent ${res.sent}, failed ${res.failed}, waiting ${res.pending} since Basecamp started.`)),
+    el("h2", {}, "Per server"),
+    el("p", { class: "muted" }, "A server's own webhook replaces the main one. Which events post is set in each server's Edit form."),
+    ...serverRows);
+}
+
 // -- audit log -------------------------------------------------------------------------
 
 async function auditPage(root) {
@@ -436,6 +570,7 @@ function route() {
   else if (name === "new") page = serverForm(root, null);
   else if (name === "edit" && id) page = serverForm(root, id);
   else if (name === "templates") templatesPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
+  else if (name === "discord") discordPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
   else if (name === "audit") auditPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
   else page = dashboard(root);
 }

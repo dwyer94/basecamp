@@ -15,7 +15,8 @@ supervisor-wide lock, which also rewrites ``state.json``.
 Seams for later phases:
 - ``add_listener`` gets every state change (status WebSocket, Discord, crash restart).
 - ``rcon_sender`` sends RCON stop steps and console commands once rcon.py exists.
-- An unexpected exit ends in Crashed; Phase 4 adds the restart policy (R-05).
+- An unexpected exit ends in Crashed; basecamp/crashes.py restarts it from a listener (R-05).
+- ``hold`` keeps actions off a server while a restore (later an update) runs.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -240,6 +241,14 @@ class Supervisor:
         self._note(slot, run, "Killing")
         self._kill_run(server_id, run)
         return StopResult(graceful=False, killed=True, ended_by="kill")
+
+    @contextlib.contextmanager
+    def hold(self, server_id: int) -> Iterator[ServerState]:
+        """Hold the server's action lock, so no start, stop or restart runs meanwhile (a
+        restore, later an update). Yields the state at the time the lock was taken."""
+        slot = self._slot(server_id)
+        with slot.lock:
+            yield slot.state
 
     def stop_all(self) -> dict[int, StopResult]:
         with self._mu:

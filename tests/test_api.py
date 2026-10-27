@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from basecamp import notify
 from basecamp.api import views
 from basecamp.api.app import create_app
 from basecamp.models import ServerState
@@ -133,6 +134,14 @@ def test_friend_cannot_do_admin_things(client):
         ("get", "/api/templates", None),
         ("post", "/api/drafts", {"template_id": "palworld"}),
         ("get", "/api/audit", None),
+        ("get", f"/api/servers/{sid}/backups", None),
+        ("post", f"/api/servers/{sid}/backups", None),
+        ("post", f"/api/servers/{sid}/backups/20260101-000000-manual.zip/restore", None),
+        ("delete", f"/api/servers/{sid}/backups/20260101-000000-manual.zip", None),
+        ("get", "/api/notify", None),
+        ("put", "/api/notify", {"webhook_url": ""}),
+        ("put", f"/api/servers/{sid}/webhook", {"webhook_url": ""}),
+        ("post", "/api/notify/test", None),
     ]:
         res = client.request(method, path, json=body, headers=AS_FRIEND)
         assert res.status_code == 403, (method, path, res.text)
@@ -321,3 +330,71 @@ def test_pages_and_health(client):
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/healthz").json()["ok"]
     assert "Basecamp" in client.get("/").text
+
+
+# -- backups and Discord (Phase 4) ---------------------------------------------------------
+
+
+def test_backup_and_restore_over_the_api(client, tmp_path):
+    saves = tmp_path / "Saved"
+    saves.mkdir()
+    (saves / "world.sav").write_text("v1", encoding="utf-8")
+    server = add_fake(client, save_dir=str(saves), backup_keep=2)
+    sid = server["id"]
+    assert server["config"]["backup_keep"] == 2 and server["config"]["notify_off"] == []
+
+    made = client.post(f"/api/servers/{sid}/backups", headers=AS_ADMIN)
+    assert made.status_code == 201, made.text
+    name = made.json()["backup"]["name"]
+    listing = client.get(f"/api/servers/{sid}/backups").json()
+    assert [b["name"] for b in listing["backups"]] == [name]
+    assert listing["save_dir_exists"] and listing["keep"] == 2
+
+    (saves / "world.sav").write_text("v2", encoding="utf-8")
+    client.post(f"/api/servers/{sid}/start")
+    wait_for(lambda: client.get(f"/api/servers/{sid}").json()["state"] == "running")
+    refused = client.post(f"/api/servers/{sid}/backups/{name}/restore")
+    assert refused.status_code == 409 and "Stop" in refused.json()["detail"]
+    client.post(f"/api/servers/{sid}/stop")
+    wait_for(lambda: client.get(f"/api/servers/{sid}").json()["state"] == "stopped")
+
+    res = client.post(f"/api/servers/{sid}/backups/{name}/restore")
+    assert res.status_code == 200, res.text
+    assert (saves / "world.sav").read_text(encoding="utf-8") == "v1"
+    assert res.json()["safety_backup"].endswith("-pre-restore.zip")
+    assert client.post(f"/api/servers/{sid}/backups/nope.zip/restore").status_code == 409
+    assert client.post(
+        f"/api/servers/{sid}/backups/20200101-000000-manual.zip/restore").status_code == 404
+
+    assert client.delete(f"/api/servers/{sid}/backups/{name}").status_code == 204
+    actions = [e["action"] for e in client.get(f"/api/audit?server_id={sid}").json()]
+    assert {"backup", "backup.restore", "backup.delete"} <= set(actions)
+
+
+def test_webhook_is_validated_masked_and_never_logged(client, web_settings):
+    token = "abcdefSECRETTOKEN123"
+    url = f"https://discord.com/api/webhooks/42/{token}"
+    bad = client.put("/api/notify", json={"webhook_url": "https://evil.example/hook"})
+    assert bad.status_code == 400
+
+    res = client.put("/api/notify", json={"webhook_url": url}, headers=AS_ADMIN)
+    assert res.status_code == 200 and res.json()["configured"]
+    server = add_fake(client)
+    client.put(f"/api/servers/{server['id']}/webhook", json={"webhook_url": url + "x"})
+
+    for text in (res.text, client.get("/api/notify").text, client.get("/api/audit").text,
+                 client.get("/api/servers").text):
+        assert token not in text
+    assert web_settings.secrets_path.read_text(encoding="utf-8").count(token) == 2
+    assert client.get("/api/notify").json()["servers"] == {
+        str(server["id"]): notify.mask(url + "x")}
+
+
+def test_send_a_test_message(client, web_settings, webhook):
+    assert client.post("/api/notify/test").status_code == 409  # none set
+    notify.set_webhook(web_settings, webhook.url)  # the page only takes discord.com URLs
+    assert client.post("/api/notify/test").status_code == 200
+    assert webhook.texts() == [":wave: Test message from Basecamp"]
+    webhook.answers = [(404, {"message": "Unknown Webhook"})]
+    failed = client.post("/api/notify/test")
+    assert failed.status_code == 502 and "404" in failed.json()["detail"]

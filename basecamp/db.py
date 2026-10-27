@@ -17,14 +17,15 @@ log = logging.getLogger(__name__)
 
 _MIGRATION_NAME = re.compile(r"^(\d{4})_[\w-]+\.sql$")
 
-# servers columns that map 1:1 to ServerConfig fields (ports, stop_recipe and
-# config_files are stored separately or as JSON).
+# servers columns that map 1:1 to ServerConfig fields (ports and stop_recipe are stored
+# separately, _JSON_COLUMNS as JSON).
 _PLAIN_COLUMNS = (
     "name", "kind", "install_dir", "exe_path", "args", "working_dir", "join_port",
     "start_on_boot", "boot_order", "steam_app_id", "steam_beta", "steam_validate", "save_dir",
     "log_source", "log_file", "rcon_host", "rcon_port", "real_exe_name", "ready_pattern",
-    "ready_after_s", "min_free_ram_mb", "notes", "template_id",
+    "ready_after_s", "min_free_ram_mb", "notes", "template_id", "backup_every_h", "backup_keep",
 )
+_JSON_COLUMNS = ("config_files", "notify_off")
 
 
 @dataclass(frozen=True)
@@ -227,7 +228,8 @@ class Store:
     def _row_values(config: ServerConfig) -> dict[str, object]:
         data = config.model_dump(mode="json")
         values: dict[str, object] = {col: data[col] for col in _PLAIN_COLUMNS}
-        values["config_files"] = json.dumps(data["config_files"])
+        for col in _JSON_COLUMNS:
+            values[col] = json.dumps(data[col])
         return values
 
     def _write_children(self, server_id: int, config: ServerConfig) -> None:
@@ -259,11 +261,11 @@ class Store:
             )
         ]
         data = {col: row[col] for col in _PLAIN_COLUMNS}
+        data.update({col: json.loads(row[col]) for col in _JSON_COLUMNS})
         return Server(
             id=server_id,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-            config_files=json.loads(row["config_files"]),
             ports=ports,
             stop_recipe=steps,
             **data,

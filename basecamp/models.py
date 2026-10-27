@@ -37,6 +37,17 @@ class ServerState(StrEnum):
     CRASHED = "crashed"
 
 
+class NotifyEvent(StrEnum):
+    """Discord messages about one server (R-60). Each can be turned off per server (R-61)."""
+
+    UP = "up"  # Starting -> Running, with the join address
+    STOPPED = "stopped"  # stopped from Basecamp
+    CRASHED = "crashed"  # an exit nobody asked for (and whether it restarts)
+    GAVE_UP = "gave_up"  # too many crashes: left Crashed (R-05)
+    BACKUP_FAILED = "backup_failed"
+    UPDATE = "update"  # update started / finished / failed (Phase 3)
+
+
 ACTIVE_STATES = frozenset(
     {ServerState.STARTING, ServerState.RUNNING, ServerState.STOPPING, ServerState.UPDATING}
 )
@@ -97,6 +108,9 @@ class ServerConfig(BaseModel):
     stop_recipe: list[StopStep] = Field(default_factory=list)
     notes: str = ""
     template_id: str = ""  # the game template it was made from, if any (R-13)
+    backup_every_h: float = Field(default=0, ge=0, le=24 * 30)  # R-50; 0 = no schedule
+    backup_keep: int = Field(default=10, ge=1, le=1000)
+    notify_off: list[NotifyEvent] = Field(default_factory=list)  # R-61: events not posted
 
     @model_validator(mode="after")
     def _check(self) -> ServerConfig:

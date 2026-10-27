@@ -46,6 +46,17 @@ class Settings:
     # D-27: Tailscale logins (Tailscale-User-Login) that get the admin view. A request from
     # the PC itself (loopback, no Tailscale headers) is admin too; everyone else is a friend.
     admin_logins: tuple[str, ...] = ()
+    # R-05: an exit nobody asked for restarts after crash_restart_delay_s, unless it is the
+    # crash_limit-th crash within crash_window_s: then the server stays Crashed.
+    crash_restart_delay_s: float = 10.0
+    crash_limit: int = 3
+    crash_window_s: float = 600.0
+    # R-53: where save backups go ("" = <data>ackups). Q-08: another drive is fine here.
+    backups_root: str = ""
+    # How often the backup scheduler looks for servers that are due (R-50).
+    backup_check_s: float = 60.0
+    # R-62: waits between tries of a Discord message that failed (one try per entry, + 1).
+    notify_retry_s: tuple[float, ...] = (5.0, 30.0, 120.0)
 
     @property
     def db_path(self) -> Path:
@@ -61,6 +72,18 @@ class Settings:
 
     def server_log_dir(self, server_id: int) -> Path:
         return self.logs_dir / "servers" / str(server_id)
+
+    @property
+    def secrets_path(self) -> Path:
+        """Webhook URLs (and later RCON passwords). Never in the repo or settings.toml."""
+        return self.data_dir / "secrets.toml"
+
+    @property
+    def backups_dir(self) -> Path:
+        return Path(self.backups_root) if self.backups_root else self.data_dir / "backups"
+
+    def server_backup_dir(self, server_id: int) -> Path:
+        return self.backups_dir / str(server_id)
 
     @property
     def data_templates_dir(self) -> Path:
@@ -101,4 +124,6 @@ class Settings:
             if isinstance(logins, str):
                 logins = [logins]
             values["admin_logins"] = tuple(str(x).strip() for x in logins)  # type: ignore[union-attr]
+        if "notify_retry_s" in values:
+            values["notify_retry_s"] = tuple(float(x) for x in values["notify_retry_s"])  # type: ignore[union-attr]
         return cls(data_dir=data_dir, **values)  # type: ignore[arg-type]
