@@ -1,0 +1,24 @@
+# Runtime data and secrets: never in the repo (public, D-15)
+data/
+secrets.toml
+*.key
+*.pem
+
+# Owner's machine-specific notes (PC names, IPs, other apps on the prod PC)
+private/
+CLAUDE.local.md
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
