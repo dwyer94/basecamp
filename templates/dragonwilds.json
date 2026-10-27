@@ -1,0 +1,31 @@
+{
+  "id": "dragonwilds",
+  "name": "RuneScape: Dragonwilds",
+  "kind": "steam",
+  "steam_app_id": 4019830,
+  "exe": "RSDragonwilds.exe",
+  "args": "-log",
+  "real_exe_name": "RSDragonwildsServer-Win64-Shipping.exe",
+  "ports": [
+    {"port": 7777, "protocol": "udp", "label": "game"}
+  ],
+  "join_port_label": "game",
+  "log_source": "file",
+  "log_file": "RSDragonwilds\\Saved\\Logs\\RSDragonwilds.log",
+  "ready_pattern": "",
+  "ready_after_s": 90,
+  "stop_recipe": [
+    {"action": "ctrl_break", "wait_s": 60}
+  ],
+  "config_files": ["RSDragonwilds\\Saved\\Config\\WindowsServer\\DedicatedServer.ini"],
+  "save_dir": "RSDragonwilds\\Saved\\Savegames",
+  "min_free_ram_mb": 8192,
+  "notes": "The server won't start without an OwnerId in DedicatedServer.ini. That is your Player ID, from the bottom of the in-game Settings menu. It goes under [/Script/Dominion.DedicatedServerSettings] with ServerName, DefaultWorldName and AdminPassword. On Windows, create the WindowsServer folder and copy the values from Saved\\Config\\Linux\\DedicatedServer.ini. Jagex's guide puts Saved\\ in the install folder, but the wiki says %LOCALAPPDATA%\\RSDragonwilds\\Saved\\. Check which one your install uses and fix the paths. Needs 2 GB RAM plus 1 GB per player. A second server uses port 7778.",
+  "docs": [
+    "https://dragonwilds.runescape.com/news/how-to-dedicated-servers",
+    "https://dragonwilds.runescape.wiki/w/Dedicated_Servers",
+    "https://steamdb.info/app/4019830/"
+  ],
+  "unverified": ["real_exe_name", "args", "log_file", "ready_pattern", "stop_recipe",
+                 "config_files", "save_dir"]
+}

@@ -1,0 +1,29 @@
+{
+  "id": "enshrouded",
+  "name": "Enshrouded",
+  "kind": "steam",
+  "steam_app_id": 2278520,
+  "exe": "enshrouded_server.exe",
+  "args": "",
+  "ports": [
+    {"port": 15636, "protocol": "udp", "label": "game"},
+    {"port": 15637, "protocol": "udp", "label": "query"}
+  ],
+  "join_port_label": "query",
+  "log_source": "file",
+  "log_file": "logs\\enshrouded_server.log",
+  "ready_pattern": "[Session] 'HostOnline' (up)!",
+  "ready_after_s": 120,
+  "stop_recipe": [
+    {"action": "ctrl_break", "wait_s": 60}
+  ],
+  "config_files": ["enshrouded_server.json"],
+  "save_dir": "savegame",
+  "notes": "enshrouded_server.json is written on the first start. Stop the server before editing it: the server overwrites it on exit. Set gameSettingsPreset to Custom, or the preset wins over your gameSettings values. The server writes its log to logs\\enshrouded_server.log rather than the console pipe, so Basecamp tails that file. Friends join with the host and the query port.",
+  "docs": [
+    "https://steamdb.info/app/2278520/",
+    "https://xgamingserver.com/blog/enshrouded-server-config-json-settings-explained/",
+    "https://docs.emeraldhost.de/en/gameserver/enshrouded/read-server-log"
+  ],
+  "unverified": ["ports", "join_port_label", "stop_recipe", "save_dir"]
+}

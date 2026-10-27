@@ -1,0 +1,31 @@
+{
+  "id": "windrose",
+  "name": "Windrose",
+  "kind": "steam",
+  "steam_app_id": 4129620,
+  "exe": "WindroseServer.exe",
+  "args": "",
+  "real_exe_name": "WindroseServer-Win64-Shipping.exe",
+  "ports": [
+    {"port": 7777, "protocol": "udp", "label": "game"},
+    {"port": 7777, "protocol": "tcp", "label": "game-tcp"}
+  ],
+  "join_port_label": "game",
+  "log_source": "file",
+  "log_file": "R5\\Saved\\Logs\\R5.log",
+  "ready_pattern": "",
+  "ready_after_s": 60,
+  "stop_recipe": [
+    {"action": "ctrl_break", "wait_s": 60}
+  ],
+  "config_files": ["R5\\ServerDescription.json"],
+  "save_dir": "R5\\Saved\\SaveProfiles",
+  "notes": "By default friends join with the invite code that the server prints and writes to ServerDescription.json (InviteCode), with no fixed port. The port 7777 entries only matter with UseDirectConnection=true (DirectConnectionServerPort). Guides disagree on where ServerDescription.json lives (the install folder or R5\\), so check yours. Each world's gameplay settings are in WorldDescription.json under R5\\Saved\\SaveProfiles\\Default\\RocksDB*\\<version>\\Worlds\\<world id>\\. Stop the server before editing either file.",
+  "docs": [
+    "https://steamdb.info/app/4129620/",
+    "https://steamcommunity.com/sharedfiles/filedetails/?id=3777107389",
+    "https://hostingbuff.com/guides/windrose-dedicated-server-setup.html"
+  ],
+  "unverified": ["real_exe_name", "ports", "log_file", "ready_pattern", "stop_recipe",
+                 "config_files"]
+}

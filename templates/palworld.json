@@ -1,0 +1,35 @@
+{
+  "id": "palworld",
+  "name": "Palworld",
+  "kind": "steam",
+  "steam_app_id": 2394010,
+  "exe": "PalServer.exe",
+  "args": "-port=8211 -players=16",
+  "real_exe_name": "PalServer-Win64-Shipping-Cmd.exe",
+  "ports": [
+    {"port": 8211, "protocol": "udp", "label": "game"},
+    {"port": 27015, "protocol": "udp", "label": "query"},
+    {"port": 25575, "protocol": "tcp", "label": "rcon"}
+  ],
+  "join_port_label": "game",
+  "log_source": "stdout",
+  "ready_pattern": "Running Palworld dedicated server on",
+  "ready_after_s": 90,
+  "stop_recipe": [
+    {"action": "rcon", "command": "Save", "wait_s": 15},
+    {"action": "rcon", "command": "Shutdown 10 Server is shutting down", "wait_s": 60},
+    {"action": "ctrl_break", "wait_s": 30}
+  ],
+  "config_files": ["Pal\\Saved\\Config\\WindowsServer\\PalWorldSettings.ini"],
+  "save_dir": "Pal\\Saved\\SaveGames",
+  "rcon_port": 25575,
+  "min_free_ram_mb": 8192,
+  "notes": "Settings: before the first edit, copy DefaultPalWorldSettings.ini from the install folder to Pal\\Saved\\Config\\WindowsServer\\PalWorldSettings.ini (editing the Default file does nothing). The whole config is one OptionSettings=(...) line. RCON needs RCONEnabled=True and an AdminPassword in that file. Until Basecamp's RCON client lands, the RCON stop steps are skipped and Ctrl+Break does the stop. Keep -port= and the game port the same.",
+  "docs": [
+    "https://docs.palworldgame.com/getting-started/deploy-dedicated-server",
+    "https://docs.palworldgame.com/settings-and-operation/arguments",
+    "https://docs.palworldgame.com/settings-and-operation/configuration",
+    "https://steamdb.info/app/2394010/"
+  ],
+  "unverified": ["real_exe_name", "ready_pattern", "stop_recipe", "ports"]
+}

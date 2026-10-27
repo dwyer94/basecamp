@@ -15,6 +15,8 @@ from pathlib import Path
 
 # migrations/ ships next to the basecamp/ package, in the repo and in release zips (docs/07).
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
+# Built-in game templates (R-13), shipped the same way; <data>/templates/ can add or override.
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,13 @@ class Settings:
     console_log_bytes: int = 10 * 1024 * 1024
     console_log_backups: int = 5
     migrations_dir: Path = MIGRATIONS_DIR
+    templates_dir: Path = TEMPLATES_DIR
+    # R-24: the host friends type in, e.g. the host PC's Tailscale IP. Set it in the data
+    # folder's settings.toml; there is deliberately no default (the repo is public).
+    join_host: str = ""
+    # D-27: Tailscale logins (Tailscale-User-Login) that get the admin view. A request from
+    # the PC itself (loopback, no Tailscale headers) is admin too; everyone else is a friend.
+    admin_logins: tuple[str, ...] = ()
 
     @property
     def db_path(self) -> Path:
@@ -52,6 +61,10 @@ class Settings:
 
     def server_log_dir(self, server_id: int) -> Path:
         return self.logs_dir / "servers" / str(server_id)
+
+    @property
+    def data_templates_dir(self) -> Path:
+        return self.data_dir / "templates"
 
     @property
     def hosts_dir(self) -> Path:
@@ -80,6 +93,12 @@ class Settings:
         unknown = set(values) - known
         if unknown:
             raise ValueError(f"Unknown settings: {', '.join(sorted(unknown))}")
-        if "migrations_dir" in values:
-            values["migrations_dir"] = Path(values["migrations_dir"])  # type: ignore[arg-type]
+        for key in ("migrations_dir", "templates_dir"):
+            if key in values:
+                values[key] = Path(values[key])  # type: ignore[arg-type]
+        if "admin_logins" in values:
+            logins = values["admin_logins"]
+            if isinstance(logins, str):
+                logins = [logins]
+            values["admin_logins"] = tuple(str(x).strip() for x in logins)  # type: ignore[union-attr]
         return cls(data_dir=data_dir, **values)  # type: ignore[arg-type]
