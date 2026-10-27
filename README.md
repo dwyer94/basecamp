@@ -4,7 +4,7 @@ Home base for the game servers you host for friends.
 
 Basecamp is a small Windows app that runs on an always-on Windows PC (the "host PC"). It starts when the PC boots, before anyone logs in, and brings back up every game server you've marked "start on boot". You control it from a web page that works on desktop and phone, over Tailscale.
 
-**Status:** Phase 1 (core supervisor, no UI) built and tested on the dev PC. Each running server has its own small host process, so games and their consoles carry on through Basecamp restarts and updates. See [docs/05-plan.md](docs/05-plan.md).
+**Status:** Phases 1 and 2 built and tested on the dev PC: the core supervisor, the web API and the admin and friend pages, and templates for Palworld, Enshrouded, V Rising, RuneScape: Dragonwilds and Windrose. Each running server has its own small host process, so games and their consoles carry on through Basecamp restarts and updates. See [docs/05-plan.md](docs/05-plan.md).
 
 ## What it does (v1)
 
@@ -32,6 +32,7 @@ Basecamp is a small Windows app that runs on an always-on Windows PC (the "host 
 | [docs/05-plan.md](docs/05-plan.md) | Development plan, phase by phase, with done-criteria |
 | [docs/06-decisions.md](docs/06-decisions.md) | Decisions made so far, and open questions |
 | [docs/07-updates.md](docs/07-updates.md) | How Basecamp updates itself from GitHub Releases, with signing and rollback |
+| [docs/08-templates.md](docs/08-templates.md) | Adding a game: the template format, finding the facts, testing and shipping it |
 
 ## Stack
 
@@ -47,4 +48,15 @@ uv venv --python 3.13 .venv
 .venv\Scripts\ruff check .
 ```
 
-`python -m basecamp` runs the supervisor with data in `.\data\` (or `BASECAMP_DATA_DIR`): it adopts servers left running, then starts the start-on-boot ones. There's no web page until Phase 2. Tests run real processes against [tools/fake_server.py](tools/fake_server.py), never real games.
+`python -m basecamp` runs Basecamp with data in `.\data\` (or `BASECAMP_DATA_DIR`). It adopts servers left running, starts the start-on-boot ones, and serves the page on http://127.0.0.1:8150. From the PC itself you're the admin.
+
+- `tools\dev_template.py` adds a "Fake server (dev)" template so you can try the page without a real game.
+- Set the join address and admin logins in `.\data\settings.toml`:
+
+```toml
+[basecamp]
+join_host = "<tailscale-ip>"
+admin_logins = ["you@example.com"]
+```
+
+Tests run real processes against [tools/fake_server.py](tools/fake_server.py), never real games.

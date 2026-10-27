@@ -44,6 +44,8 @@ Things that could change the design. Do these first, mostly by hand on the prod 
 
 **Done when:** from a phone browser on the dev PC's tailnet address you can add a fake server, start it, watch its console, send a command, copy its address, stop it.
 
+**Status:** built on the dev PC (2026-10-26) and checked in a browser at `127.0.0.1:8150` (add from template, start, console, command, copy, stop). The tailnet-address check waits for `tailscale serve` (Phase 7, Q-11). Templates for all five of the owner's games, with unchecked fields marked ([08-templates.md](08-templates.md)). Decisions D-28..D-34.
+
 ## Phase 3 · SteamCMD updates and installs
 
 - SteamCMD runner with queue, streaming output, timeout, cancel, self-update retry (R-31).
@@ -65,7 +67,7 @@ Things that could change the design. Do these first, mostly by hand on the prod 
 ## Phase 5 · Config editor and templates
 
 - Config files tab: open, edit, JSON check, versioned copies, "restart now" (R-40..R-43). Path guard test: can't read anything outside the server's list.
-- Templates for the rest of the games you run (Valheim, Satisfactory, etc.), with save locations from Phase 0.
+- Check the built-in templates' `unverified` fields on the prod PC; templates for any other games, with save locations from Phase 0.
 - Settings page: Discord webhook, backup defaults, Tailscale IP / join host.
 
 **Done when:** you can change a Palworld setting from the phone, restart, and see it take effect.

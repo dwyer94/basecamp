@@ -24,7 +24,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-10** Add a server with: name, type (**Steam** or **Custom**), install folder, exe path, launch arguments, working folder, ports (each with UDP/TCP and a label such as "game" or "query"), **join port** (the one friends type in), start-on-boot toggle.
 - **R-11** Steam servers also have: Steam **app ID**, optional beta branch, "validate on update" toggle. Basecamp can do the **first install** too (run SteamCMD into an empty folder).
 - **R-12** Optional per server: **config files** (list of paths), **save folder** (for backups), **log source** (stdout, or a log file path the game writes), **RCON** (host, port, password), **stop recipe** (see R-22), notes.
-- **R-13** **Game templates** pre-fill the form for common games (Palworld, Enshrouded, Valheim, Satisfactory, etc.): app ID, default exe, args, ports, config file locations, save folder, stop recipe. Templates are plain JSON files in the repo, easy to add to.
+- **R-13** **Game templates** pre-fill the form for common games (Palworld, Enshrouded, Valheim, Satisfactory, etc.): app ID, default exe, args, ports, config file locations, save folder, stop recipe. Templates are plain JSON files in the repo, easy to add to; one in the data folder adds a game or overrides a built-in one without a release (D-31, [08-templates.md](08-templates.md)).
 - **R-14** Edit and delete servers. Deleting removes Basecamp's record only; it never deletes game files (a separate "delete files too" option is **Later**).
 - **R-15** Import an existing install: point at a folder you already have, and Basecamp reads `steamapps/appmanifest_*.acf` to fill in the app ID.
 

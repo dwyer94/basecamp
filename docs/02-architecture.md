@@ -35,6 +35,14 @@ To check in Phase 0: that identity headers arrive with the prod PC carrying a Ta
 
 Either way: **admin** = your Tailscale login (Plan A) or a valid admin session (Plan B), and **localhost** on the prod PC also counts as admin so you can always get in from the PC itself. Everyone else gets the friend view.
 
+**Built (Plan A, D-27):** `basecamp/auth.py`.
+
+- The login header is trusted only from a loopback peer.
+- A login in `admin_logins` (data-folder `settings.toml`) is admin; any other login is a friend.
+- A request with no Tailscale or forwarding headers and a loopback `Host` is the PC itself, the local admin.
+- Anything else, such as Serve traffic from a tagged device, is a friend (D-28).
+- Cross-site requests and unknown `Host` names are refused (D-29).
+
 ## Code layout
 
 ```
@@ -55,11 +63,13 @@ basecamp/
   backups.py         zip save folders, retention, restore
   configs.py         read/write allowed config files, versioned copies
   notify.py          Discord webhook with retry
-  auth.py            who is asking: admin or friend
-  api/               FastAPI routers: servers, actions, console WS, configs, backups, settings
-  web/               index.html, friend.html, app.js, style.css (no build step)
+  auth.py            who is asking: admin or friend (D-28, D-29)
+  templates.py       game templates (built-in + data folder), appmanifest import
+  api/app.py         FastAPI app: REST routes, status and console WebSockets, pages
+  api/views.py       admin view vs friend view of a server (D-30)
+  web/               index.html, friend.html, app.js, common.js, style.css (no build step)
 migrations/          numbered SQL files, add-only
-templates/           game templates, one JSON per game
+templates/           built-in game templates, one JSON per game (docs/08-templates.md)
 tools/fake_server.py fake game server for tests: prints, reads stdin, binds a UDP port, can "crash"
 tests/
 scripts/             release.ps1 (dev PC), install / uninstall PowerShell for the prod PC
@@ -144,18 +154,22 @@ A game only stops when it's stopped from Basecamp, crashes, or the PC shuts down
 - **RCON**: Source RCON protocol over TCP to `127.0.0.1:<rcon port>`. Works for Palworld and many Source/Unreal-based servers. Not for Satisfactory (its own HTTPS API, Later) or Valheim (no RCON without mods). The console's command box sends via RCON if configured, else stdin.
 - Stop recipes use the same two channels.
 
-## API (sketch)
+## API
+
+Built in Phase 2: everything up to `/healthz` except `/update`, `/install`, configs, backups, settings and events, which come with their phases.
 
 | Method | Path | Who |
 |---|---|---|
-| GET | `/api/servers` | friend (trimmed fields) / admin (full) |
+| GET | `/api/me` | everyone (who you are) |
+| GET | `/api/servers` · `/api/servers/{id}` | friend (trimmed fields, D-30) / admin (full) |
 | POST | `/api/servers` · PUT/DELETE `/api/servers/{id}` | admin |
-| POST | `/api/servers/{id}/start` · `/stop` · `/restart` · `/update` · `/install` | admin |
-| WS | `/ws/servers/{id}/console` | admin (read + send) |
+| POST | `/api/servers/{id}/start` · `/stop` · `/restart` · `/kill` · `/update` · `/install` | admin (stop/restart/kill answer 202, D-32) |
+| POST | `/api/servers/{id}/command` · GET `/api/servers/{id}/console?after=` | admin |
+| WS | `/ws/servers/{id}/console?after=` | admin (replay + live, send `{"text": ...}`) |
 | WS | `/ws/status` | everyone (status changes; friends get trimmed fields) |
 | GET/PUT | `/api/servers/{id}/configs/{n}` | admin |
 | GET/POST | `/api/servers/{id}/backups` · `/backups/{b}/restore` | admin |
-| GET | `/api/templates` | admin |
+| GET | `/api/templates` · POST `/api/drafts` (pre-filled form from a template or an install's appmanifest) | admin |
 | GET/PUT | `/api/settings` | admin |
 | GET | `/api/events` · `/api/audit` | admin |
 | GET | `/healthz` | localhost |
