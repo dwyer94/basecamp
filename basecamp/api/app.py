@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
@@ -35,6 +35,7 @@ from basecamp.db import Store
 from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig
 from basecamp.notify import Notifier
 from basecamp.settings import Settings
+from basecamp.steam import Kind, SteamError, SteamRunner
 from basecamp.supervisor import InvalidState, PortInUse, Supervisor, SupervisorError
 
 log = logging.getLogger(__name__)
@@ -109,13 +110,16 @@ class _Hub:
 
 def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                notifier: Notifier | None = None, backups: Backups | None = None,
-               crashes: CrashPolicy | None = None) -> FastAPI:
+               crashes: CrashPolicy | None = None,
+               steam: SteamRunner | None = None) -> FastAPI:
     """The services are made by main.run; tests may leave them out (no crash restarts)."""
     hub = _Hub()
     cpu = views.CpuSampler()
     notifier = notifier or Notifier(settings, store)
     backups = backups or Backups(store, sup, settings, notifier.server_event)
+    steam = steam or SteamRunner(store, sup, settings, backups, notifier)
     sup.add_listener(hub.poke)
+    steam.add_listener(hub.poke)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -150,7 +154,14 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
 
     def admin_view(server, status) -> dict:  # type: ignore[no-untyped-def]
         restart_at = crashes.restart_at(server.id) if crashes else None
-        return views.admin_view(settings, server, status, cpu, restart_at)
+        return views.admin_view(settings, server, status, cpu, restart_at,
+                                steam.view(server))
+
+    def not_updating(server_id: int) -> None:
+        """Start, stop, restart and restore wait for the server's lock, which an update
+        holds for as long as SteamCMD runs: refuse them instead (kill still works)."""
+        if steam.busy(server_id):
+            raise HTTPException(409, "An install or update is running; cancel it first")
 
     def cancel_restart(server_id: int) -> None:
         if crashes is not None:
@@ -241,6 +252,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         server = get_server(server_id)
         if sup.state(server_id) in ACTIVE_STATES:
             raise HTTPException(409, "Stop the server before deleting it")
+        if steam.job(server_id) is not None:
+            raise HTTPException(409, "Cancel its queued install or update first")
         cancel_restart(server_id)
         store.delete_server(server_id)  # game files are never touched (R-14)
         audit(w, "server.delete", server_id, server.name)
@@ -263,6 +276,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     @app.post("/api/servers/{server_id}/start")
     def start(server_id: int, w: Admin) -> dict:
         server = get_server(server_id)
+        not_updating(server_id)
         audit(w, "start", server_id, server.name)
         try:
             result = sup.start(server_id)
@@ -277,6 +291,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     @app.post("/api/servers/{server_id}/stop", status_code=202)
     def stop(server_id: int, w: Admin) -> dict:
         server = get_server(server_id)
+        not_updating(server_id)
         audit(w, "stop", server_id, server.name)
         cancel_restart(server_id)
         in_background("stop", server_id, lambda: sup.stop(server_id))
@@ -285,6 +300,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     @app.post("/api/servers/{server_id}/restart", status_code=202)
     def restart(server_id: int, w: Admin) -> dict:
         server = get_server(server_id)
+        not_updating(server_id)
         audit(w, "restart", server_id, server.name)
         in_background("restart", server_id, lambda: sup.restart(server_id))
         return {"accepted": True}
@@ -313,6 +329,54 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     def console(server_id: int, w: Admin, after: int = 0) -> list[dict]:
         get_server(server_id)
         return [_console_line(line) for line in sup.console(server_id).lines(after)]
+
+    # -- SteamCMD installs and updates (R-11, R-30..R-32) ------------------------------
+
+    def queue_steam(server_id: int, kind: Kind, w: auth.Who) -> dict:
+        server = get_server(server_id)
+        audit(w, kind.value, server_id, server.name)
+        try:
+            job = steam.enqueue(server_id, kind, w.label)
+        except SteamError as e:
+            raise HTTPException(409, str(e)) from None
+        except KeyError:
+            raise HTTPException(404, "No such server") from None
+        cancel_restart(server_id)  # the update starts it again if it was running
+        return {"accepted": True, "run_id": job.run_id}
+
+    @app.post("/api/servers/{server_id}/update", status_code=202)
+    def update(server_id: int, w: Admin) -> dict:
+        return queue_steam(server_id, Kind.UPDATE, w)
+
+    @app.post("/api/servers/{server_id}/install", status_code=202)
+    def install(server_id: int, w: Admin) -> dict:
+        return queue_steam(server_id, Kind.INSTALL, w)
+
+    @app.post("/api/servers/{server_id}/steam/cancel")
+    def cancel_steam(server_id: int, w: Admin) -> dict:
+        server = get_server(server_id)
+        audit(w, "steam.cancel", server_id, server.name)
+        if not steam.cancel(server_id):
+            raise HTTPException(409, "Nothing to cancel")
+        return {"cancelled": True}
+
+    @app.get("/api/steam")
+    def steam_queue(w: Admin) -> dict:
+        exe = settings.steamcmd_exe
+        return {"steamcmd": str(exe), "steamcmd_found": exe.is_file(),
+                "timeout_s": settings.steamcmd_timeout_s, "jobs": steam.jobs()}
+
+    @app.get("/api/servers/{server_id}/steam/runs/{run_id}/log")
+    def steam_log(server_id: int, run_id: int, w: Admin) -> PlainTextResponse:
+        get_server(server_id)
+        try:
+            run = store.get_steam_run(run_id)
+            if run.server_id != server_id:
+                raise KeyError(run_id)
+            text = steam.log_text(server_id, run_id)
+        except (KeyError, FileNotFoundError):
+            raise HTTPException(404, "No output for that run") from None
+        return PlainTextResponse(text)
 
     # -- backups (R-50..R-53) -----------------------------------------------------------
 
@@ -348,6 +412,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     @app.post("/api/servers/{server_id}/backups/{name}/restore")
     def restore_backup(server_id: int, name: str, w: Admin) -> dict:
         server = get_server(server_id)
+        not_updating(server_id)
         audit(w, "backup.restore", server_id, name)
         try:
             safety = backups.restore(server, name)
@@ -587,4 +652,5 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     app.state.hub = hub
     app.state.backups = backups
     app.state.notifier = notifier
+    app.state.steam = steam
     return app

@@ -38,6 +38,27 @@ class AuditEntry:
     detail: str
 
 
+@dataclass(frozen=True)
+class SteamRun:
+    id: int
+    server_id: int
+    kind: str  # install, update
+    who: str
+    result: str  # queued, running, ok, failed, cancelled, interrupted
+    message: str
+    build_before: str
+    build_after: str
+    backup: str
+    was_running: int
+    started_again: int
+    queued_at: str
+    started_at: str | None
+    ended_at: str | None
+
+
+_STEAM_RUN_FIELDS = frozenset(SteamRun.__dataclass_fields__) - {"id", "server_id", "queued_at"}
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -221,6 +242,56 @@ class Store:
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
         return [AuditEntry(**dict(row)) for row in rows]
+
+    # -- SteamCMD runs (R-30..R-32) ---------------------------------------------
+
+    def add_steam_run(self, server_id: int, kind: str, who: str) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO steam_runs (server_id, kind, who, queued_at) VALUES (?, ?, ?, ?)",
+                (server_id, kind, who, _now()),
+            )
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+    def update_steam_run(self, run_id: int, **fields: object) -> None:
+        unknown = set(fields) - _STEAM_RUN_FIELDS
+        if unknown:
+            raise ValueError(f"unknown steam_runs fields: {sorted(unknown)}")
+        for key in ("started_at", "ended_at"):
+            if fields.get(key) is True:
+                fields[key] = _now()
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE steam_runs SET {', '.join(f'{c} = ?' for c in fields)} WHERE id = ?",
+                [*fields.values(), run_id],
+            )
+
+    def get_steam_run(self, run_id: int) -> SteamRun:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM steam_runs WHERE id = ?",
+                                     (run_id,)).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return SteamRun(**dict(row))
+
+    def last_steam_run(self, server_id: int) -> SteamRun | None:
+        """The newest finished run (not one that is queued or running now)."""
+        sql = ("SELECT * FROM steam_runs WHERE server_id = ?"
+               " AND result NOT IN ('queued', 'running')")
+        params: list[object] = [server_id]
+        with self._lock:
+            row = self._conn.execute(sql + " ORDER BY id DESC LIMIT 1", params).fetchone()
+        return SteamRun(**dict(row)) if row is not None else None
+
+    def end_unfinished_steam_runs(self) -> int:
+        """Runs left queued or running by a Basecamp that stopped: mark them interrupted."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE steam_runs SET result = 'interrupted', ended_at = ?,"
+                " message = 'Basecamp stopped during the run'"
+                " WHERE result IN ('queued', 'running')", (_now(),))
+        return cur.rowcount
 
     # -- helpers --------------------------------------------------------------
 

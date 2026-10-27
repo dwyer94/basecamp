@@ -29,6 +29,7 @@ class LineSource(StrEnum):
     OUT = "out"  # the game's own output
     IN = "in"  # a command we sent
     SYS = "sys"  # a note from Basecamp ("started", "killed", ...)
+    STEAM = "steam"  # SteamCMD output during an install or update (basecamp/steam.py)
 
 
 @dataclass(frozen=True)

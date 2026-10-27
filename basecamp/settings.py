@@ -17,6 +17,7 @@ from pathlib import Path
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 # Built-in game templates (R-13), shipped the same way; <data>/templates/ can add or override.
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+DEFAULT_STEAMCMD = r"%USERPROFILE%\Desktop\SteamCmd\steamcmd.exe"
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,10 @@ class Settings:
     backup_check_s: float = 60.0
     # R-62: waits between tries of a Discord message that failed (one try per entry, + 1).
     notify_retry_s: tuple[float, ...] = (5.0, 30.0, 120.0)
+    # R-31: steamcmd.exe ("" = %USERPROFILE%\Desktop\SteamCmd\steamcmd.exe), and how
+    # long one SteamCMD run may take before it is killed.
+    steamcmd_path: str = ""
+    steamcmd_timeout_s: float = 3600.0
 
     @property
     def db_path(self) -> Path:
@@ -81,6 +86,15 @@ class Settings:
     @property
     def backups_dir(self) -> Path:
         return Path(self.backups_root) if self.backups_root else self.data_dir / "backups"
+
+    @property
+    def steamcmd_exe(self) -> Path:
+        raw = self.steamcmd_path.strip().strip('"') or DEFAULT_STEAMCMD
+        return Path(os.path.expandvars(raw))
+
+    def steam_log_dir(self, server_id: int) -> Path:
+        """One log file per SteamCMD run (``<run id>.log``)."""
+        return self.logs_dir / "steamcmd" / str(server_id)
 
     def server_backup_dir(self, server_id: int) -> Path:
         return self.backups_dir / str(server_id)

@@ -16,7 +16,9 @@ Seams for later phases:
 - ``add_listener`` gets every state change (status WebSocket, Discord, crash restart).
 - ``rcon_sender`` sends RCON stop steps and console commands once rcon.py exists.
 - An unexpected exit ends in Crashed; basecamp/crashes.py restarts it from a listener (R-05).
-- ``hold`` keeps actions off a server while a restore (later an update) runs.
+- ``hold`` keeps actions off a server while a restore runs.
+- ``updating`` holds it for a SteamCMD install or update (basecamp/steam.py): stop through
+  the server's own stop recipe, Updating while SteamCMD runs, then start again if asked.
 """
 
 from __future__ import annotations
@@ -116,6 +118,7 @@ class _Run:
         self.ready = threading.Event()
         self.exited = threading.Event()
         self.stop_requested = False  # asked by this Basecamp
+        self.for_update = False  # stopped for an update: the exit ends in Updating
         self.killed = False
         self.exit_code: int | None = None
         self.exit_expected = False  # the host says the exit was asked for
@@ -213,6 +216,8 @@ class Supervisor:
     def start(self, server_id: int) -> StartResult:
         server = self._store.get_server(server_id)
         slot = self._slot(server_id)
+        if slot.state is ServerState.UPDATING:  # don't wait out a SteamCMD run for the lock
+            raise InvalidState(f"{server.name} is updating")
         with slot.lock:
             return self._start_locked(server, slot)
 
@@ -249,6 +254,21 @@ class Supervisor:
         slot = self._slot(server_id)
         with slot.lock:
             yield slot.state
+
+    @contextlib.contextmanager
+    def updating(self, server_id: int) -> Iterator[UpdateHold]:
+        """Hold the server's action lock for a SteamCMD install or update. The hold stops
+        the server through its own stop recipe (R-04a) and keeps it Updating; when the block
+        ends it is Stopped, unless the block started it again."""
+        server = self._store.get_server(server_id)
+        slot = self._slot(server_id)
+        with slot.lock:
+            hold = UpdateHold(self, server, slot)
+            try:
+                yield hold
+            finally:
+                if slot.state is ServerState.UPDATING:
+                    self._set_state(server_id, ServerState.STOPPED)
 
     def stop_all(self) -> dict[int, StopResult]:
         with self._mu:
@@ -492,7 +512,10 @@ class Supervisor:
         with self._mu:
             slot.run = None
             slot.last_exit_code = code
-        self._set_state(server.id, ServerState.STOPPED if expected else ServerState.CRASHED)
+        new = ServerState.STOPPED if expected else ServerState.CRASHED
+        if expected and run.for_update:
+            new = ServerState.UPDATING  # Stopping -> Updating: no "stopped" message
+        self._set_state(server.id, new)
         run.exited.set()
 
     # -- stop -------------------------------------------------------------------
@@ -777,6 +800,40 @@ class Supervisor:
             log.error("Can't read %s: %s", self._settings.state_path, e)
             return {}
         return data if isinstance(data, dict) else {}
+
+
+class UpdateHold:
+    """What ``Supervisor.updating`` yields: the server's lock is held throughout."""
+
+    def __init__(self, sup: Supervisor, server: Server, slot: _Slot):
+        self._sup = sup
+        self._server = server
+        self._slot = slot
+        self.state_before = slot.state
+        # Starting counts: it was meant to be up, so it comes back after the update.
+        self.was_running = slot.state in (ServerState.STARTING, ServerState.RUNNING)
+
+    def stop(self) -> StopResult:
+        """Stop it with its stop recipe (kill at the end, as for any stop) and go to
+        Updating. Raises SupervisorError if it is still running after that."""
+        slot = self._slot
+        run = slot.run
+        result = StopResult(graceful=True, killed=False, ended_by="not running")
+        if run is not None:
+            run.for_update = True
+            result = self._sup._stop_locked(self._server, slot)
+            run.exited.wait(self._sup._settings.kill_wait_s)
+            if slot.run is run:
+                raise SupervisorError(f"{self._server.name} is still running after the stop")
+        if slot.state is not ServerState.UPDATING:  # it wasn't running, or Crashed
+            self._sup._set_state(self._server.id, ServerState.UPDATING)
+        return result
+
+    def start(self) -> StartResult:
+        """Start it again after the update (Updating -> Stopped -> Starting)."""
+        server = self._sup._store.get_server(self._server.id)  # the update may change it
+        self._sup._set_state(server.id, ServerState.STOPPED)
+        return self._sup._start_locked(server, self._slot)
 
 
 def _alive(proc: psutil.Process | None) -> bool:

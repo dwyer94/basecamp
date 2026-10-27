@@ -87,6 +87,8 @@ button:disabled { opacity: 0.45; cursor: default; }
 }
 .console .in { color: #8fc1ff; }
 .console .sys { color: #f0c05a; }
+.console .steam { color: #9fd6a8; }
+.notice progress { display: block; width: 100%; margin-top: 6px; }
 .command { display: flex; gap: 8px; margin-top: 8px; }
 .command input { flex: 1; min-width: 0; }
 input, select, textarea {

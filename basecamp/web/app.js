@@ -37,6 +37,8 @@ function notice(text, kind = "") {
 }
 
 async function act(server, action) {
+  if (action === "start" && server.steam && server.steam.failed && !server.steam.job
+    && !confirm(`The last ${server.steam.last.kind} of ${server.name} failed, so its files may be half updated. Start anyway?`)) return;
   if (action === "stop" && !server.restart_at && !confirm(`Stop ${server.name}?`)) return;
   if (action === "restart" && !confirm(`Restart ${server.name}?`)) return;
   if (action === "kill" && !confirm(`Kill ${server.name} without saving?`)) return;
@@ -49,15 +51,81 @@ async function act(server, action) {
   }
 }
 
+// -- SteamCMD (R-11, R-30..R-32) ------------------------------------------------------
+
+const PHASES = { queued: "Queued", backup: "Backing up the save", stopping: "Stopping",
+  steamcmd: "SteamCMD running", starting: "Starting again" };
+
+async function steamAction(s, action) {
+  const st = s.steam;
+  if (action === "update") {
+    const running = ["starting", "running"].includes(s.state);
+    const ask = running
+      ? `Update ${s.name}? It backs up the save, stops the server, runs SteamCMD and starts it again.`
+      : `Update ${s.name}? It backs up the save and runs SteamCMD.`;
+    if (!confirm(ask)) return;
+  } else if (action === "install") {
+    if (!confirm(`Install ${s.name} into ${s.config.install_dir}? SteamCMD downloads it there.`)) return;
+  } else if (action === "cancel") {
+    const midway = st.job && st.job.phase === "steamcmd";
+    if (!confirm(midway ? `Stop SteamCMD? ${s.name} may be left half updated and won't be started.`
+      : `Cancel the ${st.job.kind} of ${s.name}?`)) return;
+  }
+  try {
+    await api("POST", `/api/servers/${s.id}/${action === "cancel" ? "steam/cancel" : action}`);
+    toast(action === "cancel" ? "Cancelling" : `${action === "install" ? "Install" : "Update"} queued: ${s.name}`);
+  } catch (e) {
+    alert(`${s.name}: ${e.message}`);
+  }
+}
+
+function jobText(job) {
+  if (job.position > 0) return `${job.kind === "install" ? "Install" : "Update"} queued (${job.position} ahead)`;
+  let text = PHASES[job.phase] || job.phase;
+  if (job.phase === "steamcmd" && job.progress !== null) text += ` · ${job.progress.toFixed(0)}%`;
+  return job.cancelling ? `${text} · cancelling…` : text;
+}
+
+function steamButton(s) {
+  const st = s.steam;
+  if (!st) return null;
+  if (st.job) {
+    return el("button", { disabled: st.job.phase === "starting" || st.job.cancelling,
+      onclick: () => steamAction(s, "cancel") }, "Cancel update");
+  }
+  if (!st.installed) {
+    const idle = s.state === "stopped" || s.state === "crashed";
+    return el("button", { disabled: !idle, onclick: () => steamAction(s, "install") }, "Install");
+  }
+  return el("button", { disabled: ["stopping", "updating"].includes(s.state),
+    onclick: () => steamAction(s, "update") }, "Update");
+}
+
+function steamLine(s) {
+  const st = s.steam;
+  if (!st) return null;
+  return el("div", {},
+    st.job ? el("div", { class: "notice" }, jobText(st.job),
+      st.job.phase === "steamcmd" && st.job.progress !== null && st.job.position === 0
+        ? el("progress", { max: "100", value: String(st.job.progress) }) : null) : null,
+    !st.job && st.failed && st.last ? el("div", { class: "notice error" },
+      `Last ${st.last.kind} ${st.last.result}: ${st.last.message} `,
+      el("a", { href: `/api/servers/${s.id}/steam/runs/${st.last.run_id}/log`, target: "_blank" },
+        "SteamCMD output")) : null);
+}
+
 function actionButtons(s) {
   const active = ["starting", "running", "stopping", "updating"].includes(s.state);
+  const updating = s.state === "updating" || Boolean(s.steam && s.steam.job && s.steam.job.position === 0
+    && s.steam.job.phase !== "queued");
   return el("div", { class: "buttons" },
     el("button", { class: "primary", disabled: active, onclick: () => act(s, "start") }, "Start"),
     s.restart_at
       ? el("button", { onclick: () => act(s, "stop") }, "Cancel restart")
-      : el("button", { disabled: !active || s.state === "stopping", onclick: () => act(s, "stop") },
-        "Stop"),
-    el("button", { disabled: !active, onclick: () => act(s, "restart") }, "Restart"));
+      : el("button", { disabled: !active || updating || s.state === "stopping",
+        onclick: () => act(s, "stop") }, "Stop"),
+    el("button", { disabled: !active || updating, onclick: () => act(s, "restart") }, "Restart"),
+    steamButton(s));
 }
 
 function addressBlock(s) {
@@ -82,7 +150,9 @@ function metaLine(s) {
     s.adopted && !s.has_console && s.state === "running"
       ? el("span", {}, "no console (restart to get it back)") : null,
     s.restart_at ? el("span", { class: "unverified" },
-      `restarting at ${new Date(s.restart_at * 1000).toLocaleTimeString()}`) : null);
+      `restarting at ${new Date(s.restart_at * 1000).toLocaleTimeString()}`) : null,
+    s.steam ? el("span", {}, s.steam.build_id ? `build ${s.steam.build_id}`
+      : s.steam.installed ? "build unknown" : "not installed") : null);
 }
 
 // -- dashboard ----------------------------------------------------------------------
@@ -105,7 +175,7 @@ function dashboard(root) {
       list.append(el("div", { class: "card" },
         el("div", { class: "card-head" },
           el("a", { class: "name", href: `#server/${s.id}` }, s.name), statePill(s.state)),
-        metaLine(s), addressBlock(s), actionButtons(s)));
+        metaLine(s), steamLine(s), addressBlock(s), actionButtons(s)));
     }
   };
   update();
@@ -122,6 +192,7 @@ function serverPage(root, id) {
   const consoleState = el("div", { class: "hint" });
   const history = el("div");
   const backupBox = el("div");
+  const steamBox = el("div");
   let backupBusy = false;
   let lastSeq = 0;
   let follow = true;
@@ -132,7 +203,7 @@ function serverPage(root, id) {
   const addLine = (line) => {
     if (line.seq <= lastSeq) return;
     lastSeq = line.seq;
-    const cls = line.source === "in" ? "in" : line.source === "sys" ? "sys" : "";
+    const cls = { in: "in", sys: "sys", steam: "steam" }[line.source] || "";
     const prefix = line.source === "in" ? "> " : line.source === "sys" ? "# " : "";
     out.append(el("div", { class: cls }, prefix + line.text));
     while (out.childElementCount > 2000) out.firstElementChild.remove();
@@ -221,6 +292,7 @@ function serverPage(root, id) {
     el("h2", {}, "Console"), out,
     el("div", { class: "command" }, input, el("button", { class: "primary", onclick: send }, "Send")),
     consoleState,
+    steamBox,
     el("h2", {}, "Backups"), backupBox,
     el("h2", {}, "History"), history);
 
@@ -234,7 +306,7 @@ function serverPage(root, id) {
     const c = s.config;
     head.replaceChildren(
       el("div", { class: "card-head" }, el("span", { class: "name" }, s.name), statePill(s.state)),
-      metaLine(s), addressBlock(s), actionButtons(s),
+      metaLine(s), steamLine(s), addressBlock(s), actionButtons(s),
       el("div", { class: "buttons" },
         el("a", { class: "button", href: `#edit/${id}` }, "Edit"),
         ["starting", "running", "stopping"].includes(s.state)
@@ -242,10 +314,30 @@ function serverPage(root, id) {
       el("p", { class: "muted" }, c.exe_path, c.args ? ` ${c.args}` : "",
         s.pid ? ` · PID ${s.pid}` : ""));
     input.disabled = !(s.has_console && s.state !== "stopped" && s.state !== "crashed");
-    if (s.state !== lastState) { lastState = s.state; loadBackups(); }  // and the history
+    steamBox.replaceChildren(s.steam ? steamSection(s) : el("div"));
+    const key = `${s.state} ${s.steam && s.steam.job ? s.steam.job.phase : ""}`;
+    if (key !== lastState) { lastState = key; loadBackups(); }  // and the history
   };
   update();
   return { update, close: () => sock.close() };
+}
+
+function steamSection(s) {
+  const st = s.steam;
+  const c = s.config;
+  const last = st.last;
+  return el("div", {},
+    el("h2", {}, "SteamCMD"),
+    !st.steamcmd_found ? notice(`SteamCMD not found at ${st.steamcmd}. Set steamcmd_path in the data folder's settings.toml.`, "error") : null,
+    el("p", { class: "muted" }, `App ${c.steam_app_id || "?"}`,
+      c.steam_beta ? `, beta branch ${c.steam_beta}` : "", c.steam_validate ? ", validate on update" : "",
+      ". Installed build: ", el("strong", {}, st.build_id || (st.installed ? "unknown" : "not installed")),
+      ". Folder ", el("code", {}, c.install_dir || "(not set)"), "."),
+    last ? el("p", { class: "muted" },
+      `Last ${last.kind}: ${last.result}`, last.ended_at ? `, ${new Date(last.ended_at).toLocaleString()}` : "",
+      last.who ? ` by ${last.who}` : "", last.backup ? `. Backup ${last.backup}` : "", ". ",
+      el("a", { href: `/api/servers/${s.id}/steam/runs/${last.run_id}/log`, target: "_blank" }, "Output")) : null,
+    el("div", { class: "hint" }, "SteamCMD output shows in the console above while it runs."));
 }
 
 // -- add / edit form ----------------------------------------------------------------
