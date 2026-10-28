@@ -79,11 +79,11 @@ If the warning can't be sent (no stdin after adoption, RCON not available), the 
 2. **Install it** on the dev PC into a scratch folder:
    `steamcmd +force_install_dir C:\Temp\MyGame +login anonymous +app_update <app id> validate +quit`
 3. **Exe.** Look in the install folder for the server exe (often `<Game>Server.exe`, or a `.bat` the developers ship: open the `.bat` to see the real exe and arguments). Start it once by hand in a console. In Task Manager → Details, check whether a *different* exe keeps running after the first one exits (Unreal games: `...\Binaries\Win64\<Name>-Win64-Shipping.exe`). If so, that's `real_exe_name`.
-4. **Ports.** The game's official server guide is best. To check, while it runs: `Get-NetUDPEndpoint -OwningProcess <pid>` and `Get-NetTCPConnection -State Listen -OwningProcess <pid>` in PowerShell.
-5. **Ready line.** Watch the console (or log file) during that first start and copy a line that appears only once the server accepts players.
+4. **Ports.** The game's official server guide is best. To check, while it runs: `Get-NetUDPEndpoint -OwningProcess <pid>` and `Get-NetTCPConnection -State Listen -OwningProcess <pid>` in PowerShell. Unreal games often start a second exe (step 3): check that one's ports, not the launcher's. Leave out loopback-only listeners (`127.0.0.1`) and high random ports that change each start; those aren't the game's. A mod can add a port of its own (Palworld's PalDefender REST API): put it in the server's ports, not the template.
+5. **Ready line.** Watch the console (or log file) during that first start and copy a line that appears only once the server accepts players. Basecamp looks for it anywhere in a line, so leave out the timestamp or `[I 00:00:01,186]` prefix the log puts in front.
 6. **Output.** If the console window shows output but a pipe would be empty, or the game says it writes `...\Logs\<name>.log`, use `"log_source": "file"`.
 7. **Graceful stop.** Press Ctrl+C in its console window: does it save and exit within a minute? Does it accept `quit`/`stop`/`shutdown` typed into the console? Does it have RCON? Write the recipe from that.
-8. **Config and saves.** Note which files the first start created (settings `.ini`/`.json`, the save folder). Many Unreal games use `<Project>\Saved\Config\WindowsServer\` and `<Project>\Saved\SaveGames\`; some put saves in `%LOCALAPPDATA%` or `%USERPROFILE%\AppData\LocalLow\`.
+8. **Config and saves.** Note which files the first start created (settings `.ini`/`.json`, the save folder). Many Unreal games use `<Project>\Saved\Config\WindowsServer\` and `<Project>\Saved\SaveGames\`; some put saves in `%LOCALAPPDATA%` or `%USERPROFILE%\AppData\LocalLow\`. If the game itself was ever played on that PC, `%LOCALAPPDATA%\<Project>\Saved\` may be the game client's: the server's is the one whose files change while the server runs.
 
 Anything you got from a guide but didn't see yourself goes in `unverified`.
 
@@ -104,12 +104,12 @@ Anything you got from a guide but didn't see yourself goes in `unverified`.
 
 ## Built-in templates and what's not yet checked
 
-Researched from official guides where they exist (links in each file's `docs`), not yet run on the prod PC. Everything in `unverified` needs checking before relying on it, and Phase 0's "save locations" task feeds into `save_dir`.
+Researched from official guides (links in each file's `docs`), then checked on the host PC for Palworld, Enshrouded and Dragonwilds (October 2026, read-only: process list, open ports, config and save folders, logs; D-88). V Rising and Windrose weren't installed the usual way there, so they are still guide-only. Everything in `unverified` needs checking before relying on it.
 
-| Game | App ID | Unverified |
-|---|---|---|
-| Palworld | 2394010 | `real_exe_name` (Shipping-Cmd vs older Test-Cmd), `ready_pattern`, `stop_recipe` (does Ctrl+Break save?), `ports` (query 27015), `stop_warning` (RCON `Broadcast`; spaces in it are reported to cut the message, so it uses `_`) |
-| Enshrouded | 2278520 | `ports`, `join_port_label` (join on the query port?), `stop_recipe`, `save_dir` |
-| V Rising | 1829350 | `ready_pattern` (none found), `stop_recipe`, `ports` (docs examples use 27015/27016, defaults 9876/9877), `stop_warning` (RCON `announce`) |
-| RuneScape: Dragonwilds | 4019830 | `real_exe_name`, `args`, `log_file`, `ready_pattern`, `stop_recipe`, `config_files`, `save_dir` (Jagex's guide and the wiki disagree on install folder vs `%LOCALAPPDATA%`) |
-| Windrose | 4129620 | `real_exe_name`, `ports` (only with direct connection; default is invite codes), `log_file`, `ready_pattern`, `stop_recipe`, `config_files` (`ServerDescription.json` in the install folder or `R5\`) |
+| Game | App ID | Checked on the host PC | Unverified |
+|---|---|---|---|
+| Palworld | 2394010 | exe and `real_exe_name` (Shipping-Cmd), UDP 8211 and 27015, ready line, config file (plain text, no BOM), save folder | `stop_recipe` (does Ctrl+Break save?), `stop_warning` (RCON `Broadcast`; spaces in it are reported to cut the message, so it uses `_`). The RCON port is from the docs: it only opens with RCON on (D-89) |
+| Enshrouded | 2278520 | exe, ports (only the query port 15637, D-90), join on the query port, log file and ready line, save folder | `stop_recipe` (a clean exit saves and logs `Close Log file`; which stop gives it is unknown) |
+| V Rising | 1829350 | nothing (1604030 on that PC is the game, not the server) | `ready_pattern` (none found), `stop_recipe`, `ports` (docs examples use 27015/27016, defaults 9876/9877), `stop_warning` (RCON `announce`) |
+| RuneScape: Dragonwilds | 4019830 | exe `RSDragonwildsServer.exe`, `real_exe_name`, no args, ports, `Saved\` in the install folder (D-91), config, saves, log and ready line | `stop_recipe` (it was killed from Task Manager; a graceful stop is untested) |
+| Windrose | 4129620 | the app ID only (a Steam library manifest) | `real_exe_name`, `ports` (only with direct connection; default is invite codes), `log_file`, `ready_pattern`, `stop_recipe`, `config_files` (`ServerDescription.json` in the install folder or `R5\`) |

@@ -26,6 +26,7 @@ from basecamp.api.app import create_app
 from basecamp.selfupdate import SelfUpdater, UpdateError, check_tree, parse_version
 from basecamp.settings import Settings
 from basecamp.supervisor import Supervisor
+from basecamp.templates import load_templates
 from tests.conftest import REPO, FakeWebhook, wait_for
 
 _spec = importlib.util.spec_from_file_location("build_release",
@@ -170,6 +171,26 @@ def test_build_makes_a_signed_zip_with_a_manifest(tmp_path, keys, lib):
     (out / "basecamp" / "__pycache__").mkdir()
     (out / "basecamp" / "__pycache__" / "x.cpython-313.pyc").write_bytes(b"")
     check_tree(out, "0.2.0")
+
+
+def test_build_of_the_repo_ships_every_built_in_template(tmp_path, keys, lib):
+    version = build_release.source_version(REPO)
+    zip_path = build_release.build(version, keys[0], tmp_path / "out", REPO, lib,
+                                   test_key=True)
+    out = tmp_path / "unpacked"
+    selfupdate.safe_extract(zip_path, out)
+    manifest = check_tree(out, version)
+    repo_templates = sorted(p.name for p in (REPO / "templates").glob("*.json"))
+    assert repo_templates
+    assert sorted(name.removeprefix("templates/") for name in manifest["files"]
+                  if name.startswith("templates/")) == repo_templates
+    for name in repo_templates:
+        assert (out / "templates" / name).read_bytes() == \
+            (REPO / "templates" / name).read_bytes()
+    # The installed copy finds them where settings.TEMPLATES_DIR points: next to basecamp\.
+    loaded = load_templates(out / "templates", tmp_path / "no-data-templates")
+    assert loaded.errors == []
+    assert {f"{t}.json" for t in loaded.templates} == set(repo_templates)
 
 
 def test_build_refuses_a_key_that_isnt_the_repos(tmp_path, keys, lib):

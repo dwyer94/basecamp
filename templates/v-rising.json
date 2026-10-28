@@ -25,7 +25,7 @@
   ],
   "save_dir": "save-data\\Saves",
   "rcon_port": 25575,
-  "notes": "With -persistentDataPath, the server reads its settings from save-data\\Settings\\ and saves to save-data\\Saves\\v4\\<saveName>\\. Copy ServerHostSettings.json and ServerGameSettings.json there from VRisingServer_Data\\StreamingAssets\\Settings\\ (those are defaults, overwritten by updates). Command-line options win over the files. RCON is off until Rcon.Enabled and a password are set in ServerHostSettings.json. Its shutdown command is 'shutdown <message times> <message>'.",
+  "notes": "With -persistentDataPath, the server reads its settings from save-data\\Settings\\ and saves to save-data\\Saves\\v4\\<saveName>\\. Copy ServerHostSettings.json and ServerGameSettings.json there from VRisingServer_Data\\StreamingAssets\\Settings\\ (those are defaults, overwritten by updates). Command-line options win over the files. RCON is off until Rcon.Enabled and a password are set in ServerHostSettings.json. Its shutdown command is 'shutdown <message times> <message>'. Not yet checked on a real install: the ready line, the stop recipe, the ports and the announce warning. 1829350 is the dedicated server; 1604030 is the V Rising game, not the server.",
   "docs": [
     "https://github.com/StunlockStudios/vrising-dedicated-server-instructions/blob/master/1.1.x-pc/INSTRUCTIONS.md",
     "https://steamdb.info/app/1829350/"

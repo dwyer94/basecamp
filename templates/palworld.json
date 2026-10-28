@@ -25,12 +25,12 @@
   "save_dir": "Pal\\Saved\\SaveGames",
   "rcon_port": 25575,
   "min_free_ram_mb": 8192,
-  "notes": "Settings: before the first edit, copy DefaultPalWorldSettings.ini from the install folder to Pal\\Saved\\Config\\WindowsServer\\PalWorldSettings.ini (editing the Default file does nothing). The whole config is one OptionSettings=(...) line. RCON needs RCONEnabled=True and an AdminPassword in that file. Until Basecamp's RCON client lands, the RCON stop steps are skipped and Ctrl+Break does the stop. Keep -port= and the game port the same.",
+  "notes": "Settings: before the first edit, copy DefaultPalWorldSettings.ini from the install folder to Pal\\Saved\\Config\\WindowsServer\\PalWorldSettings.ini (editing the Default file does nothing). The whole config is one OptionSettings=(...) line, plain text with no BOM. RCON needs RCONEnabled=True and an AdminPassword in that file; TCP 25575 only opens then. Until Basecamp's RCON client lands, the RCON stop steps are skipped and Ctrl+Break does the stop. Keep -port= and the game port the same. Mods can open more ports: the PalDefender anti-cheat's REST API listens on a TCP port of its own (17993 on the server this was checked on), so add it to the ports if you run it. Its console lines come before the ready line, which still shows. Each world is a folder under Pal\\Saved\\SaveGames\\0\\. Not yet checked: whether Ctrl+Break saves before exiting, and the Broadcast warning.",
   "docs": [
     "https://docs.palworldgame.com/getting-started/deploy-dedicated-server",
     "https://docs.palworldgame.com/settings-and-operation/arguments",
     "https://docs.palworldgame.com/settings-and-operation/configuration",
     "https://steamdb.info/app/2394010/"
   ],
-  "unverified": ["real_exe_name", "ready_pattern", "stop_recipe", "ports", "stop_warning"]
+  "unverified": ["stop_recipe", "stop_warning"]
 }

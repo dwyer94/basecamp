@@ -3,29 +3,30 @@
   "name": "RuneScape: Dragonwilds",
   "kind": "steam",
   "steam_app_id": 4019830,
-  "exe": "RSDragonwilds.exe",
-  "args": "-log",
+  "exe": "RSDragonwildsServer.exe",
+  "args": "",
   "real_exe_name": "RSDragonwildsServer-Win64-Shipping.exe",
   "ports": [
-    {"port": 7777, "protocol": "udp", "label": "game"}
+    {"port": 7777, "protocol": "udp", "label": "game"},
+    {"port": 8888, "protocol": "udp", "label": "other"},
+    {"port": 45453, "protocol": "udp", "label": "lan-probe"}
   ],
   "join_port_label": "game",
   "log_source": "file",
   "log_file": "RSDragonwilds\\Saved\\Logs\\RSDragonwilds.log",
-  "ready_pattern": "",
+  "ready_pattern": "LogNetworkMatchmaker: START SESSION - Success",
   "ready_after_s": 90,
   "stop_recipe": [
     {"action": "ctrl_break", "wait_s": 60}
   ],
   "config_files": ["RSDragonwilds\\Saved\\Config\\WindowsServer\\DedicatedServer.ini"],
-  "save_dir": "RSDragonwilds\\Saved\\Savegames",
+  "save_dir": "RSDragonwilds\\Saved\\SaveGames",
   "min_free_ram_mb": 8192,
-  "notes": "The server won't start without an OwnerId in DedicatedServer.ini. That is your Player ID, from the bottom of the in-game Settings menu. It goes under [/Script/Dominion.DedicatedServerSettings] with ServerName, DefaultWorldName and AdminPassword. On Windows, create the WindowsServer folder and copy the values from Saved\\Config\\Linux\\DedicatedServer.ini. Jagex's guide puts Saved\\ in the install folder, but the wiki says %LOCALAPPDATA%\\RSDragonwilds\\Saved\\. Check which one your install uses and fix the paths. Needs 2 GB RAM plus 1 GB per player. A second server uses port 7778.",
+  "notes": "The server won't start without an OwnerId in DedicatedServer.ini. That is your Player ID, from the bottom of the in-game Settings menu. It goes under [/Script/Dominion.DedicatedServerSettings] with ServerName, DefaultWorldName and AdminPassword. If Saved\\Config\\WindowsServer\\DedicatedServer.ini isn't there after the first start, create the WindowsServer folder and copy the values from Saved\\Config\\Linux\\DedicatedServer.ini. The server's Saved\\ folder is RSDragonwilds\\Saved\\ in the install folder; %LOCALAPPDATA%\\RSDragonwilds\\Saved\\ belongs to the game client, so don't back that up for the server. Worlds are SaveGames\\<world>.sav with a .sav.backup beside it. Each start renames the last log to RSDragonwilds-backup-<date>.log and starts a new RSDragonwilds.log. Besides UDP 7777 the server opens UDP 8888 (purpose unknown) and UDP 45453 (LAN discovery); check these before running a second server (which uses 7778). Needs 2 GB RAM plus 1 GB per player. Not yet checked: a graceful stop. Try Ctrl+Break from Basecamp and see whether the .sav gets a new time.",
   "docs": [
     "https://dragonwilds.runescape.com/news/how-to-dedicated-servers",
     "https://dragonwilds.runescape.wiki/w/Dedicated_Servers",
     "https://steamdb.info/app/4019830/"
   ],
-  "unverified": ["real_exe_name", "args", "log_file", "ready_pattern", "stop_recipe",
-                 "config_files", "save_dir"]
+  "unverified": ["stop_recipe"]
 }

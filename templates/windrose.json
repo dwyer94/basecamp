@@ -20,7 +20,7 @@
   ],
   "config_files": ["R5\\ServerDescription.json"],
   "save_dir": "R5\\Saved\\SaveProfiles",
-  "notes": "By default friends join with the invite code that the server prints and writes to ServerDescription.json (InviteCode), with no fixed port. The port 7777 entries only matter with UseDirectConnection=true (DirectConnectionServerPort). Guides disagree on where ServerDescription.json lives (the install folder or R5\\), so check yours. Each world's gameplay settings are in WorldDescription.json under R5\\Saved\\SaveProfiles\\Default\\RocksDB*\\<version>\\Worlds\\<world id>\\. Stop the server before editing either file.",
+  "notes": "By default friends join with the invite code that the server prints and writes to ServerDescription.json (InviteCode), with no fixed port. The port 7777 entries only matter with UseDirectConnection=true (DirectConnectionServerPort). Guides disagree on where ServerDescription.json lives (the install folder or R5\\), so check yours. Each world's gameplay settings are in WorldDescription.json under R5\\Saved\\SaveProfiles\\Default\\RocksDB*\\<version>\\Worlds\\<world id>\\. Stop the server before editing either file. Not yet checked on a real install beyond the app ID (4129620, Windrose Dedicated Server; it can also be installed from the Steam client's library, under steamapps\\common\\): the real exe, the ports, the log file, the ready line, the stop recipe and where ServerDescription.json lives.",
   "docs": [
     "https://steamdb.info/app/4129620/",
     "https://steamcommunity.com/sharedfiles/filedetails/?id=3777107389",

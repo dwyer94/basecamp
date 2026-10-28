@@ -293,7 +293,7 @@ def test_draft_from_template_then_save(client, tmp_path):
         str(install / "Pal" / "Saved" / "Config" / "WindowsServer" / "PalWorldSettings.ini")]
     assert draft["join_port"] == 8211 and draft["template_id"] == "palworld"
     assert any("doesn't exist" in m for m in res["messages"])
-    assert "real_exe_name" in res["unverified"]
+    assert "stop_recipe" in res["unverified"]
     saved = client.post("/api/servers", json=draft)
     assert saved.status_code == 201 and saved.json()["config"]["template_id"] == "palworld"
 
