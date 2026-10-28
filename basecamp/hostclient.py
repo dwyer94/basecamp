@@ -12,7 +12,7 @@ from typing import Any
 # Host protocol versions this Basecamp can use. Raise MAX when host.py gains ops; only
 # raise MIN if an old version can no longer be running anywhere (see docs/07-updates.md).
 MIN_HOST_PROTOCOL = 1
-MAX_HOST_PROTOCOL = 1
+MAX_HOST_PROTOCOL = 2
 
 
 class HostError(Exception):
@@ -75,10 +75,14 @@ class HostClient:
         assert self.protocol is not None
         return self.protocol
 
-    def request(self, op: str, timeout: float | None = None, **fields: Any) -> dict:
+    def request(self, op: str, timeout: float | None = None, since: int = 1,
+                **fields: Any) -> dict:
+        """Send one op. ``since``: the protocol that added it; an older host gets HostError."""
         try:
             sock, rfile = self._connect(timeout or self.timeout)
             try:
+                if (self.protocol or 1) < since:
+                    raise HostError(f"{op}: host speaks protocol {self.protocol}, needs {since}")
                 self._send(sock, {"op": op, **fields})
                 reply = self._read(rfile)
             finally:
@@ -104,6 +108,9 @@ class HostClient:
 
     def ctrl_break(self) -> None:
         self.request("ctrl_break", timeout=10)
+
+    def ctrl_c(self) -> None:
+        self.request("ctrl_c", timeout=10, since=2)
 
     def kill(self) -> None:
         self.request("kill", timeout=15)

@@ -1,7 +1,7 @@
 """Fake game server for tests and dev. Standard library only.
 
 Behaves like a dedicated server: prints lines, binds a port, reads commands on stdin,
-saves and quits on ``quit`` or Ctrl+Break, and can be told to crash or hang.
+saves and quits on ``quit``, Ctrl+Break or Ctrl+C, and can be told to crash or hang.
 
     python tools/fake_server.py --port 27015 --ready-delay 1
 
@@ -17,6 +17,8 @@ Options mimic awkward real games:
     --spawn-child      act as a launcher: start a copy of itself, then exit (like Palworld)
     --hang-on-stop     same as typing ``hang`` at start
     --crash-after S    exit 3 after S seconds
+    --autosave S       write <save-dir>/world.sav every S seconds (like Dragonwilds)
+    --save-dir PATH    where --autosave writes (default: the working folder)
 
 Like a real game, it keeps running if whoever reads its output goes away: write errors on
 a broken stdout pipe are ignored, and EOF on stdin just stops reading commands.
@@ -68,6 +70,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--spawn-child", action="store_true")
     parser.add_argument("--hang-on-stop", action="store_true")
     parser.add_argument("--crash-after", type=float, default=0)
+    parser.add_argument("--autosave", type=float, default=0)
+    parser.add_argument("--save-dir", default=".")
     return parser.parse_args(argv)
 
 
@@ -105,8 +109,22 @@ def main(argv: list[str]) -> int:
         out.say("Ctrl+Break received, shutting down")
         quit_event.set()
 
+    def on_ctrl_c(_signum: int, _frame: object) -> None:
+        if state["hung"]:
+            out.say("(hung) ignoring Ctrl+C")
+            return
+        out.say("Ctrl+C received, shutting down")
+        quit_event.set()
+
     if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, on_break)
+    signal.signal(signal.SIGINT, on_ctrl_c)
+
+    def autosave() -> None:
+        path = os.path.join(args.save_dir, "world.sav")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(f"saved {time.time()}\n")
+        out.say(f"Autosaved {path}")
 
     def read_commands() -> None:
         for raw in sys.stdin:
@@ -152,7 +170,7 @@ def main(argv: list[str]) -> int:
     out.say(f"Server ready on port {args.port}")
 
     started = time.monotonic()
-    last_tick = started
+    last_tick = last_save = started
     while not quit_event.wait(0.1):
         now = time.monotonic()
         if args.crash_after and now - started >= args.crash_after:
@@ -161,6 +179,9 @@ def main(argv: list[str]) -> int:
         if args.tick and now - last_tick >= args.tick:
             last_tick = now
             out.say(f"tick {now - started:.0f}s")
+        if args.autosave and now - last_save >= args.autosave:
+            last_save = now
+            autosave()
 
     save()
     out.say("Goodbye")

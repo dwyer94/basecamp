@@ -1,4 +1,4 @@
-"""Windows process helpers: spawn, find, match, Ctrl+Break, kill, and pre-start checks."""
+"""Windows process helpers: spawn, find, match, Ctrl+Break/Ctrl+C, kill, and pre-start checks."""
 
 from __future__ import annotations
 
@@ -77,20 +77,22 @@ def match_process(pid: int, exe: str, create_time: float) -> psutil.Process | No
         return None
 
 
-def send_ctrl_break(pid: int, timeout: float = 10.0) -> bool:
-    """Ctrl+Break to the hidden console of `pid` via the winctrl helper. The fallback for
-    when the server's host can't do it (host gone, bare adopted game)."""
+def send_ctrl_event(pid: int, event: str = "break", timeout: float = 10.0) -> bool:
+    """Ctrl+Break (``event="break"``) or Ctrl+C (``"c"``) to the hidden console of `pid`
+    via the winctrl helper. The fallback for when the server's host can't do it (host
+    gone, bare adopted game, or a host too old for Ctrl+C)."""
+    name = "Ctrl+C" if event == "c" else "Ctrl+Break"
     try:
         result = subprocess.run(
-            [sys.executable, "-I", str(_WINCTRL), str(pid)],
+            [sys.executable, "-I", str(_WINCTRL), str(pid), event],
             creationflags=DETACHED_PROCESS, stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
-        log.warning("Ctrl+Break helper failed for pid %s: %s", pid, e)
+        log.warning("%s helper failed for pid %s: %s", name, pid, e)
         return False
     if result.returncode != 0:
-        log.warning("Ctrl+Break to pid %s failed (helper exit %s)", pid, result.returncode)
+        log.warning("%s to pid %s failed (helper exit %s)", name, pid, result.returncode)
     return result.returncode == 0
 
 

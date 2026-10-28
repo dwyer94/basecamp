@@ -5,7 +5,7 @@ Every server runs under its own host process (basecamp/host.py), which owns the 
 pipes and console log and outlives Basecamp. The supervisor starts hosts, talks to them
 over their control channel, mirrors their console lines, and reattaches to them after a
 Basecamp restart. If a host is gone but its game still runs, the game is adopted bare:
-tracked by PID, stopped with the winctrl Ctrl+Break helper or a kill, no console.
+tracked by PID, stopped with the winctrl Ctrl+Break/Ctrl+C helper or a kill, no console.
 
 Threads, not asyncio (D-16): per running server a watcher thread (Starting -> Running,
 end of run) and a stream thread (the host's console events). Actions on one server are
@@ -56,6 +56,7 @@ from basecamp.models import (
     ServerState,
     StopAction,
     StopStep,
+    save_folder,
 )
 from basecamp.remote import RemoteConsoles
 from basecamp.settings import Settings
@@ -124,6 +125,11 @@ class _Countdown:
         return {"kind": self.kind, "stop_at": self.stop_at}
 
 
+_SAVE_POLL_S = 1.0  # wait_save: how often the save folder is looked at
+_SAVE_SETTLE_S = 3.0  # and how long it must stay unchanged after a save before going on
+_SAVE_SETTLE_MAX_S = 30.0  # (but no longer than this)
+_CONSOLE_EVENTS = {StopAction.CTRL_BREAK: ("Ctrl+Break", "break"),
+                   StopAction.CTRL_C: ("Ctrl+C", "c")}
 _WARN_VERB = {"stop": "Stopping", "restart": "Restarting", "update": "Updating"}
 
 
@@ -604,6 +610,9 @@ class Supervisor:
         for step in server.effective_stop_recipe():
             if run.exited.is_set():
                 break
+            if step.action is StopAction.WAIT_SAVE:
+                self._wait_for_save(server, slot, run, step.wait_s)
+                continue
             if not self._do_step(server, slot, run, step):
                 continue
             if run.exited.wait(step.wait_s):
@@ -621,16 +630,49 @@ class Supervisor:
 
     def _do_step(self, server: Server, slot: _Slot, run: _Run, step: StopStep) -> bool:
         """Carry out one stop step. False if it couldn't be done (so don't wait on it)."""
-        if step.action is not StopAction.CTRL_BREAK:
+        if step.action not in _CONSOLE_EVENTS:
             return self._send(server, slot, run, step.action, step.command, "stop step")
-        self._note(slot, run, "Sending Ctrl+Break")
+        name, event = _CONSOLE_EVENTS[step.action]
+        self._note(slot, run, f"Sending {name}")
         if run.host is not None:
             try:
-                run.host.ctrl_break()
+                if step.action is StopAction.CTRL_C:
+                    run.host.ctrl_c()
+                else:
+                    run.host.ctrl_break()
                 return True
             except HostError as e:
-                log.warning("%s: Ctrl+Break through the host failed: %s", server.name, e)
-        return run.pid is not None and procs.send_ctrl_break(run.pid)
+                log.warning("%s: %s through the host failed: %s", server.name, name, e)
+        return run.pid is not None and procs.send_ctrl_event(run.pid, event)
+
+    def _wait_for_save(self, server: Server, slot: _Slot, run: _Run, wait_s: float) -> bool:
+        """The wait_save step (D-121): wait up to ``wait_s`` for a file in the save folder to
+        change (the game's own autosave), then for the folder to settle. For games that
+        don't save on exit. True if a save was seen; either way the recipe goes on."""
+        folder = save_folder(server)
+        if folder is None or not folder.is_dir():
+            self._note(slot, run,
+                       f"Skipped waiting for a save: no save folder ({folder or 'not set'})")
+            return False
+        self._note(slot, run, f"Waiting up to {wait_s:g} s for the game to save")
+        before = _folder_state(folder)
+        deadline = time.monotonic() + wait_s
+        while not run.exited.wait(_SAVE_POLL_S):
+            now = _folder_state(folder)
+            if now != before:
+                settle_until = time.monotonic() + _SAVE_SETTLE_MAX_S
+                while not run.exited.wait(_SAVE_SETTLE_S):  # let it finish writing
+                    later = _folder_state(folder)
+                    if later == now or time.monotonic() >= settle_until:
+                        break
+                    now = later
+                changed = sorted(k for k in now if now[k] != before.get(k))
+                self._note(slot, run, "Saved: " + (", ".join(changed) or "files removed"))
+                return True
+            if time.monotonic() >= deadline:
+                self._note(slot, run, f"No save in {wait_s:g} s; going on")
+                return False
+        return False
 
     def _send(self, server: Server, slot: _Slot, run: _Run, action: StopAction, command: str,
               what: str) -> bool:
@@ -974,6 +1016,18 @@ class UpdateHold:
         server = self._sup._store.get_server(self._server.id)  # the update may change it
         self._sup._set_state(server.id, ServerState.STOPPED)
         return self._sup._start_locked(server, self._slot)
+
+
+def _folder_state(folder: Path) -> dict[str, tuple[float, int]]:
+    """Each file under ``folder`` (relative name) with its modified time and size."""
+    state: dict[str, tuple[float, int]] = {}
+    for root, _dirs, files in os.walk(folder):
+        for name in files:
+            path = Path(root) / name
+            with contextlib.suppress(OSError):
+                st = path.stat()
+                state[str(path.relative_to(folder))] = (st.st_mtime, st.st_size)
+    return state
 
 
 def _short(answer: str, limit: int = 200) -> str:

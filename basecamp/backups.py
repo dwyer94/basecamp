@@ -30,7 +30,7 @@ from datetime import datetime
 from pathlib import Path
 
 from basecamp.db import Store
-from basecamp.models import NotifyEvent, Server, ServerState
+from basecamp.models import NotifyEvent, Server, ServerState, save_folder
 from basecamp.settings import Settings
 from basecamp.supervisor import Supervisor
 
@@ -59,18 +59,6 @@ class Backup:
     def as_dict(self) -> dict:
         return {"name": self.name, "reason": self.reason, "created": self.created,
                 "size_bytes": self.size_bytes, "files": self.files}
-
-
-def save_folder(server: Server) -> Path | None:
-    """The server's save folder as an absolute path, or None if it has none. A relative
-    save_dir is taken from the install folder (else the working folder, else the exe's)."""
-    raw = os.path.expandvars(server.save_dir.strip().strip('"'))
-    if not raw:
-        return None
-    if ntpath.isabs(raw):
-        return Path(raw)
-    base = server.install_dir or server.working_dir or str(Path(server.exe_path).parent)
-    return Path(base) / raw
 
 
 def check_name(name: str) -> None:

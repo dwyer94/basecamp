@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ntpath
+import os
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -27,6 +30,12 @@ class StopAction(StrEnum):
     RCON = "rcon"  # send `command` over RCON (basecamp/rcon.py)
     REST = "rest"  # send `command` to the game's REST API (Palworld, basecamp/rest.py)
     CTRL_BREAK = "ctrl_break"  # Ctrl+Break to the server's console
+    CTRL_C = "ctrl_c"  # Ctrl+C to the server's console (Dragonwilds' clean exit, D-120)
+    WAIT_SAVE = "wait_save"  # wait for the game's own save: a file in save_dir changes (D-121)
+
+
+# Steps that send nothing typed: no command. The rest send `command` by stdin, RCON or REST.
+NO_COMMAND = frozenset({StopAction.CTRL_BREAK, StopAction.CTRL_C, StopAction.WAIT_SAVE})
 
 
 class ServerState(StrEnum):
@@ -61,7 +70,8 @@ class Port(BaseModel):
 
 
 class StopStep(BaseModel):
-    """One step of a graceful stop: do `action`, then wait up to `wait_s` for the exit."""
+    """One step of a graceful stop: do `action`, then wait up to `wait_s` for the exit.
+    ``wait_save`` instead waits up to `wait_s` for the game to save, then goes on."""
 
     action: StopAction
     command: str = ""
@@ -69,7 +79,7 @@ class StopStep(BaseModel):
 
     @model_validator(mode="after")
     def _command_needed(self) -> StopStep:
-        if self.action is not StopAction.CTRL_BREAK and not self.command.strip():
+        if self.action not in NO_COMMAND and not self.command.strip():
             raise ValueError(f"a {self.action} stop step needs a command")
         return self
 
@@ -85,7 +95,7 @@ class StopWarning(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> StopWarning:
-        if self.action is StopAction.CTRL_BREAK:
+        if self.action in NO_COMMAND:
             raise ValueError("a stop warning is sent by stdin, rcon or rest")
         if any(not 0 < m <= 60 for m in self.minutes):
             raise ValueError("warning minutes must be more than 0 and at most 60")
@@ -161,3 +171,15 @@ class Server(ServerConfig):
     id: int
     created_at: str
     updated_at: str
+
+
+def save_folder(server: ServerConfig) -> Path | None:
+    """The server's save folder as an absolute path, or None if it has none. A relative
+    save_dir is taken from the install folder (else the working folder, else the exe's)."""
+    raw = os.path.expandvars(server.save_dir.strip().strip('"'))
+    if not raw:
+        return None
+    if ntpath.isabs(raw):
+        return Path(raw)
+    base = server.install_dir or server.working_dir or str(Path(server.exe_path).parent)
+    return Path(base) / raw

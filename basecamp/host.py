@@ -4,7 +4,7 @@ Basecamp starts one host per running server, detached and outside its job. The h
 starts the game with stdin/stdout pipes, writes its output to the rotated console log,
 keeps the last lines for replay, and serves a control channel on 127.0.0.1 so any
 Basecamp, including a newer one after a self-update, can attach, send commands, send
-Ctrl+Break or kill. The host exits only after its game has exited, and leaves
+Ctrl+Break, Ctrl+C or kill. The host exits only after its game has exited, and leaves
 ``exit.json`` behind so a Basecamp that was down at the time can still see what happened.
 
 Standard library only, and run as a script (``python -I host.py --spec spec.json``) from a
@@ -29,6 +29,10 @@ negotiated version. Ops in protocol 1:
     stopping                   mark the coming exit as asked for (not a crash)
     ctrl_break                 Ctrl+Break to the game's console
     kill                       kill the game and its launcher, marks the exit as asked for
+
+Protocol 2 adds:
+
+    ctrl_c                     Ctrl+C to the game's console
 """
 
 from __future__ import annotations
@@ -53,9 +57,8 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import IO, Any
 
-PROTOCOL = 1
+PROTOCOL = 2
 
-CREATE_NEW_PROCESS_GROUP = 0x00000200
 CREATE_NO_WINDOW = 0x08000000
 CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 
@@ -186,6 +189,7 @@ PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 WAIT_OBJECT_0 = 0
 STILL_ACTIVE = 259
 TH32CS_SNAPPROCESS = 0x00000002
+CTRL_C_EVENT = 0
 CTRL_BREAK_EVENT = 1
 
 
@@ -332,9 +336,9 @@ def install_ctrl_handler() -> None:
 _console_lock = threading.Lock()
 
 
-def send_ctrl_break(pid: int) -> bool:
-    """Attach to the game's hidden console and raise Ctrl+Break on it. The host runs
-    detached (no console of its own), so it can do this in-process."""
+def send_ctrl_event(pid: int, event: int = CTRL_BREAK_EVENT) -> bool:
+    """Attach to the game's hidden console and raise Ctrl+Break (or Ctrl+C) on it. The host
+    runs detached (no console of its own), so it can do this in-process."""
     k = _kernel32()
     with _console_lock:
         k.FreeConsole()
@@ -342,7 +346,7 @@ def send_ctrl_break(pid: int) -> bool:
             return False
         k.SetConsoleCtrlHandler(_ctrl_handler, True)  # first in line while attached
         try:
-            return bool(k.GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0))
+            return bool(k.GenerateConsoleCtrlEvent(event, 0))
         finally:
             time.sleep(0.2)  # let our own handler see the event before we let go
             k.FreeConsole()
@@ -421,7 +425,11 @@ class Host:
         spec = self.spec
         kwargs: dict = dict(cwd=spec["cwd"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT)
-        flags = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+        # No new process group, and our own "ignore Ctrl+C" (from being started in one)
+        # cleared first: the game inherits that flag, and with it set a ctrl_c stop step
+        # never reaches the game (D-120). Ctrl+Break gets through either way.
+        _kernel32().SetConsoleCtrlHandler(_HANDLER_TYPE(), False)  # NULL handler
+        flags = CREATE_NO_WINDOW
         try:
             self.popen = subprocess.Popen(spec["cmdline"],
                                           creationflags=flags | CREATE_BREAKAWAY_FROM_JOB, **kwargs)
@@ -553,10 +561,11 @@ class Host:
         if op == "stopping":
             self.stop_requested = True
             return {"ok": True}
-        if op == "ctrl_break":
+        if op in ("ctrl_break", "ctrl_c"):
             if self.game is None or self.exited.is_set():
                 return {"ok": False, "error": "not running"}
-            return {"ok": send_ctrl_break(self.game.pid)}
+            event = CTRL_C_EVENT if op == "ctrl_c" else CTRL_BREAK_EVENT
+            return {"ok": send_ctrl_event(self.game.pid, event)}
         if op == "kill":
             self.stop_requested = True
             self.kill_all()

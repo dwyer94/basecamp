@@ -60,6 +60,8 @@ Each step does something, then waits up to `wait_s` seconds for the server to ex
 - `rcon`: sends `command` over RCON (`rcon_port`, and the server's RCON password).
 - `rest`: sends `command` to the game's REST API (`rest_port`, the server's REST password). Palworld's commands: `announce <text>`, `save`, `shutdown <seconds> [text]`, `stop`, and `info`, `players`, `metrics`, `settings` (D-95).
 - `ctrl_break`: Ctrl+Break to the server's console. Some servers save and quit on it (V Rising, Enshrouded, Windrose with `-log`); Unreal servers often just end without saving (Palworld, Dragonwilds). It only reaches an exe that has a console: a Windows GUI program (many Unreal `-Win64-Shipping.exe` servers) has none unless it is started with `-log`. Check with a watched stop.
+- `ctrl_c`: Ctrl+C to the server's console, with the same console rule. Unreal treats it as a normal quit request (tear the world down, close the log, exit 0), where Ctrl+Break and closing the console end it at once. Whether that saves is up to the game: Dragonwilds' doesn't (D-120).
+- `wait_save`: does nothing to the server; waits up to `wait_s` for a file in `save_dir` to change (the game's own autosave), then a few seconds more until the folder is quiet, and goes on to the next step. If no save comes in time it goes on anyway; with no `save_dir` it's skipped. For games that never save on exit: put it before the step that stops the game, and make `wait_s` a bit longer than the game's autosave interval, since that's how long a stop can now take (D-121).
 
 A step that can't be done is skipped without waiting, with the reason in the console: no stdin after adoption, no port or password for RCON or REST, a wrong password, no answer within 5 s (D-96). So an RCON or REST problem never holds up a stop; end the recipe with a `ctrl_break` step anyway.
 
@@ -115,5 +117,43 @@ Researched from official guides (links in each file's `docs`), checked read-only
 | Palworld | 2394010 | exe (Shipping-Cmd started directly, D-99), UDP 8211 and 27015, TCP 25575 (RCON) and 8212 (REST) once turned on, ready line, config file, save folder. Stop: REST `save` + `shutdown` saves and exits 0; Ctrl+Break alone doesn't save. Warning: REST `announce` | nothing; the ready line arrives late through the pipe, so Running usually comes from the 30 s timer |
 | Enshrouded | 2278520 | exe, UDP 15637 (plus one random port), stdout with the ready line, config file, save folder. Stop: Ctrl+Break saves `world0.ksd` and exits 0 | nothing |
 | V Rising | 1829350 | exe and args, UDP 9876 and 9877, TCP 25575 with RCON on, log file and ready line, settings files, saves. Stop: Ctrl+Break saves on exit, exit 0. Warning: RCON `announce` (RCON `shutdown` hangs the server, D-100) | nothing |
-| RuneScape: Dragonwilds | 4019830 | exe, `real_exe_name`, UDP 7777, 8888, 45453, log file and ready line, config, saves. Stop: none saves, so it ends with a kill (D-100) | nothing; how often the game saves by itself with players on is unknown |
+| RuneScape: Dragonwilds | 4019830 | exe, `real_exe_name`, UDP 7777, 8888, 45453, log file and ready line, config, saves. Stop: no stop saves, so `wait_save` waits for the next autosave (every 2 min with the template's args), then Ctrl+C exits cleanly, exit 0 (D-120 to D-122, [below](#runescape-dragonwilds)) | nothing in the template. Not tried with a player connected (no game client in the dev PC runs): that the autosave covers what players did, and how the server treats players still on when it exits |
 | Windrose | 4129620 | exe (Shipping exe with `-log`, D-101), working folder, log file and ready line, `R5\ServerDescription.json`, saves. Stop: Ctrl+Break saves, then exits with 0xC000013A | `ports` (only used with direct connection, which wasn't tried; with invite codes it opens none) |
+
+## RuneScape: Dragonwilds
+
+Dragonwilds' dedicated server (app 4019830) can't be told to save, and it never saves on its way out. So Basecamp waits for the game's next autosave, then sends Ctrl+C, which ends it cleanly about a second later. With the template's args the autosave comes every 2 minutes, so a stop takes up to about 2 minutes and loses nothing; a crash loses at most 2 minutes. Researched and tested on the dev PC on 2026-10-28 (Steam build 26161880), without a player connected.
+
+### What the sources say
+
+- **Jagex's guide** ([How to: Dedicated Servers](https://dragonwilds.runescape.com/news/how-to-dedicated-servers)) and the **official wiki** ([Dedicated Servers](https://dragonwilds.runescape.wiki/w/Dedicated_Servers), [Linux](https://dragonwilds.runescape.wiki/w/Dedicated_Servers/Linux)) only say to run it with `-log -NewConsole`, to stop it before editing `DedicatedServer.ini` or moving saves, and (Linux) to stop it with Ctrl+C or `systemctl stop`. Nothing about saving on stop, autosave, commands or RCON.
+- **Patch notes**: 0.11.0.8 (April 2026) fixed config files being overwritten on server shutdown and rollbacks for players joining a dedicated server ([GameServerKings' summary](https://www.gameserverkings.com/knowledge-base/runescape-dragonwilds/worlds-saves-and-backups/)); [1.0.0.8](https://dragonwilds.runescape.com/news/1.0.0.8-patch) fixed world saves disappearing. None adds a save command or a save on exit.
+- **Hosting providers**: [Haptic](https://haptic.gg/support/games/runescape-dragonwilds/saves-and-backups) says the server saves on a timer (5 minutes by default), writes no extra save when it stops, and tells customers to have everyone quit to the menu first. The [unraid-game-servers README](https://github.com/blckassassin/unraid-game-servers/blob/main/games/dragonwilds/README.md) measured saves exactly 300 s apart and found that neither SIGINT nor SIGTERM saves. [Shockbyte](https://shockbyte.com/help/knowledgebase/articles/understanding-your-runescape-dragonwilds-dedicated-server-configuration) says a stop saves the world, which is wrong for the build tested here. So the providers stop it the same way: a signal, losing whatever came after the last autosave.
+- **"Admin commands"**: a fan wiki lists `/saveworld`, `/shutdown` and others ([runescapedragonwildswiki.wiki](https://runescapedragonwildswiki.wiki/en/guides/runescape-dragonwilds-dedicated-server-commands/)). By its own account the list is reconstructed, not tested. The server reads no console input at all (below), so there's nothing to type them into, and the exe contains none of those names.
+- **SteamDB** ([4019830](https://steamdb.info/app/4019830/)) refused automated fetches (HTTP 403). The install has one launch exe, `RSDragonwildsServer.exe`, which starts `RSDragonwilds\Binaries\Win64\RSDragonwildsServer-Win64-Shipping.exe`.
+- **The exe itself** (its strings): the world is saved by `UPersistenceSubsystem` on a timer set by the console variable `dom.StateSaveFrequencyMins` (5, from the game's packed `Engine.ini`). The only save-and-quit path is `RequestGameExit` (`AUTHORITY SaveGame (including PlayerStates)`), which runs when a host quits from the in-game menu; nothing outside the game can call it. On engine shutdown it logs `Shutdown detected, do not save contents to disk`.
+
+### What was tested (dev PC)
+
+Each method was tried after the world had loaded, with the save folder and the process watched:
+
+| Method | Result |
+|---|---|
+| `WM_CLOSE` to its windows, no `-log` | It has no windows, so there's nothing to send it to. Kept running |
+| `taskkill /PID` (no `/F`), no `-log` | "Sent termination signal", ignored. Kept running |
+| `taskkill /PID` (no `/F`), with `-log` | Closes its console: ends at once, 0xC000013A, no save |
+| `WM_CLOSE` to the `-log` console (`CTRL_CLOSE_EVENT`) | Ends at once, 0xC000013A, no teardown, no save |
+| Ctrl+Break with `-log` | Same as closing the console |
+| Typing `quit` (and a cvar query) into the `-log` console (`WriteConsoleInput`) | Ignored, nothing in the log. The game opens a console of its own, so a stdin pipe can't reach it either |
+| **Ctrl+C with `-log`** | **Clean exit in about a second, exit 0**: world teardown, `Draining save requests before world teardown`, online session removed, log closed. **No new save** |
+| Ctrl+C to a game that ignores Ctrl+C | Nothing happens. A process started in a new process group (as Basecamp's host started games until now) ignores Ctrl+C, and so do its children. That is why Ctrl+C looked earlier as if it left the server running (D-120) |
+| Left running, no players, 21 min | Saved 5, 10, 15 and 20 minutes after the world loaded, each in under 0.1 s (`Starting save` / `Save completed SUCCESSFULLY` in the log) |
+| `-ini:Engine:[ConsoleVariables]:dom.StateSaveFrequencyMins=1` | The log shows the cvar set to 1, and it saves every 60 s |
+| **Through Basecamp** (the template: `-log`, interval 2, `wait_save` 135 s, `ctrl_c` 30 s) | Stop clicked 40 s before the next autosave. The console showed "Waiting up to 135 s for the game to save", the game's save, "Saved: BasecampTest.sav, BasecampTest.sav.backup", "Sending Ctrl+C", exit code 0. Stopped 45 s after the click, "stopped after ctrl_c" |
+
+### Running it
+
+- Keep `-log` in the args. Without it the server has no console and Ctrl+C can't be sent: Basecamp would still wait for the save and then kill it, which loses nothing either. On a signed-in desktop the console shows as a window, and closing that window ends the server without saving. Under the headless startup task there's no desktop to show it on.
+- `wait_save` makes every stop, restart and update wait for the next autosave: up to about 2 minutes with the template's args. Players get no warning first (the game has no way to message them).
+- To change the interval, change the number in the args and make the `wait_save` step's seconds a little more than that many minutes. A small world saved in under 0.1 s; with a big one, check the `Starting save` / `Save completed` times in the log before going lower.
+- Not checked with a player connected. By the exe's log strings, a player who quits to the menu asks the server to save them first (`Client requesting PlayerStateSave and disconnect`); a player still on when the server stops should keep what the last autosave had. Worth one check with a friend on: play, stop from Basecamp, start, see what's kept.

@@ -15,7 +15,7 @@ import pytest
 from basecamp import hostclient
 from basecamp.db import Store
 from basecamp.hostclient import HostClient, HostError, IncompatibleHost
-from basecamp.models import Protocol, ServerState
+from basecamp.models import Protocol, ServerState, StopAction, StopStep
 from basecamp.supervisor import NoConsole, Supervisor
 from tests.conftest import REPO, console_text, fake_config, free_port, wait_for
 
@@ -211,8 +211,31 @@ def test_host_channel_needs_the_token_and_negotiates_protocol(sup, store, settin
 
     # A newer Basecamp offering a higher protocol gets the host's own version back.
     monkeypatch.setattr(hostclient, "MAX_HOST_PROTOCOL", 99)
-    assert HostClient(entry["port"], entry["token"]).hello() == 1
-    # A Basecamp that no longer supports protocol 1 refuses the host (falls back to bare).
-    monkeypatch.setattr(hostclient, "MIN_HOST_PROTOCOL", 2)
+    assert HostClient(entry["port"], entry["token"]).hello() == 2
+    # On protocol 1 there's no ctrl_c op: the client refuses it before sending.
+    monkeypatch.setattr(hostclient, "MAX_HOST_PROTOCOL", 1)
+    with pytest.raises(HostError, match="needs 2"):
+        HostClient(entry["port"], entry["token"]).ctrl_c()
+    # A Basecamp that no longer supports the host's protocol refuses it (falls back to bare).
+    monkeypatch.setattr(hostclient, "MAX_HOST_PROTOCOL", 99)
+    monkeypatch.setattr(hostclient, "MIN_HOST_PROTOCOL", 3)
     with pytest.raises(IncompatibleHost):
         HostClient(entry["port"], entry["token"]).hello()
+
+
+def test_bare_adopted_game_gets_ctrl_c_through_the_helper(sup, store, settings):
+    recipe = [StopStep(action=StopAction.CTRL_C, wait_s=10)]
+    server = store.add_server(fake_config("bare-c", "--tick", "0.2", stop_recipe=recipe))
+    first = Supervisor(store, settings)
+    game_pid = first.start(server.id).pid
+    wait_for(lambda: first.state(server.id) is ServerState.RUNNING)
+    host_pid = _saved(settings, server.id)["host"]["pid"]
+    first.detach()
+    psutil.Process(host_pid).kill()
+    time.sleep(0.5)
+
+    assert sup.adopt_orphans() == [server.id]
+    result = sup.stop(server.id)  # Ctrl+C through the winctrl helper
+
+    assert result.graceful and result.ended_by == "ctrl_c"
+    assert not psutil.pid_exists(game_pid)

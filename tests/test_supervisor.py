@@ -11,7 +11,7 @@ import time
 import psutil
 import pytest
 
-from basecamp.models import Port, Protocol, ServerState, StopAction, StopStep
+from basecamp.models import Port, Protocol, ServerState, StopAction, StopStep, StopWarning
 from basecamp.supervisor import InvalidState, PortInUse, Supervisor
 from tests.conftest import console_text, fake_config, free_port, wait_for
 
@@ -275,3 +275,74 @@ def test_stale_state_entry_is_not_adopted_and_reported_as_crash(sup, store, sett
 def test_ports_model_rejects_bad_port():
     with pytest.raises(ValueError):
         Port(port=70000)
+
+
+def test_ctrl_c_step_reaches_the_game(sup, store):
+    # The host starts games with Ctrl+C on, though it was itself started in a new process
+    # group (which turns Ctrl+C off for it and, without care, for its children): D-120.
+    recipe = [StopStep(action=StopAction.CTRL_C, wait_s=10)]
+    server = store.add_server(fake_config("ctrlc", stop_recipe=recipe))
+    pid = start_and_wait(sup, server.id)
+
+    result = sup.stop(server.id)
+
+    assert result.graceful and not result.killed and result.ended_by == "ctrl_c"
+    assert not psutil.pid_exists(pid)
+    text = console_text(sup, server.id)
+    assert "Sending Ctrl+C" in text and "Ctrl+C received" in text and "World saved" in text
+
+
+def test_wait_save_waits_for_the_games_autosave(sup, store, tmp_path):
+    saves = tmp_path / "saves"
+    saves.mkdir()
+    recipe = [StopStep(action=StopAction.WAIT_SAVE, wait_s=20),
+              StopStep(action=StopAction.CTRL_C, wait_s=10)]
+    server = store.add_server(fake_config("autosave", "--autosave", "5", "--save-dir", str(saves),
+                                          save_dir=str(saves), stop_recipe=recipe))
+    start_and_wait(sup, server.id)
+    wait_for(lambda: (saves / "world.sav").exists())
+    first = (saves / "world.sav").stat().st_mtime_ns
+
+    result = sup.stop(server.id)
+
+    assert result.graceful and result.ended_by == "ctrl_c"
+    assert (saves / "world.sav").stat().st_mtime_ns > first  # stopped after a new save
+    text = console_text(sup, server.id)
+    assert "Waiting up to 20 s for the game to save" in text and "Saved: world.sav" in text
+
+
+def test_wait_save_goes_on_after_its_time(sup, store, tmp_path):
+    recipe = [StopStep(action=StopAction.WAIT_SAVE, wait_s=1),
+              StopStep(action=StopAction.CTRL_C, wait_s=10)]
+    server = store.add_server(fake_config("nosave", save_dir=str(tmp_path), stop_recipe=recipe))
+    start_and_wait(sup, server.id)
+
+    started = time.monotonic()
+    result = sup.stop(server.id)
+
+    assert result.graceful and result.ended_by == "ctrl_c"
+    assert time.monotonic() - started < 8
+    assert "No save in 1 s; going on" in console_text(sup, server.id)
+
+
+def test_wait_save_without_a_save_folder_is_skipped(sup, store):
+    recipe = [StopStep(action=StopAction.WAIT_SAVE, wait_s=30),
+              StopStep(action=StopAction.CTRL_BREAK, wait_s=10)]
+    server = store.add_server(fake_config("nofolder", stop_recipe=recipe))
+    start_and_wait(sup, server.id)
+
+    started = time.monotonic()
+    result = sup.stop(server.id)
+
+    assert result.graceful and result.ended_by == "ctrl_break"
+    assert time.monotonic() - started < 8
+    assert "Skipped waiting for a save: no save folder (not set)" in console_text(sup, server.id)
+
+
+def test_console_event_and_wait_steps_need_no_command():
+    for action in (StopAction.CTRL_BREAK, StopAction.CTRL_C, StopAction.WAIT_SAVE):
+        assert StopStep(action=action).command == ""
+        with pytest.raises(ValueError):
+            StopWarning(action=action, command="x", minutes=[1])
+    with pytest.raises(ValueError):
+        StopStep(action=StopAction.STDIN)

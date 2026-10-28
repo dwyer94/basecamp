@@ -618,7 +618,7 @@ function serverForm(root, id) {
   const addStepRow = (s = { action: "ctrl_break", command: "", wait_s: 30 }) => {
     const row = el("div", { class: "row step" },
       el("select", { "data-k": "action" },
-        ["stdin", "rcon", "rest", "ctrl_break"].map((x) => el("option", { value: x, selected: s.action === x }, x))),
+        ["stdin", "rcon", "rest", "ctrl_break", "ctrl_c", "wait_save"].map((x) => el("option", { value: x, selected: s.action === x }, x))),
       el("input", { placeholder: "command", value: s.command, "data-k": "command" }),
       el("input", { type: "number", placeholder: "wait s", value: s.wait_s, "data-k": "wait_s" }),
       el("button", { type: "button", class: "small", onclick: () => row.remove() }, "✕"));
@@ -695,7 +695,7 @@ function serverForm(root, id) {
       el("fieldset", {}, el("legend", {}, "Stop recipe"), stepRows,
         el("button", { type: "button", class: "small", onclick: () => addStepRow() }, "Add step"),
         el("div", { class: "hint" },
-          "Each step runs, then waits up to its seconds for the exit. Kill always comes last. Empty = Ctrl+Break, 30 s, kill."),
+          "Each step runs, then waits up to its seconds for the exit (wait_save: for the game to save to the save folder, then goes on). Kill always comes last. Empty = Ctrl+Break, 30 s, kill."),
         warningFields()),
       el("fieldset", {}, el("legend", {}, "Files"),
         field("Config files", lines("config_files"), "One path per line."),

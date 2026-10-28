@@ -57,7 +57,7 @@ basecamp/
   crashes.py         crash auto-restart policy, a supervisor listener (D-39)
   host.py            per-server host process (stdlib only): owns the game's pipes, console log, control channel
   hostclient.py      Basecamp's side of the host control channel
-  winctrl.py         fallback Ctrl+Break helper (bare adopted games)
+  winctrl.py         fallback Ctrl+Break / Ctrl+C helper (bare adopted games, old hosts)
   console.py         in-memory console per server (mirrors the host's lines), subscribers
   rcon.py            Source RCON client, stdlib (V Rising, Palworld and many others; D-92, D-93)
   rest.py            Palworld's REST API client, stdlib (D-95)
@@ -133,7 +133,7 @@ Game installs stay wherever they are today (each server stores its own install f
 ```
 
 - Basecamp writes `hosts\<id>\spec.json` (command line, folder, log source, real exe name, a fresh random token) and starts `pythonw -I hosts\bin\host-<hash>.py --spec ...` with `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, plus `CREATE_BREAKAWAY_FROM_JOB` when the job allows it (D-21). The host is standard library only, so it doesn't need Basecamp's packages.
-- The host starts the game with `Popen(stdin=PIPE, stdout=PIPE, stderr=STDOUT, creationflags=CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)`. The game gets its own hidden console, so **Ctrl+Break** reaches just that server: the host attaches to that console and raises the event.
+- The host starts the game with `Popen(stdin=PIPE, stdout=PIPE, stderr=STDOUT, creationflags=CREATE_NO_WINDOW)`. The game gets its own hidden console, so **Ctrl+Break** (or **Ctrl+C**) reaches just that server: the host attaches to that console and raises the event. Before starting it, the host turns its own "ignore Ctrl+C" back off (it has it from being started in a new process group) and doesn't start the game in a new group either, since both would leave the game ignoring Ctrl+C (D-120). A Windows GUI exe (many Unreal `-Win64-Shipping.exe` servers) gets no console from this; with `-log` it opens its own, which is the one the host attaches to.
 - The host pushes each output line into its ring buffer, the rotated `console.log`, and any attached Basecamp. Basecamp mirrors the lines into its in-memory console for the WebSocket.
 - Some games buffer output when it isn't a real console, or don't write to stdout at all and log to a file instead (Enshrouded writes `logs\enshrouded_server.log`). The **log source** setting handles this: the host tails the file instead.
 - Some games (notably Unreal ones like Palworld) start a child process and the launcher exits. The template marks the **real** process exe name, and the host tracks that one (found among the launcher's descendants), so a launcher exiting isn't taken for a crash, even while Basecamp is down.
@@ -142,7 +142,7 @@ Game installs stay wherever they are today (each server stores its own install f
 
 ### Host control channel
 
-TCP on `127.0.0.1` only, on an ephemeral port (49152+, so it never collides with fixed app ports), JSON lines. Each connection starts with a `hello` carrying the per-run token (kept in the data folder, never in the repo) and the protocol version Basecamp speaks; the host answers with the version both will use, `min(Basecamp's, host's)`. Ops in protocol 1: `status`, `attach` (replay the buffer, then stream lines, "tracking" and "exit" events), `send` (a stdin line), `note` (a Basecamp line in the console), `stopping` (the coming exit is asked for), `ctrl_break`, `kill`. Compatibility rules are in [07-updates.md](07-updates.md#host-processes-and-updates).
+TCP on `127.0.0.1` only, on an ephemeral port (49152+, so it never collides with fixed app ports), JSON lines. Each connection starts with a `hello` carrying the per-run token (kept in the data folder, never in the repo) and the protocol version Basecamp speaks; the host answers with the version both will use, `min(Basecamp's, host's)`. Ops in protocol 1: `status`, `attach` (replay the buffer, then stream lines, "tracking" and "exit" events), `send` (a stdin line), `note` (a Basecamp line in the console), `stopping` (the coming exit is asked for), `ctrl_break`, `kill`. Protocol 2 adds `ctrl_c`; Basecamp doesn't send it to a protocol-1 host and uses the winctrl helper instead. Compatibility rules are in [07-updates.md](07-updates.md#host-processes-and-updates).
 
 ## Orphaned servers (Basecamp restarts, games keep going)
 

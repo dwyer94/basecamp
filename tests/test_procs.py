@@ -40,7 +40,7 @@ def test_match_process_checks_exe_and_create_time():
 def test_ctrl_break_to_missing_process_fails_cleanly():
     gone = subprocess.Popen([str(PYTHON), "-c", "pass"])
     gone.wait(10)
-    assert procs.send_ctrl_break(gone.pid) is False
+    assert procs.send_ctrl_event(gone.pid) is False
 
 
 def test_free_ram_is_positive():
