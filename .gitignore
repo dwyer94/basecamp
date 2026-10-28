@@ -22,3 +22,6 @@ dist/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Claude Code local files (launch.json etc.)
+.claude/
