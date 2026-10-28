@@ -3,8 +3,9 @@
 Checks a Basecamp install on the host PC (docs/04-deployment.md, "After installing").
 
 .DESCRIPTION
-Only reads; changes nothing. A normal PowerShell is enough (an admin one also sees other
-accounts' processes in the port list).
+Only reads; changes nothing. Run it in an admin PowerShell: the task runs Basecamp in its
+own logon session ("Do not store password"), and a normal PowerShell can't read those
+processes' paths or command lines, so the launcher and port checks come out as WARN there.
 
     powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 
@@ -65,6 +66,11 @@ if (-not $Port) {
     }
 }
 
+$me = [Security.Principal.WindowsIdentity]::GetCurrent()
+$isAdmin = ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "Not an admin PowerShell: the task's processes (another logon session) can't be read, so checks on them are WARN, not PASS." -ForegroundColor Yellow
+}
 $procs = @(Get-CimInstance Win32_Process)
 $byId = @{}
 foreach ($p in $procs) { $byId[[int]$p.ProcessId] = $p }
@@ -93,7 +99,10 @@ if (-not $mine.Count) { Fail "Nothing listens on port $Port (is Basecamp running
 foreach ($l in $mine) {
     $p = $byId[[int]$l.OwningProcess]
     $isOurs = $p -and $p.ExecutablePath -and (Test-Under $p.ExecutablePath $PyDir)
-    if (-not $isOurs) { Fail "Port $Port is held by $(if ($p) { $p.Name } else { "PID $($l.OwningProcess)" }), not Basecamp" }
+    if ($p -and -not $p.ExecutablePath -and -not $isAdmin) {
+        Warn "Port $Port is held by $($p.Name) (PID $($p.ProcessId)), which this PowerShell can't read; run verify.ps1 as admin to check it's Basecamp's Python"
+    }
+    elseif (-not $isOurs) { Fail "Port $Port is held by $(if ($p) { $p.Name } else { "PID $($l.OwningProcess)" }), not Basecamp" }
     elseif ($l.LocalAddress -ne '127.0.0.1') { Fail "Basecamp listens on $($l.LocalAddress):$Port; it must be 127.0.0.1 only" }
     else { Pass "Basecamp listens on 127.0.0.1:$Port only" }
 }
@@ -196,7 +205,12 @@ try {
     Fail "/healthz on 127.0.0.1:$Port doesn't answer: $($_.Exception.Message)"
 }
 $launchers = @($runtime | Where-Object { "$($_.CommandLine)" -match 'launcher\.py' })
-Check ($launchers.Count -eq 1) "Launcher running (PID $(@($launchers | ForEach-Object ProcessId) -join ', '))" "$($launchers.Count) launcher(s) running, expected 1"
+$unreadable = @($procs | Where-Object { -not $_.ExecutablePath -and $_.Name -match '^pythonw?\.exe$' })
+if (-not $isAdmin -and -not $launchers.Count -and $unreadable.Count) {
+    Warn "Can't see the launcher or game hosts from a normal PowerShell ($($unreadable.Count) Python process(es) can't be read); run verify.ps1 as admin"
+} else {
+    Check ($launchers.Count -eq 1) "Launcher running (PID $(@($launchers | ForEach-Object ProcessId) -join ', '))" "$($launchers.Count) launcher(s) running, expected 1"
+}
 $hosts = @($runtime | Where-Object { "$($_.CommandLine)" -match 'host-[0-9a-f]+\.py' })
 Info "$($hosts.Count) game server host(s) running"
 foreach ($hp in $hosts) {

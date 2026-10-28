@@ -43,6 +43,8 @@ $WhatIfPreference = $DryRun
 $Root = [IO.Path]::GetFullPath($Root).TrimEnd('\')
 $DataRoot = [IO.Path]::GetFullPath($DataRoot).TrimEnd('\')
 $PyDir = Join-Path $Root 'python'
+# Left next to python\ while game hosts still run from it, so the next run knows the folder is ours.
+$Marker = 'uninstall-pending.txt'
 
 function Say([string]$Text) { Write-Host $Text }
 function Head([string]$Text) { Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
@@ -76,9 +78,10 @@ if ($task -and -not $isAdmin -and -not $DryRun) {
 }
 $looksOurs = (Test-Path -LiteralPath (Join-Path $Root 'launcher.py')) -or
              (Test-Path -LiteralPath (Join-Path $Root 'current.txt')) -or
-             (Test-Path -LiteralPath (Join-Path $Root 'versions'))
+             (Test-Path -LiteralPath (Join-Path $Root 'versions')) -or
+             (Test-Path -LiteralPath (Join-Path $Root $Marker))
 if ((Test-Path -LiteralPath $Root) -and -not $looksOurs) {
-    throw "$Root doesn't look like a Basecamp program folder (no launcher.py, current.txt or versions); not touching it"
+    throw "$Root doesn't look like a Basecamp program folder (no launcher.py, current.txt, versions or $Marker); not touching it"
 }
 
 $procs = @(Get-RuntimeProcesses)
@@ -122,8 +125,13 @@ if (-not (Test-Path -LiteralPath $Root)) {
         throw 'The launcher or Basecamp is still running; not removing files. Run this again'
     }
     if ($left.Count) {
-        foreach ($item in @(Get-ChildItem -LiteralPath $Root -Force | Where-Object Name -ne 'python')) {
+        foreach ($item in @(Get-ChildItem -LiteralPath $Root -Force | Where-Object { $_.Name -ne 'python' -and $_.Name -ne $Marker })) {
             Change "Remove $($item.FullName)" { Remove-Item -LiteralPath $item.FullName -Recurse -Force }
+        }
+        Change "Leave $Root\$Marker, so the next run knows $PyDir is Basecamp's" {
+            Set-Content -LiteralPath (Join-Path $Root $Marker) -Encoding ASCII -Value @(
+                "Basecamp's Python, left because game server hosts still ran from it.",
+                'Run scripts\uninstall.ps1 again once they have stopped, to remove this folder.')
         }
         Say "Keeping $PyDir`: $($left.Count) process(es) still run from it (game server hosts):"
         foreach ($p in $left) { Say "  PID $($p.Id) $($p.Line)" }

@@ -68,7 +68,7 @@ The every-5-minutes trigger on `Basecamp start` **is** the watchdog; there's no 
 
 ## After installing: verify
 
-`scripts\verify.ps1` only reads, needs no admin, and exits with the number of FAILs (D-86):
+`scripts\verify.ps1` only reads and exits with the number of FAILs (D-86). Run it in an **admin** PowerShell: the task runs Basecamp in its own logon session, and a normal PowerShell can't read those processes, so its checks on them come out as WARN there (D-112).
 
 - `<root>\python` has 3.13.17 and no `._pth`; `current.txt` names an unpacked version.
 - Basecamp listens on `127.0.0.1:<port>` only, from its own Python; every listening TCP port is listed, with the ones that weren't there before the install marked `new`.
@@ -87,7 +87,7 @@ Get-NetConnectionProfile
 schtasks /Query /TN "Basecamp start"
 ```
 
-Then reboot the PC **without logging in** and check from your phone that Basecamp and the on-boot servers come up.
+Then reboot the PC **without logging in** and check from your phone that Basecamp and the on-boot servers come up. Restart with `shutdown /r /t 0`: a restart from the Start menu can sign you in by itself ("Use my sign-in info to automatically finish setting up"), which spoils the test. `Get-CimInstance Win32_LogonSession | ? LogonType -eq 2` shows when you really signed in.
 
 **Watch out:** when Basecamp starts a game it checks the game's ports are free by binding them on `0.0.0.0` (`basecamp/procs.py`, D-19). On the dev PC that made Windows show its "allow this app?" prompt, and answering it added two "Python" allow rules (TCP and UDP, any port, Private profile) for Basecamp's `pythonw.exe`. Until that check stops binding a non-loopback address, answer **Cancel** if that prompt appears on the host PC, and run `verify.ps1` after the first game start.
 
@@ -99,7 +99,7 @@ scripts\uninstall.ps1              # keeps C:\BasecampData
 scripts\uninstall.ps1 -RemoveData  # also removes it
 ```
 
-It disables the task (so the 5-minute trigger can't bring it back), ends the launcher and then Basecamp, **each by its PID and never as a tree**, removes the task and the program folder. Game servers and their hosts keep running (R-04a): it never uses `Stop-ScheduledTask`, which ends the processes in the task's job and could take the hosts with it if breakaway didn't work (Q-10). A running game's host runs from `<root>\python\`, so that folder stays until those games have stopped; run it again then. The data folder stays unless `-RemoveData`, and also while a host still writes its logs there (D-84). Firewall rules in group Basecamp and `tailscale serve` are left alone; it prints how to remove them.
+It disables the task (so the 5-minute trigger can't bring it back), ends the launcher and then Basecamp, **each by its PID and never as a tree**, removes the task and the program folder. Game servers and their hosts keep running (R-04a): it never uses `Stop-ScheduledTask`, which ends the processes in the task's job (on the dev PC only the launcher, Q-10, but it isn't needed). A running game's host runs from `<root>\python\`, so that folder stays, with a note `uninstall-pending.txt`, until those games have stopped; run it again then (D-111). The data folder stays unless `-RemoveData`, and also while a host still writes its logs there (D-84). Firewall rules in group Basecamp and `tailscale serve` are left alone; it prints how to remove them.
 
 ## Testing the scripts on the dev PC
 
@@ -109,4 +109,4 @@ Against a test folder, with a release built by `scripts\build_release.py --test-
 scripts\install.ps1 -Root C:\BasecampTest -DataRoot C:\BasecampTestData -ReleaseZip <zip> -PublicKey <throwaway .pub> -Port 8156 -SkipTask
 ```
 
-Then start the launcher the way the task does (`C:\BasecampTest\python\pythonw.exe -I C:\BasecampTest\launcher.py --data C:\BasecampTestData`), and run `verify.ps1` and `uninstall.ps1` with the same `-Root`/`-DataRoot`. `tests\test_install_scripts.py` covers the release check and the scripts' `-WhatIf` runs.
+To test the task itself, leave out `-SkipTask` and give it its own name and port, e.g. `-TaskName 'Basecamp start (test)' -Port 8151`, in an admin PowerShell (results from 2026-10-28: Q-04, Q-09, Q-10). Without the task, start the launcher the way the task does (`C:\BasecampTest\python\pythonw.exe -I C:\BasecampTest\launcher.py --data C:\BasecampTestData`), and run `verify.ps1` and `uninstall.ps1` with the same `-Root`/`-DataRoot`. `tests\test_install_scripts.py` covers the release check and the scripts' `-WhatIf` runs.

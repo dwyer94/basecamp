@@ -54,6 +54,8 @@ Launcher rules:
 4. Any other exit: restart after 5 s, doubling up to 5 min while it keeps failing (reset after 5 min up). The 5-minute watchdog task only restarts the launcher itself.
 5. Keep the newest 3 version folders, plus current, previous and pending; delete older ones.
 
+Basecamp, for its part, exits when its launcher is gone (D-110): ending the task ends only the launcher, and a Basecamp left behind would hold the port so the next launcher couldn't start one. Its games keep running, and the 5-minute trigger brings Basecamp back.
+
 The launcher is deliberately small (~300 lines, standard library only) so it almost never needs changing. If a release needs a newer launcher, its manifest says `min_launcher: 2`; Basecamp then says "this update needs a manual reinstall" instead of installing.
 
 ## Game servers during an update

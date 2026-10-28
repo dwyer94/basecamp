@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 
 import psutil
@@ -19,7 +20,7 @@ from basecamp.db import Store
 from basecamp.livestatus import LiveStatus
 from basecamp.logs import setup_logging
 from basecamp.notify import Notifier
-from basecamp.selfupdate import SelfUpdater
+from basecamp.selfupdate import LAUNCHER_ENV, SelfUpdater
 from basecamp.settings import Settings
 from basecamp.steam import SteamRunner
 from basecamp.supervisor import Supervisor
@@ -34,6 +35,7 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
     stop = stop or threading.Event()
     setup_logging(settings)
     log.info("Basecamp %s starting, data in %s", __version__, settings.data_dir)
+    launcher = launcher_process()
     store = Store.open(settings.db_path, settings.migrations_dir)
     supervisor = Supervisor(store, settings)
     notifier = Notifier(settings, store)
@@ -76,6 +78,10 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
                 log.error("The web server stopped (port %s in use?); Basecamp exits",
                           settings.port)
                 break
+            if launcher is not None and not launcher.is_running():
+                log.warning("The launcher (pid %s) is gone; Basecamp exits so the next "
+                            "launcher can start it (game servers keep running)", launcher.pid)
+                break
     except KeyboardInterrupt:
         stop.set()
     finally:
@@ -92,6 +98,22 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
         supervisor.detach()
         store.close()
     return updater.finish_exit()
+
+
+def launcher_process() -> psutil.Process | None:
+    """The launcher that started this Basecamp, or None for a run without one.
+
+    Basecamp lives only as long as its launcher (D-110). Ending the scheduled task ends the
+    launcher but not Basecamp, and an orphaned Basecamp would keep the port, so the
+    launcher the 5-minute trigger starts next could never start Basecamp. psutil's
+    ``is_running`` compares create times, so a reused PID doesn't count as the launcher.
+    """
+    if not os.environ.get(LAUNCHER_ENV):
+        return None
+    try:
+        return psutil.Process().parent()
+    except psutil.Error:
+        return None
 
 
 def first_start_since_boot(settings: Settings) -> bool:

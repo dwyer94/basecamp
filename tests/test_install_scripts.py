@@ -253,6 +253,26 @@ def test_uninstall_whatif_changes_nothing(tmp_path: Path) -> None:
 
 
 @needs_ps
+@pytest.mark.parametrize("marker", [True, False])
+def test_uninstall_again_after_hosts_kept_python(tmp_path: Path, marker: bool) -> None:
+    # A first run with games running leaves only python\ (and the note); the second run,
+    # after they've stopped, must finish the job, while a bare python\ stays refused.
+    root, data = tmp_path / "Basecamp", tmp_path / "BasecampData"
+    (root / "python").mkdir(parents=True)
+    if marker:
+        (root / "uninstall-pending.txt").write_text("x")
+    r = ps("uninstall.ps1", "-Root", str(root), "-DataRoot", str(data), "-TaskName",
+           "Basecamp test task that does not exist", "-WhatIf")
+    if marker:
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert f"What if: Remove {root} and everything in it" in r.stdout
+    else:
+        assert r.returncode != 0
+        assert "doesn't look like a Basecamp program folder" in r.stdout + r.stderr
+    assert (root / "python").exists()
+
+
+@needs_ps
 @pytest.mark.parametrize("exe, port, match", [
     ("game", "27015", None),
     ("python", "27015", "shell or script runtime"),
