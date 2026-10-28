@@ -3,17 +3,11 @@
 Release notes. `scripts\release.ps1 <version>` publishes the section for that version as the
 GitHub release's notes, which the admin dashboard shows next to its Install button.
 
-## 0.2.0 (unreleased)
+## 0.2.0
 
-- **RuneScape: Dragonwilds now stops without losing progress.** Its server never saves when
-  it stops, so Basecamp waits for its next autosave and then sends Ctrl+C, which ends it
-  cleanly. The template makes it autosave every 2 minutes instead of 5, so a stop takes up
-  to about 2 minutes. Servers made from the old template need the new args and stop recipe:
-  copy them from the template, or make the server again.
-- Two new stop steps for any game: **ctrl_c** (Ctrl+C to the console) and **wait_save**
-  (wait for the game to save to its save folder, then go on).
-- Game servers now start with Ctrl+C turned on. Servers that were already running keep the
-  old host until they're restarted; Basecamp still stops them.
+No changes to Basecamp itself. This release tries out updating from GitHub: the page
+offers it, downloads it, checks its signature and files, and swaps over without stopping
+the game servers.
 
 ## 0.1.0
 
@@ -38,9 +32,12 @@ GitHub Releases through the launcher, RCON and Palworld's REST API.
     Ctrl+Break saves.
   - **V Rising**: real ready line, ports and settings files; Ctrl+Break saves; warning by
     RCON announce.
-  - **RuneScape: Dragonwilds**: there is no way to stop it gracefully (its server has no
-    console and ignores or dies on every stop signal), so Basecamp ends it; the notes say so.
+  - **RuneScape: Dragonwilds**: its server never saves when it stops, so Basecamp waits
+    for its next autosave and then sends Ctrl+C, which ends it cleanly. The template makes
+    it autosave every 2 minutes, so a stop takes up to about 2 minutes.
   - **Windrose**: starts the Shipping exe with `-log` from the install folder, which gives
     it a console so Ctrl+Break saves; real ready line, config file and save folder.
+- Stop steps **ctrl_c** (Ctrl+C to the console) and **wait_save** (wait for the game to
+  save to its save folder, then go on), for any game.
 - Basecamp exits when its launcher is gone, so ending the scheduled task never leaves one
   holding the port; game servers keep running.
