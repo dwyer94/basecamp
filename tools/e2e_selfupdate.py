@@ -47,6 +47,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import build_release  # noqa: E402
 
 from basecamp import selfupdate  # noqa: E402
+from launcher import LAUNCHER_VERSION  # noqa: E402
 
 PYTHON = Path(getattr(sys, "_base_executable", sys.executable))
 PORT = 8155
@@ -224,7 +225,8 @@ def main() -> int:
         h = wait(lambda: health(), 60, "v0.1.0 up")
         step("v0.1.0 runs under the launcher from versions\\0.1.0", h["version"] == "0.1.0")
         u = api("GET", "/api/update")
-        step("v0.1.0 knows it runs under the launcher", u["can_install"] and u["launcher"] == 1)
+        step("v0.1.0 knows it runs under the launcher",
+             u["can_install"] and u["launcher"] == LAUNCHER_VERSION)
 
         game_port = free_udp()
         cfg = {"name": "e2e fake game", "exe_path": str(PYTHON),

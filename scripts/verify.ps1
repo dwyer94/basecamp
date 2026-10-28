@@ -10,8 +10,10 @@ processes' paths or command lines, so the launcher and port checks come out as W
     powershell -ExecutionPolicy Bypass -File scripts\verify.ps1
 
 Checks:
-- Python: <Root>\python has the pinned version, without the ._pth file.
-- Release: current.txt names an unpacked version.
+- Python: <Root>\python has the pinned version and Basecamp's python313._pth, and is
+  isolated: run without -I and with PYTHONPATH set elsewhere, every sys.path
+  entry is under <Root> and _asyncio loads from <Root>\python (D-123).
+- Release: current.txt names an unpacked version; launcher.py is version 2 or newer.
 - Port: Basecamp listens on 127.0.0.1:<port> only, from its own Python; then every
   listening TCP port, with the ones that weren't there before the install marked "new".
 - Firewall: each rule in group Basecamp is inbound allow, for one program (not Basecamp's
@@ -20,6 +22,8 @@ Checks:
 - Network profiles: the same as before the install.
 - Task: there, as this account, S4U, not elevated, at startup + 1 min and every 5 min, no
   time limit, no second instance, runs <Root>\python\pythonw.exe <Root>\launcher.py.
+  Read from its XML (Export-ScheduledTask, or schtasks /Query /XML where the ScheduledTasks
+  cmdlets fail, as they do on a PC whose task cache has entries without files).
 - /healthz answers with the version in current.txt; the launcher and game hosts running.
 
 "Before the install" is <DataRoot>\install-baseline.json, written by install.ps1.
@@ -35,6 +39,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 
 $PythonVersion = '3.13.17'  # the version install.ps1 pins
+$PthName = 'python313._pth'
+$MinLauncher = 2
 $Remote = '100.64.0.0/10'
 $RemoteForms = @('100.64.0.0/10', '100.64.0.0/255.192.0.0')  # Windows reports the mask form
 $Root = [IO.Path]::GetFullPath($Root).TrimEnd('\')
@@ -50,7 +56,17 @@ function Fail([string]$Text) { $script:fails++; Write-Host "[FAIL] $Text" -Foreg
 function Info([string]$Text) { Write-Host "       $Text" }
 function Check([bool]$Ok, [string]$Good, [string]$Bad) { if ($Ok) { Pass $Good } else { Fail $Bad } }
 function Test-Under([string]$Path, [string]$Folder) {
-    $Path.StartsWith($Folder.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+    $Path.StartsWith($Folder.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        $Path.Equals($Folder.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+}
+# schtasks.exe, for when the ScheduledTasks cmdlets fail: on a PC whose task cache has
+# entries without files, they throw 0x80070002 even for one task by name.
+function Invoke-Schtasks([string[]]$ArgList) {
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $out = @(& schtasks.exe @ArgList 2>&1 | ForEach-Object { "$_" }) }
+    finally { $ErrorActionPreference = $saved }
+    [pscustomobject]@{ Code = $LASTEXITCODE; Out = ($out -join "`n").Trim() }
 }
 
 $baseline = $null
@@ -83,13 +99,34 @@ if (Test-Path -LiteralPath $py) {
     $v = "$(& $py -I -c "import sys; print('%d.%d.%d' % sys.version_info[:3])")".Trim()
     Check ($v -eq $PythonVersion) "Python $v in $PyDir" "Python in $PyDir is '$v', expected $PythonVersion"
     $pth = @(Get-ChildItem -LiteralPath $PyDir -Filter '*._pth' | ForEach-Object Name)
-    Check (-not $pth.Count) 'No ._pth file (PYTHONPATH works)' "$($pth -join ', ') is there; the launcher's PYTHONPATH won't work"
+    $pthList = if ($pth.Count) { $pth -join ', ' } else { 'none' }
+    Check ($pth.Count -eq 1 -and $pth[0] -eq $PthName) "$PthName is there" "._pth files: $pthList; expected $PthName only (run install.ps1 again)"
+    # Without -I, and with PYTHONPATH pointing elsewhere: only the ._pth file can keep that
+    # and the registry's PythonPath out (D-123). PYTHONHOME would hide the registry: cleared.
+    $saved = @($env:PYTHONPATH, $env:PYTHONHOME)
+    $env:PYTHONPATH = Join-Path $env:TEMP 'basecamp-probe-path'
+    $env:PYTHONHOME = $null
+    try { $out = & $py -c "import sys, json, _asyncio; print(json.dumps({'path': sys.path, 'asyncio': _asyncio.__file__}))" }
+    finally { $env:PYTHONPATH = $saved[0]; $env:PYTHONHOME = $saved[1] }
+    if ($LASTEXITCODE) {
+        Fail "Python in $PyDir fails to import _asyncio, so something outside it is on its sys.path (run install.ps1 again): $out"
+    } else {
+        $r = "$out" | ConvertFrom-Json
+        $outside = @($r.path | Where-Object { -not ("$_" -and (Test-Under "$_" $Root)) })
+        Check (-not $outside.Count) "sys.path is all under $Root ($(@($r.path).Count) entries)" "sys.path has entries outside $Root`: '$($outside -join "', '")' (the registry, PYTHONPATH or the current folder; run install.ps1 again)"
+        Check (Test-Under "$($r.asyncio)" $PyDir) "_asyncio from $($r.asyncio)" "_asyncio loads from $($r.asyncio), not $PyDir"
+    }
 } else { Fail "No $py" }
 $current = ''
 if (Test-Path -LiteralPath (Join-Path $Root 'current.txt')) { $current = (Get-Content -LiteralPath (Join-Path $Root 'current.txt') -Raw).Trim() }
 Check ([bool]$current -and (Test-Path -LiteralPath (Join-Path $Root "versions\$current\basecamp\__init__.py"))) `
     "current.txt: $current, unpacked in versions\$current" "current.txt names '$current', which isn't unpacked"
-Check (Test-Path -LiteralPath (Join-Path $Root 'launcher.py')) 'launcher.py is there' "No $Root\launcher.py"
+$launcherFile = Join-Path $Root 'launcher.py'
+if (Test-Path -LiteralPath $launcherFile) {
+    $m = Select-String -LiteralPath $launcherFile -Pattern '^LAUNCHER_VERSION = (\d+)' | Select-Object -First 1
+    $lv = if ($m) { [int]$m.Matches[0].Groups[1].Value } else { 0 }
+    Check ($lv -ge $MinLauncher) "launcher.py is version $lv" "launcher.py is version $lv; the isolated runtime needs $MinLauncher (run install.ps1 again)"
+} else { Fail "No $launcherFile" }
 
 # -- Listening ports ------------------------------------------------------------------------
 Head 'Listening TCP ports'
@@ -168,32 +205,62 @@ foreach ($np in $profiles) {
 
 # -- Scheduled task -------------------------------------------------------------------------
 Head "Scheduled task '$TaskName'"
-$task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if (-not $task) {
-    Fail "No task '$TaskName'"
+# From the task's XML: Export-ScheduledTask, or schtasks.exe where the cmdlets fail.
+$xmlText = $null
+$viaCmdlets = $true
+try { $xmlText = Export-ScheduledTask -TaskName $TaskName -ErrorAction Stop } catch {
+    $viaCmdlets = $false
+    $q = Invoke-Schtasks @('/Query', '/TN', $TaskName, '/XML')
+    if (-not $q.Code) { $xmlText = $q.Out }
+}
+if (-not $xmlText) {
+    Fail "No task '$TaskName' (neither Export-ScheduledTask nor schtasks /Query has it)"
 } else {
-    $me = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $pr = $task.Principal
-    $userOk = $pr.UserId -eq $me.User.Value -or $pr.UserId -eq $me.Name -or
-              $pr.UserId -eq ($me.Name -split '\\')[-1]
-    Check $userOk "Runs as $($pr.UserId)" "Runs as $($pr.UserId), not $($me.Name)"
-    Check ("$($pr.LogonType)" -eq 'S4U') 'Do not store password (S4U)' "Logon type is $($pr.LogonType), expected S4U"
-    Check ("$($pr.RunLevel)" -eq 'Limited') 'Not elevated' "Run level is $($pr.RunLevel), expected Limited"
-    $boot = @($task.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' })
-    Check ($boot.Count -eq 1 -and $boot[0].Delay -eq 'PT1M' -and $boot[0].Enabled) 'At startup, 1 minute delay' 'No enabled at-startup trigger with a 1 minute delay'
-    $rep = @($task.Triggers | Where-Object { $_.Repetition -and $_.Repetition.Interval -eq 'PT5M' -and -not $_.Repetition.Duration -and $_.Enabled })
+    if (-not $viaCmdlets) { Info 'The ScheduledTasks cmdlets fail here; read with schtasks /Query /XML.' }
+    $doc = New-Object Xml.XmlDocument
+    $doc.LoadXml($xmlText)
+    # One value by path; Task Scheduler leaves out elements that have their default value.
+    function X([string]$Path, [string]$Default = '', $Node = $doc.DocumentElement) {
+        $xp = ($Path -split '/' | ForEach-Object { "*[local-name()='$_']" }) -join '/'
+        $n = $Node.SelectSingleNode($xp)
+        if ($n) { $n.InnerText.Trim() } else { $Default }
+    }
+    $userId = X 'Principals/Principal/UserId'
+    $userOk = $userId -eq $me.User.Value -or $userId -eq $me.Name -or
+              $userId -eq ($me.Name -split '\\')[-1]
+    Check $userOk "Runs as $userId" "Runs as $userId, not $($me.Name)"
+    $logon = X 'Principals/Principal/LogonType' 'InteractiveToken'
+    Check ($logon -eq 'S4U') 'Do not store password (S4U)' "Logon type is $logon, expected S4U"
+    $level = X 'Principals/Principal/RunLevel' 'LeastPrivilege'
+    Check ($level -eq 'LeastPrivilege') 'Not elevated' "Run level is $level, expected LeastPrivilege"
+    $boot = @($doc.SelectNodes("//*[local-name()='Triggers']/*[local-name()='BootTrigger']"))
+    $bootOk = $boot.Count -eq 1 -and (X 'Delay' '' $boot[0]) -eq 'PT1M' -and (X 'Enabled' 'true' $boot[0]) -eq 'true'
+    Check $bootOk 'At startup, 1 minute delay' 'No enabled at-startup trigger with a 1 minute delay'
+    $rep = @($doc.SelectNodes("//*[local-name()='Triggers']/*") | Where-Object {
+        (X 'Repetition/Interval' '' $_) -eq 'PT5M' -and -not (X 'Repetition/Duration' '' $_) -and
+        (X 'Enabled' 'true' $_) -eq 'true' })
     Check ($rep.Count -ge 1) 'Every 5 minutes, indefinitely (watchdog)' 'No enabled every-5-minutes trigger without an end'
-    $s = $task.Settings
-    Check ($s.ExecutionTimeLimit -eq 'PT0S') 'No time limit' "Time limit is $($s.ExecutionTimeLimit), expected none (PT0S)"
-    Check ("$($s.MultipleInstances)" -eq 'IgnoreNew') 'No second instance' "Multiple instances: $($s.MultipleInstances), expected IgnoreNew"
-    Check ($s.Priority -ge 4 -and $s.Priority -le 6) "Priority $($s.Priority) (normal)" "Priority $($s.Priority): below normal, and the game servers would inherit it"
-    Check ([bool]$s.Enabled) 'Enabled' 'Disabled'
-    $a = @($task.Actions)[0]
+    $limit = X 'Settings/ExecutionTimeLimit' 'PT72H'
+    Check ($limit -eq 'PT0S') 'No time limit' "Time limit is $limit, expected none (PT0S)"
+    $multi = X 'Settings/MultipleInstancesPolicy' 'IgnoreNew'
+    Check ($multi -eq 'IgnoreNew') 'No second instance' "Multiple instances: $multi, expected IgnoreNew"
+    $prio = [int](X 'Settings/Priority' '7')
+    Check ($prio -ge 4 -and $prio -le 6) "Priority $prio (normal)" "Priority $($prio): below normal, and the game servers would inherit it"
+    Check ((X 'Settings/Enabled' 'true') -eq 'true') 'Enabled' 'Disabled'
+    $exe = X 'Actions/Exec/Command'
+    $arguments = X 'Actions/Exec/Arguments'
     $wantExe = Join-Path $PyDir 'pythonw.exe'
-    Check ($a.Execute -eq $wantExe -and "$($a.Arguments)" -match [regex]::Escape("$Root\launcher.py")) `
-        "Runs $($a.Execute) $($a.Arguments)" "Runs '$($a.Execute) $($a.Arguments)', expected $wantExe ... $Root\launcher.py"
-    $tinfo = $task | Get-ScheduledTaskInfo
-    Info "State $($task.State), last run $($tinfo.LastRunTime), last result $($tinfo.LastTaskResult)"
+    Check ($exe -eq $wantExe -and $arguments -match [regex]::Escape("$Root\launcher.py")) `
+        "Runs $exe $arguments" "Runs '$exe $arguments', expected $wantExe ... $Root\launcher.py"
+    if ($viaCmdlets) {
+        try {
+            $tinfo = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction Stop
+            Info "State $((Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop).State), last run $($tinfo.LastRunTime), last result $($tinfo.LastTaskResult)"
+        } catch { Info "State: Get-ScheduledTaskInfo failed ($($_.Exception.Message))" }
+    } else {
+        $q = Invoke-Schtasks @('/Query', '/TN', $TaskName, '/FO', 'LIST', '/V')
+        foreach ($line in @($q.Out -split "`n" | Where-Object { $_ -match '^(Status|Last Run Time|Last Result|Scheduled Task State):' })) { Info $line.Trim() }
+    }
 }
 
 # -- Running --------------------------------------------------------------------------------

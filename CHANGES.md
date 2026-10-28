@@ -3,6 +3,25 @@
 Release notes. `scripts\release.ps1 <version>` publishes the section for that version as the
 GitHub release's notes, which the admin dashboard shows next to its Install button.
 
+## 0.2.1
+
+Fixes for the first install on the host PC. Install it by running `scripts\install.ps1`
+again from this version's copy of the repo (docs/04-deployment.md, "Updating an install
+from before 0.2.1"): Basecamp 0.2.0 can't update itself to it.
+
+- **Basecamp's Python is isolated.** Another Python installed on the PC (python.org's, with
+  its registry entry) could put its own folders ahead of Basecamp's, and Basecamp crashed
+  on start. The runtime now has a `python313._pth` file, so the registry, `PYTHONPATH`,
+  `PYTHONHOME` and user site-packages can't reach it, and the launcher (version 2) puts
+  Basecamp's folders on its path itself. `install.ps1` and `verify.ps1` check that every
+  path entry is inside the install folder.
+- `install.ps1` on an older install: installs this release the way an update would (DB copy,
+  0.2.0 kept to roll back to), then writes the `._pth` file. It refuses while the launcher
+  or Basecamp runs and prints how to stop them; game servers can keep running.
+- The scripts work where Windows' ScheduledTasks commands fail (a task cache with entries
+  for missing files): they fall back to `schtasks.exe`, so `verify.ps1` finds the task and
+  `uninstall.ps1` disables and removes it.
+
 ## 0.2.0
 
 No changes to Basecamp itself. This release tries out updating from GitHub: the page

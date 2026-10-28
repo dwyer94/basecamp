@@ -19,7 +19,13 @@ written from RFC 8032 (verify only; the tests check it against ``cryptography``)
 
 If ``current.txt`` already names an unpacked version, Basecamp is installed and updates
 itself from the page: only ``launcher.py`` is refreshed from that version, and the zip is
-left alone. ``--check`` does steps 1 and 2 and changes nothing.
+left alone. The exception is ``--min-launcher``: when that version's launcher is older
+than the runtime needs (``LAUNCHER_VERSION`` 1 relies on ``PYTHONPATH``, which the
+runtime's ``._pth`` file switches off, D-123), the given release must be newer and carry
+a new enough launcher, and it's installed the way an update is: the database copied to
+``db-backups\\before-<v>.db`` (with ``--data``), the old version kept as ``previous.txt``,
+the new one on trial (``trial.txt``), so the launcher rolls back if it isn't healthy.
+``--check`` does steps 1 and 2 and changes nothing.
 
 Prints one ``key=value`` line per result for install.ps1 and exits 1 with a message on
 any failure.
@@ -34,12 +40,14 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import sys
 import zipfile
 from pathlib import Path, PurePosixPath
 
 MANIFEST = "manifest.json"
 _VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
+_LAUNCHER_VERSION = re.compile(r"^LAUNCHER_VERSION = (\d+)", re.M)
 
 
 class InstallError(Exception):
@@ -228,6 +236,45 @@ def safe_extract(zip_path: Path, dest: Path) -> None:
                 shutil.copyfileobj(src, out)
 
 
+def version_key(text: str) -> tuple:
+    """Same order as ``launcher.version_key``; ``text`` must match ``_VERSION``."""
+    m = _VERSION.match(text)
+    assert m is not None
+    pre = tuple((0, int(p), "") if p.isdigit() else (1, 0, p)
+                for p in m[4].split(".")) if m[4] else ()
+    return (int(m[1]), int(m[2]), int(m[3]), 0 if m[4] else 1, pre)
+
+
+def launcher_version(path: Path) -> int:
+    """``LAUNCHER_VERSION`` in a launcher.py; 0 if it has none or can't be read."""
+    try:
+        m = _LAUNCHER_VERSION.search(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return 0
+    return int(m[1]) if m else 0
+
+
+def backup_db(data: Path, version: str) -> None:
+    """``db-backups\\before-<v>.db``, as Basecamp makes before an update (D-55)."""
+    db = data / "basecamp.db"
+    if not db.is_file():
+        return
+    (data / "db-backups").mkdir(exist_ok=True)
+    target = data / "db-backups" / f"before-{version}.db"
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.unlink(missing_ok=True)
+    src = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        out = sqlite3.connect(tmp)
+        try:
+            src.backup(out)
+        finally:
+            out.close()
+    finally:
+        src.close()
+    os.replace(tmp, target)
+
+
 def runnable(root: Path, version: str) -> bool:
     return bool(_VERSION.match(version)) and (
         root / "versions" / version / "basecamp" / "__init__.py").is_file()
@@ -260,15 +307,8 @@ def current(root: Path) -> str:
         return ""
 
 
-def install(zip_path: Path | None, sig_path: Path | None, key_path: Path | None,
-            root: Path) -> dict[str, str]:
-    have = current(root)
-    if runnable(root, have):
-        changed = copy_launcher(root, have)
-        return {"result": "already-installed", "version": have,
-                "launcher": "updated" if changed else "unchanged"}
-    if zip_path is None or sig_path is None or key_path is None:
-        raise InstallError("Basecamp isn't installed here yet and no release was given")
+def unpack(zip_path: Path, sig_path: Path, key_path: Path, root: Path) -> str:
+    """Check the release and make ``versions\\<v>\\``; its version."""
     verify_zip(zip_path, sig_path, load_public_key(key_path))
     manifest = read_manifest(zip_path)
     version = manifest["version"]
@@ -286,9 +326,47 @@ def install(zip_path: Path | None, sig_path: Path | None, key_path: Path | None,
         shutil.rmtree(tmp, ignore_errors=True)
         raise
     os.replace(tmp, folder)
+    return version
+
+
+def install(zip_path: Path | None, sig_path: Path | None, key_path: Path | None,
+            root: Path, min_launcher: int = 0, data: Path | None = None) -> dict[str, str]:
+    have = current(root)
+    if runnable(root, have):
+        old = launcher_version(root / "versions" / have / "launcher.py")
+        if old >= min_launcher:
+            changed = copy_launcher(root, have)
+            return {"result": "already-installed", "version": have,
+                    "launcher": "updated" if changed else "unchanged"}
+        if zip_path is None or sig_path is None or key_path is None:
+            raise InstallError(f"Basecamp {have}'s launcher is version {old} and this runtime "
+                               f"needs {min_launcher}; a newer release is needed")
+        verify_zip(zip_path, sig_path, load_public_key(key_path))
+        new = read_manifest(zip_path)["version"]
+        if version_key(new) <= version_key(have):
+            raise InstallError(f"Basecamp {have}'s launcher is version {old} and this runtime "
+                               f"needs {min_launcher}, but the release is {new}, not newer")
+    elif zip_path is None or sig_path is None or key_path is None:
+        raise InstallError("Basecamp isn't installed here yet and no release was given")
+    version = unpack(zip_path, sig_path, key_path, root)
+    got = launcher_version(root / "versions" / version / "launcher.py")
+    if got < min_launcher:
+        shutil.rmtree(root / "versions" / version, ignore_errors=True)
+        raise InstallError(f"Release {version}'s launcher is version {got}; this runtime "
+                           f"needs {min_launcher}")
+    if not runnable(root, have):
+        copy_launcher(root, version)
+        _write(root / "current.txt", version)
+        return {"result": "installed", "version": version, "launcher": "updated"}
+    # An upgrade the self-updater can't do (its launcher is too old): done the way the
+    # launcher does an update, so a version that isn't healthy rolls back (D-56).
+    if data is not None:
+        backup_db(data, version)
+    _write(root / "previous.txt", have)
+    _write(root / "trial.txt", version)
     copy_launcher(root, version)
     _write(root / "current.txt", version)
-    return {"result": "installed", "version": version, "launcher": "updated"}
+    return {"result": "upgraded", "from": have, "version": version, "launcher": "updated"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -297,6 +375,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sig", type=Path)
     parser.add_argument("--key", type=Path)
     parser.add_argument("--root", type=Path)
+    parser.add_argument("--data", type=Path, help="the data folder (for the DB copy)")
+    parser.add_argument("--min-launcher", type=int, default=0,
+                        help="the oldest LAUNCHER_VERSION this runtime can run")
     parser.add_argument("--check", action="store_true",
                         help="only check the signature and manifest; change nothing")
     args = parser.parse_args(argv)
@@ -309,8 +390,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             if args.root is None:
                 raise InstallError("--root is needed")
-            out = install(args.zip, args.sig, args.key, args.root)
-    except (InstallError, OSError) as e:
+            out = install(args.zip, args.sig, args.key, args.root, args.min_launcher,
+                          args.data)
+    except (InstallError, OSError, sqlite3.Error) as e:
         print(f"error={e}")
         return 1
     for k, v in out.items():

@@ -50,7 +50,7 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
-LAUNCHER_VERSION = 1
+LAUNCHER_VERSION = 2  # 2: sys.path set by BOOTSTRAP, not PYTHONPATH (D-123)
 EXIT_UPDATE = 3
 HEALTH_TIMEOUT_S = 60.0
 BACKOFF_S = (5, 10, 20, 40, 80, 160, 300)
@@ -58,6 +58,12 @@ STABLE_S = 300  # a run this long resets the back-off
 KEEP_VERSIONS = 3
 CREATE_NO_WINDOW = 0x08000000
 _VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
+# Run with -I from the version folder. The runtime's ._pth file (and -I) make Python ignore
+# PYTHONPATH, the registry and user site-packages, so Basecamp's own folders go on sys.path
+# here: the version folder and its lib\, ahead of the runtime's (D-123).
+BOOTSTRAP = ("import os, runpy, sys; v = os.getcwd(); "
+             "sys.path[:0] = [v, os.path.join(v, 'lib')]; "
+             "runpy.run_module('basecamp', run_name='__main__', alter_sys=True)")
 
 log = logging.getLogger("launcher")
 
@@ -122,14 +128,13 @@ class Launcher:
         folder = self.version_dir(version)
         env = dict(os.environ)
         env.update(BASECAMP_ROOT=str(self.root), BASECAMP_DATA_DIR=str(self.data_dir),
-                   BASECAMP_LAUNCHER=str(LAUNCHER_VERSION),
-                   PYTHONPATH=os.pathsep.join([str(folder), str(folder / "lib")]))
-        env.pop("PYTHONHOME", None)
+                   BASECAMP_LAUNCHER=str(LAUNCHER_VERSION))
+        for name in ("PYTHONPATH", "PYTHONHOME"):  # ignored anyway; keep them from the games
+            env.pop(name, None)
         (self.root / "logs").mkdir(exist_ok=True)
         with (self.root / "logs" / "basecamp-output.log").open("ab") as out:
             log.info("Starting Basecamp %s", version)
-            # -s: no user site-packages; the version folder and its lib\ are the only code.
-            return subprocess.Popen([self.python, "-s", "-m", "basecamp"], cwd=folder, env=env,
+            return subprocess.Popen([self.python, "-I", "-c", BOOTSTRAP], cwd=folder, env=env,
                                     stdin=subprocess.DEVNULL, stdout=out,
                                     stderr=subprocess.STDOUT, creationflags=CREATE_NO_WINDOW)
 

@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import zipfile
@@ -72,13 +73,14 @@ def test_refuses_malleable_and_malformed_signatures() -> None:
 
 
 def make_release(tmp: Path, version: str = "0.1.0", python: str = PY, extra: dict | None = None,
-                 tamper: bool = False) -> tuple[Path, Path, Path]:
+                 tamper: bool = False, launcher: int | None = None) -> tuple[Path, Path, Path]:
     """A small signed release zip like build_release.py makes, plus its key file."""
     stage = tmp / f"stage-{version}"
     shutil.rmtree(stage, ignore_errors=True)
     (stage / "basecamp").mkdir(parents=True)
     (stage / "basecamp" / "__init__.py").write_text(f'__version__ = "{version}"\n')
-    (stage / "launcher.py").write_text(f"# launcher for {version}\n")
+    (stage / "launcher.py").write_text(f"# launcher for {version}\n" + (
+        f"LAUNCHER_VERSION = {launcher}\n" if launcher is not None else ""))
     (stage / "lib").mkdir()
     (stage / "lib" / "dep.py").write_text("x = 1\n")
     manifest = selfupdate.make_manifest(stage, version, 1, python)
@@ -125,6 +127,83 @@ def test_installed_already_only_refreshes_the_launcher(tmp_path: Path) -> None:
     assert out == {"result": "already-installed", "version": "0.1.0", "launcher": "updated"}
     assert (root / "launcher.py").read_text() == "# launcher for 0.1.0\n"
     assert not (root / "versions" / "0.2.0").exists()  # Basecamp updates itself
+
+
+def installed(tmp: Path, launcher: int) -> Path:
+    """An install of 0.1.0 whose launcher has ``LAUNCHER_VERSION = launcher``, with a DB."""
+    zip_path, sig, pub = make_release(tmp, launcher=launcher)
+    root = tmp / "root"
+    root.mkdir()
+    ir.install(zip_path, sig, pub, root)
+    (tmp / "data").mkdir()
+    conn = sqlite3.connect(tmp / "data" / "basecamp.db")
+    conn.execute("CREATE TABLE t (v)")
+    conn.execute("INSERT INTO t VALUES ('kept')")
+    conn.commit()
+    conn.close()
+    return root
+
+
+def test_launcher_new_enough_only_refreshes(tmp_path: Path) -> None:
+    root = installed(tmp_path, launcher=2)
+    newer, nsig, npub = make_release(tmp_path, "0.2.0", launcher=2)
+    out = ir.install(newer, nsig, npub, root, min_launcher=2, data=tmp_path / "data")
+    assert out["result"] == "already-installed" and out["version"] == "0.1.0"
+    assert not (root / "versions" / "0.2.0").exists()
+
+
+def test_old_launcher_is_replaced_by_a_newer_release_like_an_update(tmp_path: Path) -> None:
+    # D-123: launcher 1 sets PYTHONPATH, which the isolated runtime ignores, and Basecamp
+    # can't update itself to a release that needs a newer launcher, so install.ps1 does it.
+    root = installed(tmp_path, launcher=1)
+    newer, nsig, npub = make_release(tmp_path, "0.2.0", launcher=2)
+    out = ir.install(newer, nsig, npub, root, min_launcher=2, data=tmp_path / "data")
+    assert out == {"result": "upgraded", "from": "0.1.0", "version": "0.2.0",
+                   "launcher": "updated"}
+    assert [(root / n).read_text() for n in ("current.txt", "previous.txt", "trial.txt")] == [
+        "0.2.0", "0.1.0", "0.2.0"]
+    assert ir.launcher_version(root / "launcher.py") == 2
+    assert (root / "versions" / "0.1.0" / "basecamp" / "__init__.py").is_file()
+    copy = tmp_path / "data" / "db-backups" / "before-0.2.0.db"
+    conn = sqlite3.connect(copy)
+    assert conn.execute("SELECT v FROM t").fetchall() == [("kept",)]
+    conn.close()
+
+
+@pytest.mark.parametrize("version, launcher, match", [
+    (None, None, "a newer release is needed"),
+    ("0.1.0", 2, "not newer"),
+    ("0.2.0", 1, "launcher is version 1"),
+])
+def test_old_launcher_refusals_change_nothing(tmp_path: Path, version: str | None,
+                                              launcher: int | None, match: str) -> None:
+    root = installed(tmp_path, launcher=1)
+    args: tuple = (None, None, None)
+    if version is not None:
+        (tmp_path / "new").mkdir()
+        args = make_release(tmp_path / "new", version, launcher=launcher)
+    with pytest.raises(ir.InstallError, match=match):
+        ir.install(*args, root, min_launcher=2, data=tmp_path / "data")
+    assert (root / "current.txt").read_text() == "0.1.0"
+    assert not (root / "previous.txt").exists() and not (root / "trial.txt").exists()
+    assert not (root / "versions" / "0.2.0").exists()
+    assert ir.launcher_version(root / "launcher.py") == 1
+
+
+def test_first_install_refuses_a_too_old_launcher(tmp_path: Path) -> None:
+    zip_path, sig, pub = make_release(tmp_path, launcher=1)
+    root = tmp_path / "root"
+    root.mkdir()
+    with pytest.raises(ir.InstallError, match="launcher is version 1"):
+        ir.install(zip_path, sig, pub, root, min_launcher=2)
+    assert not (root / "current.txt").exists() and not (root / "versions" / "0.1.0").exists()
+
+
+def test_repo_launcher_is_what_install_ps1_needs() -> None:
+    import launcher
+    text = (REPO / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    assert f"$MinLauncher = {launcher.LAUNCHER_VERSION}" in text
+    assert ir.launcher_version(REPO / "launcher.py") == launcher.LAUNCHER_VERSION
 
 
 def test_bad_signature_unpacks_nothing(tmp_path: Path) -> None:
@@ -215,7 +294,8 @@ def test_install_whatif_changes_nothing(tmp_path: Path) -> None:
     r = ps("install.ps1", "-Root", str(root), "-DataRoot", str(data), "-ReleaseZip", str(zip_path),
            "-PublicKey", str(pub), "-Port", "8158", "-WhatIf")
     assert r.returncode == 0, r.stdout + r.stderr
-    for want in (f"What if: Create folder {root}", "embed-amd64.zip", "Write a starter",
+    for want in (f"What if: Create folder {root}", "embed-amd64.zip",
+                 "with Basecamp's python313._pth", "Write a starter",
                  "<LogonType>S4U</LogonType>", "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
                  "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
                  "<Delay>PT1M</Delay>", "<Interval>PT5M</Interval>", "<Priority>4</Priority>",

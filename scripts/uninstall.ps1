@@ -21,6 +21,10 @@ every change without making any.
    and never removes it while a game server's host still runs (hosts write their console
    logs there).
 
+Where the ScheduledTasks cmdlets fail (a task cache with entries without files makes even
+Get-ScheduledTask -TaskName throw 0x80070002), steps 1 and 3 use schtasks.exe instead.
+Only the task named -TaskName is ever touched.
+
 Left alone, and printed for you: firewall rules in the Basecamp group (the games still
 use them) and tailscale serve.
 #>
@@ -62,17 +66,32 @@ function Get-RuntimeProcesses {
     } | ForEach-Object {
         $line = "$($_.CommandLine)"
         $kind = if ($line -match 'launcher\.py') { 'launcher' }
-                elseif ($line -match '\s-m\s+basecamp(\s|$)') { 'basecamp' }
+                elseif ($line -match '\s-m\s+basecamp(\s|$)|run_module\(.basecamp.') { 'basecamp' }
                 elseif ($line -match 'host-[0-9a-f]+\.py|\\host\.py') { 'host' }
                 else { 'other' }
         [pscustomobject]@{ Kind = $kind; Id = $_.ProcessId; Line = $line }
     })
 }
 
+# schtasks.exe, for when the ScheduledTasks cmdlets fail (see above).
+function Invoke-Schtasks([string[]]$ArgList) {
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $out = @(& schtasks.exe @ArgList 2>&1 | ForEach-Object { "$_" }) }
+    finally { $ErrorActionPreference = $saved }
+    [pscustomobject]@{ Code = $LASTEXITCODE; Out = ($out -join "`n").Trim() }
+}
+
 if ($DryRun) { Say 'Dry run (-WhatIf): nothing below is changed.' }
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 $isAdmin = ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-$task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+$task = $false
+$taskCmdlets = $true
+try { $task = [bool](Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop) } catch {
+    $taskCmdlets = $false
+    $task = -not (Invoke-Schtasks @('/Query', '/TN', $TaskName)).Code
+    if ($task) { Say "Get-ScheduledTask fails here ($($_.Exception.Message)); using schtasks.exe for '$TaskName'." }
+}
 if ($task -and -not $isAdmin -and -not $DryRun) {
     throw "Run this in an admin PowerShell: removing the task '$TaskName' needs it"
 }
@@ -98,7 +117,15 @@ if ($hosts.Count) {
 Head "Scheduled task '$TaskName' and Basecamp"
 if ($task) {
     Change "Disable scheduled task '$TaskName' (so it can't start the launcher again)" {
-        Disable-ScheduledTask -TaskName $TaskName | Out-Null
+        $done = $false
+        if ($taskCmdlets) {
+            try { Disable-ScheduledTask -TaskName $TaskName -ErrorAction Stop | Out-Null; $done = $true }
+            catch { Say "Disable-ScheduledTask failed ($($_.Exception.Message)); using schtasks.exe." }
+        }
+        if (-not $done) {
+            $r = Invoke-Schtasks @('/Change', '/TN', $TaskName, '/DISABLE')
+            if ($r.Code) { throw "schtasks /Change /DISABLE failed: $($r.Out)" }
+        }
     }
 } else { Say "No task '$TaskName'." }
 foreach ($kind in @('launcher', 'basecamp')) {
@@ -111,7 +138,15 @@ foreach ($kind in @('launcher', 'basecamp')) {
 }
 if ($task) {
     Change "Remove scheduled task '$TaskName'" {
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        $done = $false
+        if ($taskCmdlets) {
+            try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop; $done = $true }
+            catch { Say "Unregister-ScheduledTask failed ($($_.Exception.Message)); using schtasks.exe." }
+        }
+        if (-not $done) {
+            $r = Invoke-Schtasks @('/Delete', '/TN', $TaskName, '/F')
+            if ($r.Code) { throw "schtasks /Delete failed: $($r.Out)" }
+        }
     }
 }
 

@@ -27,6 +27,9 @@ data = Path(os.environ["BASECAMP_DATA_DIR"])
 mode = (here / "mode.txt").read_text().strip() if (here / "mode.txt").exists() else "ok"
 with open(data / "starts.txt", "a") as f:
     f.write(f"{version} {os.environ['BASECAMP_ROOT']} {os.environ['BASECAMP_LAUNCHER']}\\n")
+(data / f"python-{version}.json").write_text(json.dumps({
+    "path": sys.path[:2], "isolated": sys.flags.isolated, "argv": sys.argv[1:],
+    "env": [k for k in ("PYTHONPATH", "PYTHONHOME") if k in os.environ]}))
 if mode == "crash":
     sys.exit(1)
 port = tomllib.loads((data / "settings.toml").read_text())["basecamp"]["port"]
@@ -140,6 +143,24 @@ def test_runs_current_with_root_and_launcher_version(env):
     wait_for(lambda: env.starts() == ["1.0.0"])
     line = (env.data / "starts.txt").read_text().split()
     assert Path(line[1]) == env.root and line[2] == str(launcher_mod.LAUNCHER_VERSION)
+
+
+def test_basecamp_gets_its_folders_on_sys_path_without_pythonpath(env, monkeypatch, tmp_path):
+    # D-123: the runtime's ._pth makes Python ignore PYTHONPATH, so the launcher puts the
+    # version folder and its lib\ on sys.path itself, runs it isolated, and passes neither
+    # PYTHONPATH nor PYTHONHOME on (the games inherit Basecamp's environment).
+    junk = tmp_path / "junk"
+    (junk / "basecamp").mkdir(parents=True)
+    (junk / "basecamp" / "__init__.py").write_text("raise SystemExit('junk basecamp')\n")
+    monkeypatch.setenv("PYTHONPATH", str(junk))
+    add_version(env.root, "1.0.0")
+    env.launcher.write("current.txt", "1.0.0")
+    env.run()
+    wait_for(lambda: env.starts() == ["1.0.0"])
+    seen = json.loads((env.data / "python-1.0.0.json").read_text())
+    folder = env.root / "versions" / "1.0.0"
+    assert [Path(p) for p in seen["path"]] == [folder, folder / "lib"]
+    assert seen["isolated"] == 1 and seen["argv"] == [] and seen["env"] == []
 
 
 def test_exit_3_swaps_to_pending_and_keeps_it_when_healthy(env):

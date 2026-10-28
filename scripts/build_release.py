@@ -38,6 +38,8 @@ sys.path.insert(0, str(REPO))
 from basecamp import selfupdate  # noqa: E402
 
 PYTHON = "3.13"
+# Launcher 1 sets PYTHONPATH, which the runtime's ._pth file switches off (D-123).
+MIN_LAUNCHER = 2
 _ZIP_TIME = (2020, 1, 1, 0, 0, 0)
 
 
@@ -93,7 +95,8 @@ def write_zip(stage: Path, target: Path) -> None:
 
 
 def build(version: str, key_path: Path, out: Path, src: Path = REPO, lib: Path | None = None,
-          test_key: bool = False, python: str = PYTHON, min_launcher: int = 1) -> Path:
+          test_key: bool = False, python: str = PYTHON,
+          min_launcher: int = MIN_LAUNCHER) -> Path:
     selfupdate.parse_version(version)  # ValueError if it isn't one
     if source_version(src) != version:
         raise SystemExit(f"basecamp/__init__.py says {source_version(src)}, not {version}")
@@ -139,7 +142,7 @@ def main() -> None:
     parser.add_argument("--src", type=Path, default=REPO, help="the source tree to package")
     parser.add_argument("--lib", type=Path, help="use this lib folder instead of pip")
     parser.add_argument("--python", default=PYTHON)
-    parser.add_argument("--min-launcher", type=int, default=1)
+    parser.add_argument("--min-launcher", type=int, default=MIN_LAUNCHER)
     parser.add_argument("--test-key", action="store_true",
                         help="test build: ship the signing key's public key in the zip")
     args = parser.parse_args()

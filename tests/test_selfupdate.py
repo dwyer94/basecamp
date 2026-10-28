@@ -8,6 +8,7 @@ import dataclasses
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sqlite3
 import threading
@@ -27,6 +28,7 @@ from basecamp.selfupdate import SelfUpdater, UpdateError, check_tree, parse_vers
 from basecamp.settings import Settings
 from basecamp.supervisor import Supervisor
 from basecamp.templates import load_templates
+from launcher import LAUNCHER_VERSION
 from tests.conftest import REPO, FakeWebhook, wait_for
 
 _spec = importlib.util.spec_from_file_location("build_release",
@@ -67,8 +69,8 @@ def make_src(tmp: Path, version: str, migration: str | None = None) -> Path:
     shutil.copy2(REPO / "launcher.py", src / "launcher.py")
     shutil.copy2(REPO / "pyproject.toml", src / "pyproject.toml")
     init = src / "basecamp" / "__init__.py"
-    init.write_text(init.read_text().replace('__version__ = "0.1.0"',
-                                             f'__version__ = "{version}"'))
+    init.write_text(re.sub(r'__version__ = "[^"]+"', f'__version__ = "{version}"',
+                           init.read_text()))
     if migration is not None:
         (src / "migrations" / "0099_test.sql").write_text(migration)
     return src
@@ -126,7 +128,7 @@ def root(tmp_path) -> Path:
 
 
 def updater(settings, store, keys, root, **kw) -> SelfUpdater:
-    kw.setdefault("launcher", 1)
+    kw.setdefault("launcher", LAUNCHER_VERSION)
     return SelfUpdater(settings, store, kw.pop("notifier", None), kw.pop("stop", None),
                        root=root, public_key=keys[1].public_key(), current="0.1.0", **kw)
 
@@ -158,7 +160,8 @@ def test_build_makes_a_signed_zip_with_a_manifest(tmp_path, keys, lib):
     out = tmp_path / "unpacked"
     selfupdate.safe_extract(zip_path, out)
     manifest = check_tree(out, "0.2.0")
-    assert manifest["min_launcher"] == 1 and manifest["python"] == "3.13"
+    assert manifest["min_launcher"] == build_release.MIN_LAUNCHER == 2
+    assert manifest["python"] == "3.13"
     assert "basecamp/selfupdate.py" in manifest["files"]
     assert "lib/somedep/__init__.py" in manifest["files"]
     assert "migrations/0001_init.sql" in manifest["files"]
@@ -340,18 +343,26 @@ def test_a_bad_signature_is_refused_and_nothing_is_unpacked(up_settings, store, 
 
 def test_no_release_key_means_no_update(up_settings, store, keys, root, releases):
     releases.publish("0.2.0")
-    u = SelfUpdater(up_settings, store, root=root, launcher=1, current="0.1.0",
+    u = SelfUpdater(up_settings, store, root=root, launcher=LAUNCHER_VERSION, current="0.1.0",
                     public_key=None)
     u._key = None
     view = u.check()
     assert view["status"] == "failed" and "no release key" in view["error"]
 
 
+def test_launcher_1_is_told_to_reinstall(up_settings, store, keys, root, releases):
+    # Releases need launcher 2, the one for the isolated runtime (D-123): a 0.2.0 install
+    # can't update itself into it.
+    releases.publish("0.2.0")
+    view = updater(up_settings, store, keys, root, launcher=1).check()
+    assert "needs launcher 2" in view["error"] and "manual reinstall" in view["error"]
+
+
 def test_refuses_a_newer_launcher_other_python_or_bad_migrations(up_settings, store, keys,
                                                                  root, releases):
-    releases.publish("0.2.0", min_launcher=2)
+    releases.publish("0.2.0", min_launcher=LAUNCHER_VERSION + 1)
     view = updater(up_settings, store, keys, root).check()
-    assert "needs launcher 2" in view["error"]
+    assert f"needs launcher {LAUNCHER_VERSION + 1}" in view["error"]
     releases.publish("0.3.0", python="3.99")
     assert "Python 3.99" in updater(up_settings, store, keys, root).check()["error"]
     releases.publish("0.4.0", migration="DROP TABLE nope;")
@@ -419,7 +430,8 @@ def test_reports_the_update_and_a_rollback(up_settings, store, keys, root, relea
     u.finish_exit()
     # The launcher started 0.2.0: it says so once.
     notifier = Notifier(up_settings, store)
-    new = SelfUpdater(up_settings, store, notifier, root=root, launcher=1, current="0.2.0",
+    new = SelfUpdater(up_settings, store, notifier, root=root, launcher=LAUNCHER_VERSION,
+                      current="0.2.0",
                       public_key=keys[1].public_key())
     (root / "trial.txt").write_text("0.2.0")  # health check not passed yet
     new.report_launcher_results()

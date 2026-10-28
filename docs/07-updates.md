@@ -30,7 +30,7 @@ This is about Basecamp's own code. Game updates are SteamCMD ([02-architecture.m
 
 ```
 C:\Basecamp\
-  python\              Python runtime (changes only with a manual reinstall)
+  python\              Python runtime (changes only with a manual reinstall), isolated by python313._pth
   launcher.py          small, stable; what the scheduled task runs
   versions\
     1.2.0\             previous version (kept for rollback)
@@ -48,7 +48,7 @@ The scheduled task runs `C:\Basecamp\python\pythonw.exe C:\Basecamp\launcher.py 
 
 Launcher rules:
 
-1. Start Basecamp from `versions\<current>\`: `python -s -m basecamp` with `PYTHONPATH=<version>;<version>\lib` and `BASECAMP_ROOT`, `BASECAMP_DATA_DIR`, `BASECAMP_LAUNCHER` (the launcher's version) set (D-56).
+1. Start Basecamp from `versions\<current>\`: `python -I -c <bootstrap>`, where the bootstrap puts `<version>` and `<version>\lib` at the front of `sys.path` and runs the `basecamp` package as `__main__`, with `BASECAMP_ROOT`, `BASECAMP_DATA_DIR`, `BASECAMP_LAUNCHER` (the launcher's version) set and `PYTHONPATH`/`PYTHONHOME` removed (D-56). Not `PYTHONPATH`: the runtime's `python313._pth` makes Python ignore it, the registry and user site-packages, so nothing outside `python\` and the version folder can get in (D-123). Launcher 1 (0.2.0 and older) did use `PYTHONPATH`.
 2. If Basecamp exits with **code 3** ("update ready") and `pending.txt` names an unpacked version: move current → previous, pending → current, mark it on trial (`trial.txt`), start it. Without a usable `pending.txt`, just start the same version again.
 3. **Health check:** a version on trial must answer `http://127.0.0.1:<port>/healthz` with its own version within 60 s. If it exits or doesn't, kill Basecamp's process (only that one, never the tree, so game hosts live), put `db-backups\before-<v>.db` back as `basecamp.db` (removing `-wal`/`-shm`), switch back to the previous version, start it, and write `update-failed.json` (Basecamp shows it on the dashboard and posts to Discord). `trial.txt` survives a launcher restart, so a reboot in the middle still checks.
 4. Any other exit: restart after 5 s, doubling up to 5 min while it keeps failing (reset after 5 min up). The 5-minute watchdog task only restarts the launcher itself.
@@ -56,7 +56,7 @@ Launcher rules:
 
 Basecamp, for its part, exits when its launcher is gone (D-110): ending the task ends only the launcher, and a Basecamp left behind would hold the port so the next launcher couldn't start one. Its games keep running, and the 5-minute trigger brings Basecamp back.
 
-The launcher is deliberately small (~300 lines, standard library only) so it almost never needs changing. If a release needs a newer launcher, its manifest says `min_launcher: 2`; Basecamp then says "this update needs a manual reinstall" instead of installing.
+The launcher is deliberately small (~300 lines, standard library only) so it almost never needs changing. If a release needs a newer launcher, its manifest says `min_launcher: 2`; Basecamp then says "this update needs a manual reinstall" instead of installing. Since 0.2.1 every release says 2 (`build_release.py`'s `MIN_LAUNCHER`): launcher 2 is the one that runs on the isolated runtime (D-123).
 
 ## Game servers during an update
 
@@ -119,6 +119,8 @@ Releases are built on the dev PC rather than GitHub Actions so the signing key n
 ## Updating the Python runtime or launcher
 
 Rare. Run `scripts\install.ps1` again in an admin PowerShell on the prod PC. It replaces `python\` and `launcher.py`, keeps `versions\`, data and settings. Running hosts use `python\pythonw.exe`, so the files are in use while any server runs: `install.ps1` refuses to replace the runtime while anything runs from it, so stop the servers from Basecamp first (D-82).
+
+An install from before 0.2.1 (launcher 1, no `._pth`) is the one case where a re-run installs a release: Basecamp can't update itself out of it, so `install.ps1` installs the latest release the way an update would (DB copy, old version kept, new one on trial), then writes `python313._pth`. Only the launcher and Basecamp must be stopped for that; the games can keep running. The steps are in [04-deployment.md](04-deployment.md), "Updating an install from before 0.2.1" (D-123).
 
 ## Testing on the dev PC
 
