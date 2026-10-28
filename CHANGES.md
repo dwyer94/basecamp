@@ -3,9 +3,12 @@
 Release notes. `scripts\release.ps1 <version>` publishes the section for that version as the
 GitHub release's notes, which the admin dashboard shows next to its Install button.
 
-## 0.2.0 (unreleased)
+## 0.1.0
 
-RCON and Palworld's REST API, and game templates checked by running every server.
+First release: the core supervisor with per-game host processes, the admin and friend
+pages over Tailscale, templates, SteamCMD installs and one-click updates, save backups,
+crash restart, Discord messages, the config editor, the settings page, self-update from
+GitHub Releases through the launcher, RCON and Palworld's REST API.
 
 - **RCON** (V Rising, Palworld and many others) and **Palworld's REST API** for stop
   steps, warnings to players and the console. The console's command box can send by stdin,
@@ -27,15 +30,5 @@ RCON and Palworld's REST API, and game templates checked by running every server
     console and ignores or dies on every stop signal), so Basecamp ends it; the notes say so.
   - **Windrose**: starts the Shipping exe with `-log` from the install folder, which gives
     it a console so Ctrl+Break saves; real ready line, config file and save folder.
-- Database: migration 0006 adds each server's REST port.
-
-## 0.1.0
-
-First release: the core supervisor with per-game host processes, the admin and friend
-pages over Tailscale, templates, SteamCMD installs and one-click updates, save backups,
-crash restart, Discord messages, the config editor, the settings page, and self-update from
-GitHub Releases through the launcher.
-
-Game templates: Palworld, Enshrouded and RuneScape: Dragonwilds are checked against running
-servers (exes, ports, ready lines, config and save folders; graceful stops still unchecked).
-V Rising and Windrose come from the guides only, with what's unchecked in their notes.
+- Basecamp exits when its launcher is gone, so ending the scheduled task never leaves one
+  holding the port; game servers keep running.
