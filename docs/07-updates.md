@@ -124,6 +124,15 @@ Rare. Run `scripts\install.ps1` again in an admin PowerShell on the prod PC. It 
 
 `tools\e2e_selfupdate.py --root C:\BasecampTest --work <scratch folder>` runs the whole flow without GitHub or the real key: a throwaway key, a local fake release server (`tools\fake_releases.py`), real vendored dependencies, the launcher on the base Python, and a fake game that must keep running through an update (v0.1.0 → v0.2.0 with a new migration), a broken v0.3.0 that must roll back by itself, and a v0.4.0 with a bad signature that must be refused.
 
+## Rehearsal with real GitHub releases (2026-10-28)
+
+v0.1.0 and v0.2.0 were published with `release.ps1` and the real key, and the whole path ran on the dev PC against GitHub:
+
+- `install.ps1 -SkipTask` into a test folder on port 8151, with no local zip: Python from python.org, v0.1.0 from GitHub, signature and manifest checked. `/healthz` and `verify.ps1` passed.
+- The first check stored GitHub's (weak) ETag, and a repeat request with it got a 304. Unauthenticated, GitHub counts a 304 against the 60/hour limit too; at one check per 6 h that doesn't matter.
+- With a fake game running, Check now found v0.2.0. The download followed GitHub's 302 to `release-assets.githubusercontent.com`, then the signature, hashes and migrations were checked, and the banner offered Install. The swap and health check took about a second. The game and its host kept their PIDs, and the console kept its history and stdin. The audit log has `update.check` and `update.install 0.1.0 -> 0.2.0`.
+- `uninstall.ps1 -RemoveData` removed it all.
+
 ## First install
 
 `install.ps1` downloads the latest release (same signature check) instead of copying from the repo, so the first install and later updates use the same package.
