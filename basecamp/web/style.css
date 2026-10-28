@@ -92,6 +92,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 .notice progress { display: block; width: 100%; margin-top: 6px; }
 .command { display: flex; gap: 8px; margin-top: 8px; }
 .command input { flex: 1; min-width: 0; }
+.command select { flex: none; width: auto; }
 input, select, textarea {
   font: inherit; font-size: 16px; padding: 9px 10px; border-radius: 8px;
   border: 1px solid var(--line); background: var(--card); color: var(--text); width: 100%;

@@ -3,6 +3,32 @@
 Release notes. `scripts\release.ps1 <version>` publishes the section for that version as the
 GitHub release's notes, which the admin dashboard shows next to its Install button.
 
+## 0.2.0 (unreleased)
+
+RCON and Palworld's REST API, and game templates checked by running every server.
+
+- **RCON** (V Rising, Palworld and many others) and **Palworld's REST API** for stop
+  steps, warnings to players and the console. The console's command box can send by stdin,
+  RCON or REST and shows the answer. Set each server's RCON or REST port and password on its
+  form; passwords stay in the data folder's `secrets.toml` and are never shown again.
+  RCON and REST only talk to games on the same PC.
+- An RCON or REST problem (off in the game, wrong password, no answer) never holds up a
+  stop: the console says why and the stop goes on to its next step.
+- Templates, checked by running each dedicated server under Basecamp and watching it stop:
+  - **Palworld**: starts `PalServer-Win64-Shipping-Cmd.exe` directly, so its output reaches
+    the console. With the REST API on, a stop saves and shuts down cleanly and the warning
+    is a REST announce. Without it, Ctrl+Break ends it without saving (it autosaves every
+    30 s). New port: TCP 8212 (REST).
+  - **Enshrouded**: reads the console instead of the log file (no more doubled lines);
+    Ctrl+Break saves.
+  - **V Rising**: real ready line, ports and settings files; Ctrl+Break saves; warning by
+    RCON announce.
+  - **RuneScape: Dragonwilds**: there is no way to stop it gracefully (its server has no
+    console and ignores or dies on every stop signal), so Basecamp ends it; the notes say so.
+  - **Windrose**: starts the Shipping exe with `-log` from the install folder, which gives
+    it a console so Ctrl+Break saves; real ready line, config file and save folder.
+- Database: migration 0006 adds each server's REST port.
+
 ## 0.1.0
 
 First release: the core supervisor with per-game host processes, the admin and friend

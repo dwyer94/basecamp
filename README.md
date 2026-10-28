@@ -13,7 +13,7 @@ Basecamp is a small Windows app that runs on an always-on Windows PC (the "host 
 - Start, stop, restart from the web page. Stop is graceful when the game supports it (save, then quit), and can warn players a few minutes ahead, with a countdown and **Stop now**.
 - **One-click update** for Steam servers: stop, back up the save, run SteamCMD, start again. An **update available** badge when Steam has a newer build.
 - **Adding a game**: **Add server**, pick the game's template and type an install folder (an empty or new one for a fresh install, or an existing install to take over). A game without a template: leave it on **Detect** for an existing install, or fill in the form by hand with type **steam** and the Steam **App ID** of its dedicated server (SteamDB lists them; it's not the game's own ID). Then **Install** on the server's page downloads it with SteamCMD.
-- **Live console**: watch server output and type commands into it (stdin, or RCON for games that use it).
+- **Live console**: watch server output and type commands into it (stdin, RCON, or Palworld's REST API). Stops and warnings to players use the same channels.
 - **Copy join address** button: one click copies `<tailscale-ip>:<port>` (or a nicer line for Discord).
 - **Config file editor**: each server lists its config files (JSON, INI, etc.); edit them in the page, with a backup kept on every save.
 - **Crash auto-restart**, with a limit so a broken server doesn't loop forever.
@@ -71,4 +71,6 @@ webhook_url = "http://127.0.0.1:8159/api/webhooks/1/test"
 
 - Self-update: `python -m basecamp` checks for releases but can't install them (no launcher). To try the whole flow, `tools\e2e_selfupdate.py --root C:\BasecampTest --work <scratch folder>` builds test releases with a throwaway key, serves them from [tools/fake_releases.py](tools/fake_releases.py) and runs them under the launcher ([docs/07-updates.md](docs/07-updates.md)). Releases are made with `scripts\release.ps1 <version>` (owner only; it publishes to GitHub after asking).
 
-Tests run real processes against [tools/fake_server.py](tools/fake_server.py) and [tools/fake_steamcmd.py](tools/fake_steamcmd.py), never real games or SteamCMD.
+- RCON and REST: set a server's RCON or REST port and password on its form (the password goes to `.\data\secrets.toml`). To try them without a game, run `tools\fake_rcon.py` or `tools\fake_rest.py` (`--mode slow`, `drop`, ... for the bad cases) and point the server's port at it.
+
+Tests run real processes against [tools/fake_server.py](tools/fake_server.py) and [tools/fake_steamcmd.py](tools/fake_steamcmd.py), [tools/fake_rcon.py](tools/fake_rcon.py) and [tools/fake_rest.py](tools/fake_rest.py), never real games or SteamCMD.

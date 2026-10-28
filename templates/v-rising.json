@@ -13,7 +13,7 @@
   "join_port_label": "game",
   "log_source": "file",
   "log_file": "logs\\VRisingServer.log",
-  "ready_pattern": "",
+  "ready_pattern": "[Server] Startup Completed",
   "ready_after_s": 90,
   "stop_recipe": [
     {"action": "ctrl_break", "wait_s": 60}
@@ -25,10 +25,10 @@
   ],
   "save_dir": "save-data\\Saves",
   "rcon_port": 25575,
-  "notes": "With -persistentDataPath, the server reads its settings from save-data\\Settings\\ and saves to save-data\\Saves\\v4\\<saveName>\\. Copy ServerHostSettings.json and ServerGameSettings.json there from VRisingServer_Data\\StreamingAssets\\Settings\\ (those are defaults, overwritten by updates). Command-line options win over the files. RCON is off until Rcon.Enabled and a password are set in ServerHostSettings.json. Its shutdown command is 'shutdown <message times> <message>'. Not yet checked on a real install: the ready line, the stop recipe, the ports and the announce warning. 1829350 is the dedicated server; 1604030 is the V Rising game, not the server.",
+  "notes": "With -persistentDataPath, the server reads its settings from save-data\\Settings\\ and saves to save-data\\Saves\\v4\\<saveName>\\ (AutoSave_<n>.save.gz). The first start doesn't write the settings there: copy ServerHostSettings.json and ServerGameSettings.json from VRisingServer_Data\\StreamingAssets\\Settings\\ (those are defaults, overwritten by updates; UTF-8 with a BOM, CRLF). Command-line options win over the files (the log says which). Ctrl+Break saves the world on exit ('SaveOnExit() - Saving the world on exit!') and exits with code 0 within a second or two. RCON is off until Rcon.Enabled and a Password are set in ServerHostSettings.json; then put the same password in the server's RCON password, for the announce warning and console commands (help lists them). Don't use RCON's shutdown in a stop recipe: it saves, but the server then hangs instead of exiting, and its message stops at the first space. Besides UDP 9876 and 9877 the server opens one random UDP port per start. The game's HTTP API (API.Enabled, port 9090) is off by default. Crash dumps go to AppData\\LocalLow\\Stunlock Studios\\VRisingServer\\ in the user's profile. 1829350 is the dedicated server; 1604030 is the V Rising game, not the server.",
   "docs": [
     "https://github.com/StunlockStudios/vrising-dedicated-server-instructions/blob/master/1.1.x-pc/INSTRUCTIONS.md",
     "https://steamdb.info/app/1829350/"
   ],
-  "unverified": ["ready_pattern", "stop_recipe", "ports", "stop_warning"]
+  "unverified": []
 }

@@ -3,29 +3,28 @@
   "name": "Windrose",
   "kind": "steam",
   "steam_app_id": 4129620,
-  "exe": "WindroseServer.exe",
-  "args": "",
-  "real_exe_name": "WindroseServer-Win64-Shipping.exe",
+  "exe": "R5\\Binaries\\Win64\\WindroseServer-Win64-Shipping.exe",
+  "args": "R5 -log",
+  "working_dir": ".",
   "ports": [
-    {"port": 7777, "protocol": "udp", "label": "game"},
-    {"port": 7777, "protocol": "tcp", "label": "game-tcp"}
+    {"port": 7777, "protocol": "udp", "label": "direct"},
+    {"port": 7777, "protocol": "tcp", "label": "direct-tcp"}
   ],
-  "join_port_label": "game",
+  "join_port_label": "direct",
   "log_source": "file",
   "log_file": "R5\\Saved\\Logs\\R5.log",
-  "ready_pattern": "",
+  "ready_pattern": "Server registration finished successfully",
   "ready_after_s": 60,
   "stop_recipe": [
     {"action": "ctrl_break", "wait_s": 60}
   ],
   "config_files": ["R5\\ServerDescription.json"],
   "save_dir": "R5\\Saved\\SaveProfiles",
-  "notes": "By default friends join with the invite code that the server prints and writes to ServerDescription.json (InviteCode), with no fixed port. The port 7777 entries only matter with UseDirectConnection=true (DirectConnectionServerPort). Guides disagree on where ServerDescription.json lives (the install folder or R5\\), so check yours. Each world's gameplay settings are in WorldDescription.json under R5\\Saved\\SaveProfiles\\Default\\RocksDB*\\<version>\\Worlds\\<world id>\\. Stop the server before editing either file. Not yet checked on a real install beyond the app ID (4129620, Windrose Dedicated Server; it can also be installed from the Steam client's library, under steamapps\\common\\): the real exe, the ports, the log file, the ready line, the stop recipe and where ServerDescription.json lives.",
+  "notes": "Friends join with the invite code the server prints in its log ('Server Connection Info') and writes to R5\\ServerDescription.json (InviteCode). By default it opens no ports at all (P2P through Windrose's connection service), so the port 7777 entries only matter with UseDirectConnection=true (DirectConnectionServerPort, TCP and UDP). ServerDescription.json (UTF-8, CRLF) is in R5\\, written on the first start; each world's gameplay settings are WorldDescription.json under R5\\Saved\\SaveProfiles\\Default\\RocksDB_v2\\<version>\\Worlds\\<world id>\\. Stop the server before editing either file (the install's DedicatedServer.md lists the fields). Basecamp starts the Shipping exe with -log, as the developers' StartServerForeground.bat does: WindroseServer.exe and the Shipping exe are Windows GUI programs, and only -log gives the server a console that Ctrl+Break can reach. On Ctrl+Break it logs 'Engine exit requested (reason: ConsoleCtrl RequestExit)', syncs its backups ('Finished sync backups. Result true') and exits, with exit code 0xC000013A even so. Without -log the stop can only be a kill. -log also shows that console as a window on the desktop of whoever is logged in; under Basecamp's startup task nobody sees it. Worlds are RocksDB folders, with zipped copies in R5\\Saved\\SaveProfiles\\Default\\RocksDB_v2_Backups\\. The working folder must be the install folder, or the log file isn't found.",
   "docs": [
     "https://steamdb.info/app/4129620/",
     "https://steamcommunity.com/sharedfiles/filedetails/?id=3777107389",
     "https://hostingbuff.com/guides/windrose-dedicated-server-setup.html"
   ],
-  "unverified": ["real_exe_name", "ports", "log_file", "ready_pattern", "stop_recipe",
-                 "config_files"]
+  "unverified": ["ports"]
 }

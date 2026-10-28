@@ -74,7 +74,7 @@ class CpuSampler:
 
 def admin_view(settings: Settings, server: Server, status: ServerStatus,
                cpu: CpuSampler | None = None, restart_at: float | None = None,
-               steam: dict | None = None) -> dict:
+               steam: dict | None = None, remote: dict | None = None) -> dict:
     view = friend_view(settings, server, status)
     view.update(
         config=server.model_dump(mode="json", exclude={"id"}),
@@ -88,6 +88,7 @@ def admin_view(settings: Settings, server: Server, status: ServerStatus,
         restart_at=restart_at,  # a crash restart is pending (R-05)
         stop_warning=status.warning,  # a stop countdown: {"kind", "stop_at"} (R-25)
         steam=steam,  # build ID, a queued or running install/update, the last run (R-30)
+        remote=remote,  # console channels and whether the RCON/REST passwords are set
     )
     return view
 

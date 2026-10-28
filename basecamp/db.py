@@ -22,8 +22,9 @@ _MIGRATION_NAME = re.compile(r"^(\d{4})_[\w-]+\.sql$")
 _PLAIN_COLUMNS = (
     "name", "kind", "install_dir", "exe_path", "args", "working_dir", "join_port",
     "start_on_boot", "boot_order", "steam_app_id", "steam_beta", "steam_validate", "save_dir",
-    "log_source", "log_file", "rcon_host", "rcon_port", "real_exe_name", "ready_pattern",
-    "ready_after_s", "min_free_ram_mb", "notes", "template_id", "backup_every_h", "backup_keep",
+    "log_source", "log_file", "rcon_host", "rcon_port", "rest_port", "real_exe_name",
+    "ready_pattern", "ready_after_s", "min_free_ram_mb", "notes", "template_id",
+    "backup_every_h", "backup_keep",
 )
 _JSON_COLUMNS = ("config_files", "notify_off", "stop_warning")
 

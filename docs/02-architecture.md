@@ -59,7 +59,9 @@ basecamp/
   hostclient.py      Basecamp's side of the host control channel
   winctrl.py         fallback Ctrl+Break helper (bare adopted games)
   console.py         in-memory console per server (mirrors the host's lines), subscribers
-  rcon.py            Source RCON client (Palworld, Satisfactory-style, many others)
+  rcon.py            Source RCON client, stdlib (V Rising, Palworld and many others; D-92, D-93)
+  rest.py            Palworld's REST API client, stdlib (D-95)
+  remote.py          RCON/REST passwords (secrets.toml) and kept connections, per server (D-97)
   steam.py           SteamCMD runner and queue, install and update flow, build ID (D-41..D-47)
   backups.py         zip save folders, schedule, retention, restore (D-35, D-36)
   configs.py         config file guard (R-43), encodings, copies kept on save, restore (D-48..D-51)
@@ -74,6 +76,7 @@ migrations/          numbered SQL files, add-only
 templates/           built-in game templates, one JSON per game (docs/08-templates.md)
 tools/fake_server.py fake game server for tests: prints, reads stdin, binds a UDP port, can "crash"
 tools/fake_steamcmd.py, fake_discord.py   fake SteamCMD (installs, updates, app_info_print) and webhook
+tools/fake_rcon.py, fake_rest.py   fake RCON server and Palworld REST API: bad password, slow, dropped, multi-packet
 tools/make_icons.py  draws the home-screen PNG icons in basecamp/web/ (R-72)
 tests/
 scripts/             release.ps1 + build_release.py and new-signing-key.ps1 (dev PC), later install / uninstall for the prod PC
@@ -87,7 +90,7 @@ All under `C:\BasecampData\` (dev PC: `.\data\`):
 | Path | What |
 |---|---|
 | `basecamp.db` | SQLite: servers, settings, event history, audit log |
-| `secrets.toml` | Discord webhook URLs (D-37), later RCON passwords. Kept out of the repo |
+| `secrets.toml` | Discord webhook URLs (D-37), RCON and REST passwords per server (D-97). Kept out of the repo |
 | `boot.json` | The PC boot time Basecamp last started under, for the "started after a restart" message |
 | `logs\basecamp.log` | The app's own log, rotated |
 | `logs\servers\<id>\console.log` | Each server's output, rotated (10 MB × 5). SteamCMD output lands here too |
@@ -171,12 +174,17 @@ Built in Phase 3 (`basecamp/steam.py`).
 - Every run is a row in `steam_runs` (who, result, builds before and after, backup). A failed or interrupted run marks the server until a later run succeeds; Start still works, after a confirm (D-43).
 - The SteamCMD path is `steamcmd_path` in the data folder's `settings.toml` (D-47). Tests and the dev PC use `tools/fake_steamcmd.py`.
 
-## RCON and stdin commands
+## Console commands: stdin, RCON and REST
 
-- **stdin**: the host writes the command plus `\r\n` to the game's pipe. Works after a Basecamp restart too; not for a bare-adopted game whose host is gone.
-- **RCON**: Source RCON protocol over TCP to `127.0.0.1:<rcon port>`. Works for Palworld and many Source/Unreal-based servers. Not for Satisfactory (its own HTTPS API, Later) or Valheim (no RCON without mods). The console's command box sends via RCON if configured, else stdin.
-- Stop recipes and stop warnings (R-25) use the same two channels.
-- **Not built yet:** the RCON client. RCON stop steps and warnings are skipped with a console note (D-18, D-61), so stops end with Ctrl+Break.
+Three channels, used by the console's command box, stop recipe steps and stop warnings (D-94):
+
+- **stdin**: the host writes the command plus `\r\n` to the game's pipe. Works after a Basecamp restart too; not for a bare-adopted game whose host is gone, and not for games whose exe has no console (Windows GUI programs such as Dragonwilds' server).
+- **RCON** (`basecamp/rcon.py`): Source RCON over TCP to `<rcon host>:<rcon port>`, by default `127.0.0.1`. V Rising, Palworld (deprecated there) and many others; not Satisfactory (its own HTTPS API, Later) or Valheim (no RCON without mods). One connection per server is kept and logged in once; a dead one is reconnected once; a timeout is never retried (D-92). Multi-packet answers are read until a packet that isn't full and a short quiet spell; packet id 0 answers count (Palworld, D-93).
+- **REST** (`basecamp/rest.py`): Palworld's REST API, HTTP basic auth on `<rcon host>:<rest port>`, with commands written as lines (`announce <text>`, `save`, `shutdown <s> [text]`, `info`, ...; D-95).
+- RCON and REST only talk to this PC unless `remote_console_allow_remote = true` (D-92). Each command has `remote_timeout_s` (5 s).
+- Passwords are per server in `secrets.toml` (`[rcon.servers]`, `[rest.servers]`), set from the server form through `PUT /api/servers/{id}/remote`; the page only learns whether one is set (D-97).
+- The command box offers the channels the server has (a port and a password), defaulting to RCON, else REST, else stdin. The command and its answer show in the console.
+- A failed RCON or REST step or warning is logged and noted in the console with the reason, and the stop goes on with the next step at once: it never blocks a stop (D-96).
 
 ## API
 
@@ -189,8 +197,9 @@ Built in Phases 2 to 5: everything here except `/api/events`.
 | POST | `/api/servers` · PUT/DELETE `/api/servers/{id}` | admin |
 | POST | `/api/servers/{id}/start` · `/stop` · `/restart` · `/kill` · `/update` · `/install` | admin (stop/restart/kill answer 202, D-32; update/install answer 202 with the run id and queue; start/stop/restart answer 409 while an install or update runs, D-41, or a stop warning counts down, D-62). `/stop?now=true` skips the warning, and during a countdown skips the rest of it |
 | POST | `/api/servers/{id}/steam/cancel` · `/steam/check` (build check, 202) · GET `/api/servers/{id}/steam/runs/{run}/log` · GET `/api/steam` (SteamCMD path and queue) | admin |
-| POST | `/api/servers/{id}/command` · GET `/api/servers/{id}/console?after=` | admin |
-| WS | `/ws/servers/{id}/console?after=` | admin (replay + live, send `{"text": ...}`) |
+| POST | `/api/servers/{id}/command` (`{text, channel}`: `stdin`, `rcon`, `rest`, or empty for the default) · GET `/api/servers/{id}/console?after=` | admin |
+| PUT | `/api/servers/{id}/remote` (`rcon_password`, `rest_password`; the answer and the server view say only which are set, D-97) | admin |
+| WS | `/ws/servers/{id}/console?after=` | admin (replay + live, send `{"text": ..., "channel": ...}`) |
 | WS | `/ws/status` | everyone (status changes; friends get trimmed fields) |
 | GET | `/api/servers/{id}/configs` (the list, with any guard refusal per entry) · GET/PUT `/api/servers/{id}/configs/{n}` (read: text, encoding, hash, copies; save: `{text, base_sha256, force}`, 400 bad JSON, 403 guard, 409 changed on disk) | admin |
 | GET | `/api/servers/{id}/configs/{n}/copies/{name}` · POST `.../copies/{name}/restore` | admin |
@@ -213,6 +222,8 @@ Two pages, both phone-first (one column, big buttons, works at 375 px wide):
 
 ## Testing on the dev PC
 
-- `tools/fake_server.py` acts like a game server: prints lines, answers `save`/`quit` on stdin, speaks minimal RCON, binds a UDP port, and can be told to crash or hang. Tests run the real supervisor against it.
+- `tools/fake_server.py` acts like a game server: prints lines, answers `save`/`quit` on stdin, binds a UDP port, and can be told to crash or hang. Tests run the real supervisor against it.
+- `tools/fake_rcon.py` and `tools/fake_rest.py` stand in for a game's RCON and REST API in tests (and by hand): wrong password, slow answers, dropped connections, multi-packet and id-0 answers.
+- The real game servers were run under Basecamp on the dev PC once, to check the templates (D-98); tests never run them.
 - SteamCMD runner tested with a fake `steamcmd.exe` (a script printing recorded output) plus one manual real run with a small free dedicated server.
 - Dev server on `127.0.0.1:8150`, data in `.\data\`.

@@ -92,12 +92,12 @@ def test_read_manifests(tmp_path):
         2394010, "Palworld Dedicated Server", "999")
 
 
-def test_stop_warning_defaults_are_unverified_and_off(tmp_path):
+def test_stop_warnings_are_off_until_the_owner_turns_them_on(tmp_path):
     loaded = load_templates(TEMPLATES_DIR, tmp_path)
-    for game, command in (("palworld", "Broadcast"), ("v-rising", "announce")):
+    for game, action in (("palworld", "rest"), ("v-rising", "rcon")):
         template = loaded.get(game).template
-        assert template.stop_warning.command.startswith(command)
+        assert template.stop_warning.action == action
+        assert template.stop_warning.command.startswith("announce ")
         assert template.stop_warning.minutes == []  # the owner turns it on per server
-        assert "stop_warning" in template.unverified
-        assert draft(template, r"C:\x")["stop_warning"]["command"].startswith(command)
+        assert draft(template, r"C:\x")["stop_warning"]["command"].startswith("announce ")
     assert draft(loaded.get("enshrouded").template, "")["stop_warning"] is None

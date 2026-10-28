@@ -6,6 +6,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -288,12 +289,14 @@ def test_draft_from_template_then_save(client, tmp_path):
     res = client.post("/api/drafts", json={"template_id": "palworld",
                                            "install_dir": str(install)}).json()
     draft = res["draft"]
-    assert draft["exe_path"] == str(install / "PalServer.exe")
+    shipping = Path("Pal", "Binaries", "Win64", "PalServer-Win64-Shipping-Cmd.exe")
+    assert draft["exe_path"] == str(install / shipping)
+    assert draft["rest_port"] == 8212 and draft["rcon_port"] == 25575
     assert draft["config_files"] == [
         str(install / "Pal" / "Saved" / "Config" / "WindowsServer" / "PalWorldSettings.ini")]
     assert draft["join_port"] == 8211 and draft["template_id"] == "palworld"
     assert any("doesn't exist" in m for m in res["messages"])
-    assert "stop_recipe" in res["unverified"]
+    assert res["unverified"] == []  # checked by running it (D-98)
     saved = client.post("/api/servers", json=draft)
     assert saved.status_code == 201 and saved.json()["config"]["template_id"] == "palworld"
 
@@ -301,7 +304,7 @@ def test_draft_from_template_then_save(client, tmp_path):
     fresh = client.post("/api/drafts", json={"template_id": "palworld",
                                              "install_dir": str(tmp_path / "New")})
     assert fresh.status_code == 200
-    assert fresh.json()["draft"]["exe_path"] == str(tmp_path / "New" / "PalServer.exe")
+    assert fresh.json()["draft"]["exe_path"] == str(tmp_path / "New" / shipping)
 
 
 def test_import_existing_install_reads_appmanifest(client, tmp_path):

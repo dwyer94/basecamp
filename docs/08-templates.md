@@ -35,7 +35,8 @@ Paths are relative to the server's **install folder**, unless they start with a 
 | `stop_warning` | | A command that tells players a stop is coming, see below. Optional |
 | `config_files` | | Files the admin may edit from the page (Phase 5) |
 | `save_dir` | | The folder to back up (Phase 4) |
-| `rcon_port` | | RCON port, if the game has RCON (password goes in `secrets.toml`, never here) |
+| `rcon_port` | | RCON port, if the game has RCON (the password is set on the server's form and kept in `secrets.toml`, never here) |
+| `rest_port` | | Port of the game's REST API, if it has one Basecamp speaks (Palworld's, D-95). Password as for RCON |
 | `min_free_ram_mb` | | Warn before starting if free RAM is below this (never blocks) |
 | `notes` | | Setup tips shown on the Templates page and copied into the server's notes |
 | `docs` | | Links to where the facts came from. Built-in templates must have at least one |
@@ -49,15 +50,18 @@ Each step does something, then waits up to `wait_s` seconds for the server to ex
 
 ```json
 "stop_recipe": [
-  {"action": "rcon", "command": "Save", "wait_s": 15},
-  {"action": "stdin", "command": "quit", "wait_s": 60},
-  {"action": "ctrl_break", "wait_s": 30}
+  {"action": "rest", "command": "save", "wait_s": 5},
+  {"action": "rest", "command": "shutdown 5 Server is shutting down", "wait_s": 60},
+  {"action": "ctrl_break", "wait_s": 10}
 ]
 ```
 
 - `stdin`: types `command` into the server's console. Only for games that read commands from their console window.
-- `rcon`: sends `command` over RCON. Until Basecamp's RCON client is built these steps are skipped (no wait), so always end with a `ctrl_break` step.
-- `ctrl_break`: Ctrl+Break, like pressing Ctrl+C in the server's console window. Most dedicated servers save and quit on it, but check.
+- `rcon`: sends `command` over RCON (`rcon_port`, and the server's RCON password).
+- `rest`: sends `command` to the game's REST API (`rest_port`, the server's REST password). Palworld's commands: `announce <text>`, `save`, `shutdown <seconds> [text]`, `stop`, and `info`, `players`, `metrics`, `settings` (D-95).
+- `ctrl_break`: Ctrl+Break to the server's console. Some servers save and quit on it (V Rising, Enshrouded, Windrose with `-log`); Unreal servers often just end without saving (Palworld, Dragonwilds). It only reaches an exe that has a console: a Windows GUI program (many Unreal `-Win64-Shipping.exe` servers) has none unless it is started with `-log`. Check with a watched stop.
+
+A step that can't be done is skipped without waiting, with the reason in the console: no stdin after adoption, no port or password for RCON or REST, a wrong password, no answer within 5 s (D-96). So an RCON or REST problem never holds up a stop; end the recipe with a `ctrl_break` step anyway.
 
 ### Stop warning
 
@@ -67,11 +71,11 @@ Before a stop, restart or update started from Basecamp (never a crash restart), 
 "stop_warning": {"action": "rcon", "command": "announce Server restarting in {minutes} min", "minutes": []}
 ```
 
-- `action`: `stdin` or `rcon`, as in the stop recipe.
+- `action`: `stdin`, `rcon` or `rest`, as in the stop recipe.
 - `command`: the game's broadcast or announce command. Other braces are left as they are.
 - `minutes`: the lead time and reminders, e.g. `[5, 1]`. Leave it empty in a template: the warning is then off until the admin types the minutes into the server's form, so a game's default never delays anyone's stop by surprise.
 
-If the warning can't be sent (no stdin after adoption, RCON not available), the countdown ends and the stop goes ahead at once. Until Basecamp's RCON client is built, `rcon` warnings are skipped like `rcon` stop steps. Put `stop_warning` in `unverified` until you've seen the message in game.
+If the warning can't be sent (no stdin after adoption, no RCON or REST password, no answer), the countdown ends and the stop goes ahead at once. Put `stop_warning` in `unverified` until you've seen the message arrive: in game, or in the server's own log.
 
 ## Finding the facts for a new game
 
@@ -82,7 +86,7 @@ If the warning can't be sent (no stdin after adoption, RCON not available), the 
 4. **Ports.** The game's official server guide is best. To check, while it runs: `Get-NetUDPEndpoint -OwningProcess <pid>` and `Get-NetTCPConnection -State Listen -OwningProcess <pid>` in PowerShell. Unreal games often start a second exe (step 3): check that one's ports, not the launcher's. Leave out loopback-only listeners (`127.0.0.1`) and high random ports that change each start; those aren't the game's. A mod can add a port of its own (Palworld's PalDefender REST API): put it in the server's ports, not the template.
 5. **Ready line.** Watch the console (or log file) during that first start and copy a line that appears only once the server accepts players. Basecamp looks for it anywhere in a line, so leave out the timestamp or `[I 00:00:01,186]` prefix the log puts in front.
 6. **Output.** If the console window shows output but a pipe would be empty, or the game says it writes `...\Logs\<name>.log`, use `"log_source": "file"`.
-7. **Graceful stop.** Press Ctrl+C in its console window: does it save and exit within a minute? Does it accept `quit`/`stop`/`shutdown` typed into the console? Does it have RCON? Write the recipe from that.
+7. **Graceful stop.** Try it through Basecamp (below): a `ctrl_break` step, `stdin` commands like `quit`/`stop`/`shutdown`, and RCON or REST commands if the game has them. Note the save file's time before, and check it changes during the stop and that the game exits by itself rather than being killed. If Ctrl+Break can't be sent ("Still running after the stop recipe; killing" straight away), the exe has no console: look for a `-log` option. Write the recipe from what worked.
 8. **Config and saves.** Note which files the first start created (settings `.ini`/`.json`, the save folder). Many Unreal games use `<Project>\Saved\Config\WindowsServer\` and `<Project>\Saved\SaveGames\`; some put saves in `%LOCALAPPDATA%` or `%USERPROFILE%\AppData\LocalLow\`. If the game itself was ever played on that PC, `%LOCALAPPDATA%\<Project>\Saved\` may be the game client's: the server's is the one whose files change while the server runs.
 
 Anything you got from a guide but didn't see yourself goes in `unverified`.
@@ -104,12 +108,12 @@ Anything you got from a guide but didn't see yourself goes in `unverified`.
 
 ## Built-in templates and what's not yet checked
 
-Researched from official guides (links in each file's `docs`), then checked on the host PC for Palworld, Enshrouded and Dragonwilds (October 2026, read-only: process list, open ports, config and save folders, logs; D-88). V Rising and Windrose weren't installed the usual way there, so they are still guide-only. Everything in `unverified` needs checking before relying on it.
+Researched from official guides (links in each file's `docs`), checked read-only on the host PC for Palworld, Enshrouded and Dragonwilds (D-88), then run for real under Basecamp on the dev PC, all five (October 2026, D-98): start, ports from the process's sockets, ready line, console, config and save files, and stops watched against the save files. Everything in `unverified` needs checking before relying on it.
 
-| Game | App ID | Checked on the host PC | Unverified |
+| Game | App ID | Checked by running it under Basecamp | Unverified |
 |---|---|---|---|
-| Palworld | 2394010 | exe and `real_exe_name` (Shipping-Cmd), UDP 8211 and 27015, ready line, config file (plain text, no BOM), save folder | `stop_recipe` (does Ctrl+Break save?), `stop_warning` (RCON `Broadcast`; spaces in it are reported to cut the message, so it uses `_`). The RCON port is from the docs: it only opens with RCON on (D-89) |
-| Enshrouded | 2278520 | exe, ports (only the query port 15637, D-90), join on the query port, log file and ready line, save folder | `stop_recipe` (a clean exit saves and logs `Close Log file`; which stop gives it is unknown) |
-| V Rising | 1829350 | nothing (1604030 on that PC is the game, not the server) | `ready_pattern` (none found), `stop_recipe`, `ports` (docs examples use 27015/27016, defaults 9876/9877), `stop_warning` (RCON `announce`) |
-| RuneScape: Dragonwilds | 4019830 | exe `RSDragonwildsServer.exe`, `real_exe_name`, no args, ports, `Saved\` in the install folder (D-91), config, saves, log and ready line | `stop_recipe` (it was killed from Task Manager; a graceful stop is untested) |
-| Windrose | 4129620 | the app ID only (a Steam library manifest) | `real_exe_name`, `ports` (only with direct connection; default is invite codes), `log_file`, `ready_pattern`, `stop_recipe`, `config_files` (`ServerDescription.json` in the install folder or `R5\`) |
+| Palworld | 2394010 | exe (Shipping-Cmd started directly, D-99), UDP 8211 and 27015, TCP 25575 (RCON) and 8212 (REST) once turned on, ready line, config file, save folder. Stop: REST `save` + `shutdown` saves and exits 0; Ctrl+Break alone doesn't save. Warning: REST `announce` | nothing; the ready line arrives late through the pipe, so Running usually comes from the 30 s timer |
+| Enshrouded | 2278520 | exe, UDP 15637 (plus one random port), stdout with the ready line, config file, save folder. Stop: Ctrl+Break saves `world0.ksd` and exits 0 | nothing |
+| V Rising | 1829350 | exe and args, UDP 9876 and 9877, TCP 25575 with RCON on, log file and ready line, settings files, saves. Stop: Ctrl+Break saves on exit, exit 0. Warning: RCON `announce` (RCON `shutdown` hangs the server, D-100) | nothing |
+| RuneScape: Dragonwilds | 4019830 | exe, `real_exe_name`, UDP 7777, 8888, 45453, log file and ready line, config, saves. Stop: none saves, so it ends with a kill (D-100) | nothing; how often the game saves by itself with players on is unknown |
+| Windrose | 4129620 | exe (Shipping exe with `-log`, D-101), working folder, log file and ready line, `R5\ServerDescription.json`, saves. Stop: Ctrl+Break saves, then exits with 0xC000013A | `ports` (only used with direct connection, which wasn't tried; with invite codes it opens none) |

@@ -85,6 +85,7 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
         log.info("Basecamp stopping; game servers are left running")
         backups.stop_scheduler()
         updater.close()
+        supervisor.remote.close()
         steam.close()
         live.close()
         notifier.close()

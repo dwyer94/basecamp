@@ -325,6 +325,9 @@ function serverPage(root, id) {
   const out = el("div", { class: "console", "aria-live": "off" });
   const input = el("input", { placeholder: "Command (sent to the server's console)",
     autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+  // stdin, or RCON / REST once the server has the port and password (D-97).
+  const channel = el("select", { "aria-label": "Send by" });
+  let channelsKey = "";
   const consoleState = el("div", { class: "hint" });
   const history = el("div");
   const backupBox = el("div");
@@ -359,10 +362,11 @@ function serverPage(root, id) {
   const send = () => {
     const text = input.value.trim();
     if (!text) return;
-    sock.send({ type: "command", text });
+    sock.send({ type: "command", text, channel: channel.value });
     input.value = "";
   };
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+  channel.addEventListener("change", () => update());
 
   const loadHistory = async () => {
     const rows = await api("GET", `/api/audit?server_id=${id}&limit=20`).catch(() => []);
@@ -443,7 +447,7 @@ function serverPage(root, id) {
 
   root.replaceChildren(head,
     el("h2", {}, "Console"), out,
-    el("div", { class: "command" }, input, el("button", { class: "primary", onclick: send }, "Send")),
+    el("div", { class: "command" }, channel, input, el("button", { class: "primary", onclick: send }, "Send")),
     consoleState,
     steamBox,
     el("h2", {}, "Config files"), configBox,
@@ -469,10 +473,19 @@ function serverPage(root, id) {
           ? el("button", { class: "danger", onclick: () => act(s, "kill") }, "Kill") : null),
       el("p", { class: "muted" }, c.exe_path, c.args ? ` ${c.args}` : "",
         s.pid ? ` · PID ${s.pid}` : "")].filter(Boolean));
-    input.disabled = !(s.has_console && s.state !== "stopped" && s.state !== "crashed");
+    const remote = s.remote || { channels: ["stdin"], default: "stdin" };
+    const key = remote.channels.join(",");
+    if (key !== channelsKey) {
+      channelsKey = key;
+      channel.replaceChildren(...remote.channels.map((x) =>
+        el("option", { value: x, selected: x === remote.default }, x === "stdin" ? "console" : x.toUpperCase())));
+    }
+    channel.hidden = remote.channels.length < 2;
+    const up = s.state !== "stopped" && s.state !== "crashed";
+    input.disabled = !(up && (s.has_console || channel.value !== "stdin"));
     steamBox.replaceChildren(s.steam ? steamSection(s) : el("div"));
-    const key = `${s.state} ${s.steam && s.steam.job ? s.steam.job.phase : ""}`;
-    if (key !== lastState) { lastState = key; loadBackups(); }  // and the history
+    const stateKey = `${s.state} ${s.steam && s.steam.job ? s.steam.job.phase : ""}`;
+    if (stateKey !== lastState) { lastState = stateKey; loadBackups(); }  // and the history
   };
   update();
   return { update, close: () => sock.close() };
@@ -541,7 +554,7 @@ const BLANK = {
   name: "", kind: "custom", template_id: "", install_dir: "", exe_path: "", args: "",
   working_dir: "", ports: [], join_port: null, start_on_boot: false, boot_order: 0,
   steam_app_id: null, steam_beta: "", steam_validate: false, config_files: [], save_dir: "",
-  log_source: "stdout", log_file: "", rcon_host: "127.0.0.1", rcon_port: null,
+  log_source: "stdout", log_file: "", rcon_host: "127.0.0.1", rcon_port: null, rest_port: null,
   real_exe_name: "", ready_pattern: "", ready_after_s: 15, min_free_ram_mb: 0,
   stop_recipe: [], stop_warning: null, notes: "", backup_every_h: 0, backup_keep: 10, notify_off: [],
 };
@@ -605,7 +618,7 @@ function serverForm(root, id) {
   const addStepRow = (s = { action: "ctrl_break", command: "", wait_s: 30 }) => {
     const row = el("div", { class: "row step" },
       el("select", { "data-k": "action" },
-        ["stdin", "rcon", "ctrl_break"].map((x) => el("option", { value: x, selected: s.action === x }, x))),
+        ["stdin", "rcon", "rest", "ctrl_break"].map((x) => el("option", { value: x, selected: s.action === x }, x))),
       el("input", { placeholder: "command", value: s.command, "data-k": "command" }),
       el("input", { type: "number", placeholder: "wait s", value: s.wait_s, "data-k": "wait_s" }),
       el("button", { type: "button", class: "small", onclick: () => row.remove() }, "✕"));
@@ -615,7 +628,7 @@ function serverForm(root, id) {
   // R-25: the warning players get before a stop, restart or update from Basecamp.
   const warningFields = () => {
     const w = values.stop_warning || { action: "rcon", command: "", minutes: [] };
-    const action = el("select", {}, ["stdin", "rcon"].map((x) => el("option", { value: x, selected: w.action === x }, x)));
+    const action = el("select", {}, ["stdin", "rcon", "rest"].map((x) => el("option", { value: x, selected: w.action === x }, x)));
     const command = el("input", { value: w.command, placeholder: "e.g. broadcast Restarting in {minutes} min",
       autocomplete: "off", spellcheck: "false" });
     const minutes = el("input", { value: (w.minutes || []).join(", "), placeholder: "e.g. 5, 1 (empty = off)",
@@ -687,7 +700,9 @@ function serverForm(root, id) {
       el("fieldset", {}, el("legend", {}, "Files"),
         field("Config files", lines("config_files"), "One path per line."),
         field("Save folder", text("save_dir")),
-        field("RCON port", num("rcon_port"))),
+        field("RCON port", num("rcon_port")),
+        field("REST port", num("rest_port"), "Palworld's REST API (RESTAPIPort, 8212). Its commands: announce <text>, save, shutdown <seconds> <text>, info, players, metrics."),
+        passwordFields()),
       el("fieldset", {}, el("legend", {}, "Backups and Discord"),
         field("Back up every (hours)", num("backup_every_h", { min: 0, step: "any" }),
           "While the server runs. 0 = only by hand (and before updates)."),
@@ -712,6 +727,29 @@ function serverForm(root, id) {
         editing ? el("button", { type: "button", class: "danger", onclick: remove }, "Delete") : null));
   };
 
+  // RCON and REST passwords (D-97): kept in secrets.toml, saved apart from the form, never shown.
+  const passwords = {};
+  const passwordFields = () => {
+    const set = values.password_set || {};
+    const box = (ch, label) => {
+      const i = el("input", { type: "password", autocomplete: "new-password",
+        placeholder: set[ch] ? "set (type to change)" : "not set" });
+      const clear = el("label", { class: "check" }, el("input", { type: "checkbox" }), "remove");
+      passwords[ch] = () => ($("input", clear).checked ? "" : i.value || null);
+      return field(label, el("div", {}, i, set[ch] ? clear : null));
+    };
+    return el("div", {}, box("rcon", "RCON password"), box("rest", "REST password"),
+      el("div", { class: "hint" }, "The game's admin password for RCON or REST, as in its own settings file. Kept in the data folder's secrets.toml, never in the server's settings or the audit log."));
+  };
+  const savePasswords = async (serverId) => {
+    const body = {};
+    for (const [ch, get] of Object.entries(passwords)) {
+      const v = get();
+      if (v !== null) body[`${ch}_password`] = v;
+    }
+    if (Object.keys(body).length) await api("PUT", `/api/servers/${serverId}/remote`, body);
+  };
+
   const remove = async () => {
     if (!confirm(`Delete ${values.name}? Game files are not touched.`)) return;
     try {
@@ -726,6 +764,7 @@ function serverForm(root, id) {
       const saved = editing
         ? await api("PUT", `/api/servers/${id}`, collect())
         : await api("POST", "/api/servers", collect());
+      await savePasswords(saved.id);
       location.hash = `#server/${saved.id}`;
     } catch (err) {
       messages.replaceChildren(notice(err.message, "error"));
@@ -755,7 +794,7 @@ function serverForm(root, id) {
   root.replaceChildren(el("h2", {}, editing ? "Edit server" : "Add server"), top, messages, form);
 
   if (editing) {
-    api("GET", `/api/servers/${id}`).then((s) => fill(s.config))
+    api("GET", `/api/servers/${id}`).then((s) => fill({ ...s.config, password_set: (s.remote || {}).password_set }))
       .catch((e) => root.replaceChildren(notice(e.message, "error")));
   } else {
     fill({});

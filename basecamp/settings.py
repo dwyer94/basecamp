@@ -84,6 +84,10 @@ class Settings:
     default_backup_keep: int = 10
     # R-41: old copies kept per config file saved from the page.
     config_copies_keep: int = 20
+    # RCON and REST (D-92..D-97): how long one command may take, and whether a server's
+    # rcon_host may be another PC (the password crosses the network unencrypted).
+    remote_timeout_s: float = 5.0
+    remote_console_allow_remote: bool = False
     # R-90..R-94: Basecamp's own updates. The repo is public, so no token. update_api is
     # only changed to point the dev PC at a local fake release server (tools/fake_releases.py).
     update_repo: str = "dwyer94/basecamp"
@@ -109,7 +113,7 @@ class Settings:
 
     @property
     def secrets_path(self) -> Path:
-        """Webhook URLs (and later RCON passwords). Never in the repo or settings.toml."""
+        """Webhook URLs and RCON/REST passwords. Never in the repo or settings.toml."""
         return self.data_dir / "secrets.toml"
 
     @property

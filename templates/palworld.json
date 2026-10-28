@@ -3,34 +3,36 @@
   "name": "Palworld",
   "kind": "steam",
   "steam_app_id": 2394010,
-  "exe": "PalServer.exe",
-  "args": "-port=8211 -players=16",
-  "real_exe_name": "PalServer-Win64-Shipping-Cmd.exe",
+  "exe": "Pal\\Binaries\\Win64\\PalServer-Win64-Shipping-Cmd.exe",
+  "args": "Pal -port=8211 -players=16",
   "ports": [
     {"port": 8211, "protocol": "udp", "label": "game"},
     {"port": 27015, "protocol": "udp", "label": "query"},
-    {"port": 25575, "protocol": "tcp", "label": "rcon"}
+    {"port": 25575, "protocol": "tcp", "label": "rcon"},
+    {"port": 8212, "protocol": "tcp", "label": "rest"}
   ],
   "join_port_label": "game",
   "log_source": "stdout",
   "ready_pattern": "Running Palworld dedicated server on",
-  "ready_after_s": 90,
+  "ready_after_s": 30,
   "stop_recipe": [
-    {"action": "rcon", "command": "Save", "wait_s": 15},
-    {"action": "rcon", "command": "Shutdown 10 Server is shutting down", "wait_s": 60},
-    {"action": "ctrl_break", "wait_s": 30}
+    {"action": "rest", "command": "save", "wait_s": 5},
+    {"action": "rest", "command": "shutdown 5 Server is shutting down", "wait_s": 60},
+    {"action": "ctrl_break", "wait_s": 10}
   ],
-  "stop_warning": {"action": "rcon", "command": "Broadcast Server_restarting_in_{minutes}_min", "minutes": []},
+  "stop_warning": {"action": "rest", "command": "announce Server restarting in {minutes} min", "minutes": []},
   "config_files": ["Pal\\Saved\\Config\\WindowsServer\\PalWorldSettings.ini"],
   "save_dir": "Pal\\Saved\\SaveGames",
   "rcon_port": 25575,
+  "rest_port": 8212,
   "min_free_ram_mb": 8192,
-  "notes": "Settings: before the first edit, copy DefaultPalWorldSettings.ini from the install folder to Pal\\Saved\\Config\\WindowsServer\\PalWorldSettings.ini (editing the Default file does nothing). The whole config is one OptionSettings=(...) line, plain text with no BOM. RCON needs RCONEnabled=True and an AdminPassword in that file; TCP 25575 only opens then. Until Basecamp's RCON client lands, the RCON stop steps are skipped and Ctrl+Break does the stop. Keep -port= and the game port the same. Mods can open more ports: the PalDefender anti-cheat's REST API listens on a TCP port of its own (17993 on the server this was checked on), so add it to the ports if you run it. Its console lines come before the ready line, which still shows. Each world is a folder under Pal\\Saved\\SaveGames\\0\\. Not yet checked: whether Ctrl+Break saves before exiting, and the Broadcast warning.",
+  "notes": "Settings: before the first edit, copy DefaultPalWorldSettings.ini from the install folder to Pal\\Saved\\Config\\WindowsServer\\PalWorldSettings.ini (editing the Default file does nothing; the first start leaves an empty one there). The whole config is one OptionSettings=(...) line, plain ASCII with CRLF and no BOM. For a clean stop, turn on the REST API: RESTAPIEnabled=True and an AdminPassword in that file, then put the same password in the server's REST password. The stop then saves and shuts down over REST (the game writes Level.sav and exits by itself with code 0), and the stop warning is a REST announce, which keeps its spaces. Without REST the stop falls back to Ctrl+Break, which ends the server at once without saving: Palworld autosaves every 30 s (AutoSaveSpan), so up to that much is lost. RCON (RCONEnabled=True, TCP 25575, same password) works for console commands, but Palworld marks it deprecated, answers every command with packet id 0, and its Broadcast stops at the first space. REST and RCON listen on all addresses: don't add firewall rules for them. Basecamp starts the Shipping-Cmd exe directly rather than PalServer.exe, a launcher that starts it in a console of its own that the pipe can't see. Its output is buffered when piped, so the ready line often arrives late and Running comes from the 30 s timer. Keep -port= and the game port the same. Mods can open more ports: the PalDefender anti-cheat's REST API listens on a TCP port of its own, so add it to the ports if you run it. Each world is a folder under Pal\\Saved\\SaveGames\\0\\, with its own backup\\ of recent saves.",
   "docs": [
     "https://docs.palworldgame.com/getting-started/deploy-dedicated-server",
     "https://docs.palworldgame.com/settings-and-operation/arguments",
     "https://docs.palworldgame.com/settings-and-operation/configuration",
+    "https://docs.palworldgame.com/category/rest-api",
     "https://steamdb.info/app/2394010/"
   ],
-  "unverified": ["stop_recipe", "stop_warning"]
+  "unverified": []
 }

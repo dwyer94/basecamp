@@ -24,7 +24,8 @@ class LogSource(StrEnum):
 
 class StopAction(StrEnum):
     STDIN = "stdin"  # write `command` to the server's stdin
-    RCON = "rcon"  # send `command` over RCON (Phase 2+; skipped until an RCON sender is wired)
+    RCON = "rcon"  # send `command` over RCON (basecamp/rcon.py)
+    REST = "rest"  # send `command` to the game's REST API (Palworld, basecamp/rest.py)
     CTRL_BREAK = "ctrl_break"  # Ctrl+Break to the server's console
 
 
@@ -68,14 +69,14 @@ class StopStep(BaseModel):
 
     @model_validator(mode="after")
     def _command_needed(self) -> StopStep:
-        if self.action in (StopAction.STDIN, StopAction.RCON) and not self.command.strip():
+        if self.action is not StopAction.CTRL_BREAK and not self.command.strip():
             raise ValueError(f"a {self.action} stop step needs a command")
         return self
 
 
 class StopWarning(BaseModel):
     """R-25: tell players before a stop, restart or update that Basecamp starts. ``command``
-    is sent (stdin or RCON) at each of ``minutes`` before the stop, with ``{minutes}`` and
+    is sent (stdin, RCON or REST) at each of ``minutes`` before the stop, with ``{minutes}`` and
     ``{seconds}`` filled in. No minutes = off (D-61)."""
 
     action: StopAction = StopAction.STDIN
@@ -85,7 +86,7 @@ class StopWarning(BaseModel):
     @model_validator(mode="after")
     def _check(self) -> StopWarning:
         if self.action is StopAction.CTRL_BREAK:
-            raise ValueError("a stop warning is sent by stdin or rcon")
+            raise ValueError("a stop warning is sent by stdin, rcon or rest")
         if any(not 0 < m <= 60 for m in self.minutes):
             raise ValueError("warning minutes must be more than 0 and at most 60")
         self.minutes = sorted(set(self.minutes), reverse=True)
@@ -111,7 +112,8 @@ DEFAULT_STOP_RECIPE: tuple[StopStep, ...] = (
 
 
 class ServerConfig(BaseModel):
-    """What the admin enters (R-10..R-12). Secrets such as the RCON password are not here."""
+    """What the admin enters (R-10..R-12). Secrets such as the RCON password are not here
+    (secrets.toml, basecamp/remote.py)."""
 
     name: str = Field(min_length=1, max_length=100)
     kind: ServerKind = ServerKind.CUSTOM
@@ -132,6 +134,7 @@ class ServerConfig(BaseModel):
     log_file: str = ""
     rcon_host: str = "127.0.0.1"
     rcon_port: int | None = Field(default=None, ge=1, le=65535)
+    rest_port: int | None = Field(default=None, ge=1, le=65535)  # Palworld's REST API
     real_exe_name: str = ""
     ready_pattern: str = ""
     ready_after_s: float = Field(default=15.0, ge=0)

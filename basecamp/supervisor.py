@@ -14,7 +14,8 @@ supervisor-wide lock, which also rewrites ``state.json``.
 
 Seams for later phases:
 - ``add_listener`` gets every state change (status WebSocket, Discord, crash restart).
-- ``rcon_sender`` sends RCON stop steps and console commands once rcon.py exists.
+- ``remote`` (basecamp/remote.py) sends RCON and REST stop steps, warnings and console
+  commands. A failure there is noted in the console and the stop goes on (D-96).
 - An unexpected exit ends in Crashed; basecamp/crashes.py restarts it from a listener (R-05).
 - ``hold`` keeps actions off a server while a restore runs.
 - ``updating`` holds it for a SteamCMD install or update (basecamp/steam.py): stop through
@@ -56,13 +57,13 @@ from basecamp.models import (
     StopAction,
     StopStep,
 )
+from basecamp.remote import RemoteConsoles
 from basecamp.settings import Settings
 
 log = logging.getLogger(__name__)
 
 Listener = Callable[[int, ServerState, ServerState], None]
 ChangeListener = Callable[[int], None]
-RconSender = Callable[[Server, str], None]
 
 
 class SupervisorError(Exception):
@@ -193,10 +194,10 @@ def install_host_script(settings: Settings) -> Path:
 
 class Supervisor:
     def __init__(self, store: Store, settings: Settings, *,
-                 rcon_sender: RconSender | None = None):
+                 remote: RemoteConsoles | None = None):
         self._store = store
         self._settings = settings
-        self._rcon_sender = rcon_sender
+        self.remote = remote or RemoteConsoles(settings)
         self._mu = threading.RLock()
         self._slots: dict[int, _Slot] = {}
         self._listeners: list[Listener] = []
@@ -331,11 +332,24 @@ class Supervisor:
             ids = [sid for sid, slot in self._slots.items() if slot.run is not None]
         return {sid: self.stop(sid) for sid in ids}
 
-    def send_command(self, server_id: int, text: str) -> None:
-        """Type a command into the server's console (R-23), through its host's stdin."""
-        run = self._slot(server_id).run
+    def send_command(self, server_id: int, text: str, channel: str = "stdin") -> None:
+        """Type a command into the server's console (R-23): through its host's stdin, or
+        over RCON or REST with the answer shown in the console."""
+        slot = self._slot(server_id)
+        run = slot.run
         if run is None:
             raise InvalidState("Server isn't running")
+        if channel != "stdin":
+            server = self._store.get_server(server_id)
+            self._note(slot, run, f"({channel}) {text}")
+            try:
+                answer = self.remote.send(server, channel, text)
+            except Exception as e:
+                self._note(slot, run, f"{channel.upper()} '{text}' failed: {e}")
+                raise SupervisorError(f"{channel.upper()} failed: {e}") from None
+            for line in (answer.splitlines() or ["(no answer)"])[:200]:
+                self._note(slot, run, f"  {line}")
+            return
         if run.host is None:
             raise NoConsole("No console: the server's host is gone; restart to get it back")
         try:
@@ -568,6 +582,7 @@ class Supervisor:
         with self._mu:
             slot.run = None
             slot.last_exit_code = code
+        self.remote.forget(server.id)  # a kept RCON connection to that run is dead
         new = ServerState.STOPPED if expected else ServerState.CRASHED
         if expected and run.for_update:
             new = ServerState.UPDATING  # Stopping -> Updating: no "stopped" message
@@ -631,15 +646,15 @@ class Supervisor:
             slot.console.system(f"Skipped {what} '{command}': no stdin",
                                 to_file=run.host is None)
             return False
-        if self._rcon_sender is None:
-            self._note(slot, run, f"Skipped {what} '{command}': RCON not available")
-            return False
+        name = action.value.upper()
         try:
-            self._rcon_sender(server, command)
-        except Exception as e:
-            self._note(slot, run, f"RCON '{command}' failed: {e}")
+            answer = self.remote.send(server, action, command)
+        except Exception as e:  # never blocks a stop (D-96)
+            log.warning("%s: %s %s failed: %s", server.name, name, what, e)
+            self._note(slot, run, f"Skipped {what} '{command}': {name} failed: {e}")
             return False
-        self._note(slot, run, f"(rcon) {command}")
+        self._note(slot, run, f"({action.value}) {command}"
+                              + (f": {_short(answer)}" if answer.strip() else ""))
         return True
 
     def _warn(self, server: Server, slot: _Slot, kind: str,
@@ -959,6 +974,11 @@ class UpdateHold:
         server = self._sup._store.get_server(self._server.id)  # the update may change it
         self._sup._set_state(server.id, ServerState.STOPPED)
         return self._sup._start_locked(server, self._slot)
+
+
+def _short(answer: str, limit: int = 200) -> str:
+    text = " ".join(answer.split())
+    return text if len(text) <= limit else text[:limit] + "…"
 
 
 def _alive(proc: psutil.Process | None) -> bool:

@@ -17,16 +17,16 @@
   "ready_pattern": "LogNetworkMatchmaker: START SESSION - Success",
   "ready_after_s": 90,
   "stop_recipe": [
-    {"action": "ctrl_break", "wait_s": 60}
+    {"action": "ctrl_break", "wait_s": 5}
   ],
   "config_files": ["RSDragonwilds\\Saved\\Config\\WindowsServer\\DedicatedServer.ini"],
   "save_dir": "RSDragonwilds\\Saved\\SaveGames",
   "min_free_ram_mb": 8192,
-  "notes": "The server won't start without an OwnerId in DedicatedServer.ini. That is your Player ID, from the bottom of the in-game Settings menu. It goes under [/Script/Dominion.DedicatedServerSettings] with ServerName, DefaultWorldName and AdminPassword. If Saved\\Config\\WindowsServer\\DedicatedServer.ini isn't there after the first start, create the WindowsServer folder and copy the values from Saved\\Config\\Linux\\DedicatedServer.ini. The server's Saved\\ folder is RSDragonwilds\\Saved\\ in the install folder; %LOCALAPPDATA%\\RSDragonwilds\\Saved\\ belongs to the game client, so don't back that up for the server. Worlds are SaveGames\\<world>.sav with a .sav.backup beside it. Each start renames the last log to RSDragonwilds-backup-<date>.log and starts a new RSDragonwilds.log. Besides UDP 7777 the server opens UDP 8888 (purpose unknown) and UDP 45453 (LAN discovery); check these before running a second server (which uses 7778). Needs 2 GB RAM plus 1 GB per player. Not yet checked: a graceful stop. Try Ctrl+Break from Basecamp and see whether the .sav gets a new time.",
+  "notes": "No graceful stop exists. The server has no RCON or console commands, and its exe is a Windows GUI program with no console or window, so Ctrl+Break can't reach it and Basecamp ends it with a kill (that is why it needed Task Manager before). Started with -log it does get a console, but Ctrl+Break and closing that console also end it at once without saving, and after Ctrl+C it stops serving without saving or exiting. The world is as of the game's own last save, so stop it when nobody has played for a while. The server won't serve without an OwnerId in DedicatedServer.ini: it logs that the OwnerId is empty and keeps running doing nothing (Basecamp then shows it Running after the timer). OwnerId is your Player ID, from the bottom of the in-game Settings menu. It goes under [/Script/Dominion.DedicatedServerSettings] with ServerName, DefaultWorldName and AdminPassword (ASCII, CRLF). The first start writes Saved\\Config\\WindowsServer\\DedicatedServer.ini; if it isn't there, create the WindowsServer folder and copy the values from Saved\\Config\\Linux\\DedicatedServer.ini. The server's Saved\\ folder is RSDragonwilds\\Saved\\ in the install folder; %LOCALAPPDATA%\\RSDragonwilds\\Saved\\ belongs to the game client, so don't back that up for the server. Worlds are SaveGames\\<world>.sav with a .sav.backup beside it. Each start renames the last log to RSDragonwilds-backup-<date>.log and starts a new RSDragonwilds.log. Besides UDP 7777 the server opens UDP 8888 (purpose unknown) and UDP 45453 (LAN discovery); a second server uses 7778. Needs 2 GB RAM plus 1 GB per player.",
   "docs": [
     "https://dragonwilds.runescape.com/news/how-to-dedicated-servers",
     "https://dragonwilds.runescape.wiki/w/Dedicated_Servers",
     "https://steamdb.info/app/4019830/"
   ],
-  "unverified": ["stop_recipe"]
+  "unverified": []
 }

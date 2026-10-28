@@ -118,7 +118,7 @@ def test_a_warning_that_cant_be_sent_doesnt_hold_up_the_stop(store, sup):
     assert sup.stop(server.id, warn=True).graceful
     assert time.monotonic() - began < 10
     text = console_text(sup, server.id)
-    assert "Skipped warning 'broadcast 1': RCON not available" in text
+    assert "Skipped warning 'broadcast 1': RCON failed: no RCON port" in text
     assert "Couldn't warn players; the stop goes ahead now" in text
 
 

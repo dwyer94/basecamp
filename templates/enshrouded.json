@@ -9,8 +9,7 @@
     {"port": 15637, "protocol": "udp", "label": "query"}
   ],
   "join_port_label": "query",
-  "log_source": "file",
-  "log_file": "logs\\enshrouded_server.log",
+  "log_source": "stdout",
   "ready_pattern": "[Session] 'HostOnline' (up)!",
   "ready_after_s": 120,
   "stop_recipe": [
@@ -18,11 +17,11 @@
   ],
   "config_files": ["enshrouded_server.json"],
   "save_dir": "savegame",
-  "notes": "enshrouded_server.json is written on the first start. Stop the server before editing it: the server overwrites it on exit. Set gameSettingsPreset to Custom, or the preset wins over your gameSettings values. The server only opens its queryPort (UDP 15637 by default); game traffic goes through Steam's networking, so friends join with the host and the query port. Older guides also list a gamePort 15636, which current servers don't have. The server writes its log to logs\\enshrouded_server.log rather than the console pipe, so Basecamp tails that file. The world is savegame\\world0.ksd, plus the game's own savegame\\backup\\. A clean exit ends the log with 'Close Log file' and writes world0.ksd. Not yet checked: whether Ctrl+Break gives that clean exit.",
+  "notes": "enshrouded_server.json (UTF-8, no BOM) is written on the first start, with generated passwords for its user groups; change them before friends join. Stop the server before editing it: the server overwrites it on exit. Set gameSettingsPreset to Custom, or the preset wins over your gameSettings values. The server only opens its queryPort (UDP 15637 by default, plus one random UDP port that changes each start); game traffic goes through Steam's networking, so friends join with the host and the query port. Ctrl+Break saves the world (savegame\\world0.ksd, plus the game's own savegame\\backup\\), logs 'Close Log file' and exits with code 0 within a second. The console pipe gets everything the log file logs\\enshrouded_server.log has, and more, so Basecamp reads the pipe.",
   "docs": [
     "https://steamdb.info/app/2278520/",
     "https://xgamingserver.com/blog/enshrouded-server-config-json-settings-explained/",
     "https://docs.emeraldhost.de/en/gameserver/enshrouded/read-server-log"
   ],
-  "unverified": ["stop_recipe"]
+  "unverified": []
 }

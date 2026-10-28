@@ -34,7 +34,7 @@ TemplateSource = Literal["built-in", "data folder"]
 _CHECKABLE = {
     "steam_app_id", "exe", "args", "working_dir", "real_exe_name", "ports", "join_port_label",
     "log_source", "log_file", "ready_pattern", "ready_after_s", "stop_recipe", "config_files",
-    "save_dir", "rcon_port", "min_free_ram_mb", "stop_warning",
+    "save_dir", "rcon_port", "rest_port", "min_free_ram_mb", "stop_warning",
 }
 
 
@@ -60,6 +60,7 @@ class Template(BaseModel):
     config_files: list[str] = Field(default_factory=list)
     save_dir: str = ""
     rcon_port: int | None = Field(default=None, ge=1, le=65535)
+    rest_port: int | None = Field(default=None, ge=1, le=65535)
     min_free_ram_mb: int = Field(default=0, ge=0)
     notes: str = ""
     docs: list[str] = Field(default_factory=list)
@@ -188,6 +189,7 @@ def draft(template: Template, install_dir: str, name: str = "") -> dict:
         "log_source": template.log_source.value,
         "log_file": template.log_file,
         "rcon_port": template.rcon_port,
+        "rest_port": template.rest_port,
         "real_exe_name": template.real_exe_name,
         "ready_pattern": template.ready_pattern,
         "ready_after_s": template.ready_after_s,

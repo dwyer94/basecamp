@@ -19,7 +19,7 @@ import sqlite3
 import threading
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
@@ -51,8 +51,19 @@ _CONSOLE_QUEUE_MAX = 5000  # a console client this far behind is dropped
 mimetypes.add_type("application/manifest+json", ".webmanifest")  # add to home screen (R-72)
 
 
+Channel = Literal["", "stdin", "rcon", "rest"]
+
+
 class CommandIn(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
+    channel: Channel = ""  # "" = the server's default: RCON, else REST, else stdin
+
+
+class RemoteIn(BaseModel):
+    """RCON and REST passwords (D-97). Left out = unchanged; "" removes it."""
+
+    rcon_password: str | None = Field(default=None, max_length=200)
+    rest_password: str | None = Field(default=None, max_length=200)
 
 
 class WebhookIn(BaseModel):
@@ -192,7 +203,14 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     def admin_view(server, status) -> dict:  # type: ignore[no-untyped-def]
         restart_at = crashes.restart_at(server.id) if crashes else None
         return views.admin_view(settings, server, status, cpu, restart_at,
-                                steam.view(server))
+                                steam.view(server), remote_view(server))
+
+    def remote_view(server) -> dict:  # type: ignore[no-untyped-def]
+        """Which console channels work, and whether each password is set (never it)."""
+        ok = sup.remote.configured(server)
+        return {"channels": ["stdin", *[ch for ch in ("rcon", "rest") if ok[ch]]],
+                "default": sup.remote.default_channel(server),
+                "password_set": sup.remote.has_password(server.id)}
 
     def not_updating(server_id: int) -> None:
         """Start, stop, restart and restore wait for the server's lock, which an update
@@ -364,17 +382,29 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         in_background("kill", server_id, lambda: sup.kill(server_id))
         return {"accepted": True}
 
-    def send(server_id: int, text: str, w: auth.Who) -> None:
-        get_server(server_id)
-        audit(w, "console", server_id, text)
+    def send(server_id: int, text: str, w: auth.Who, channel: str = "") -> None:
+        server = get_server(server_id)
+        channel = channel or sup.remote.default_channel(server)
+        audit(w, "console", server_id, text if channel == "stdin" else f"({channel}) {text}")
         try:
-            sup.send_command(server_id, text)
+            sup.send_command(server_id, text, channel)
         except SupervisorError as e:
             raise HTTPException(409, str(e)) from None
 
     @app.post("/api/servers/{server_id}/command", status_code=204)
     def command(server_id: int, body: CommandIn, w: Admin) -> None:
-        send(server_id, body.text, w)
+        send(server_id, body.text, w, body.channel)
+
+    @app.put("/api/servers/{server_id}/remote")
+    def set_remote(server_id: int, body: RemoteIn, w: Admin) -> dict:
+        """Set or remove the RCON and REST passwords, kept in secrets.toml (D-97)."""
+        server = get_server(server_id)
+        for channel, value in (("rcon", body.rcon_password), ("rest", body.rest_password)):
+            if value is None:
+                continue
+            sup.remote.set_password(server_id, channel, value)
+            audit(w, f"{channel}.password", server_id, "set" if value else "removed")
+        return remote_view(server)
 
     @app.get("/api/servers/{server_id}/console")
     def console(server_id: int, w: Admin, after: int = 0) -> list[dict]:
@@ -839,10 +869,14 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             while True:
                 msg = await ws.receive_json()
                 text = str(msg.get("text", "")) if isinstance(msg, dict) else ""
+                channel = str(msg.get("channel", "")) if isinstance(msg, dict) else ""
                 if not text.strip():
                     continue
+                if channel not in ("", "stdin", "rcon", "rest"):
+                    await ws.send_json({"type": "error", "message": "Unknown channel"})
+                    continue
                 try:
-                    await run_in_threadpool(send, server_id, text[:1000], w)
+                    await run_in_threadpool(send, server_id, text[:1000], w, channel)
                 except HTTPException as e:
                     await ws.send_json({"type": "error", "message": e.detail})
 
