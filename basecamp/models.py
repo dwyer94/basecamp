@@ -146,6 +146,17 @@ class PlayerQuery(BaseModel):
         return self
 
 
+TIME_OF_DAY = r"^(|([01]\d|2[0-3]):[0-5]\d)$"
+
+
+class SchedulePlayers(StrEnum):
+    """A scheduled restart or update while players are on (D-133)."""
+
+    IGNORE = "ignore"  # go ahead (players get the stop warning, if it has one)
+    SKIP = "skip"  # skip that day
+    DELAY = "delay"  # wait until nobody is on, for a while; then go ahead anyway
+
+
 # R-22: used when a server has no recipe. Kill always follows the last step.
 DEFAULT_STOP_RECIPE: tuple[StopStep, ...] = (
     StopStep(action=StopAction.CTRL_BREAK, wait_s=30),
@@ -188,6 +199,11 @@ class ServerConfig(BaseModel):
     backup_keep: int = Field(default=10, ge=1, le=1000)
     notify_off: list[NotifyEvent] = Field(default_factory=list)  # R-61: events not posted
     players: PlayerQuery | None = None  # D-132: how to ask for the player count (None = don't)
+    # D-133: daily restart and update at HH:MM (this PC's time; "" = off), and what to do
+    # while players are on: go ahead anyway, skip that day, or wait until they've left.
+    restart_at: str = Field(default="", pattern=TIME_OF_DAY)
+    update_at: str = Field(default="", pattern=TIME_OF_DAY)
+    schedule_players: SchedulePlayers = SchedulePlayers.IGNORE
 
     @model_validator(mode="after")
     def _check(self) -> ServerConfig:

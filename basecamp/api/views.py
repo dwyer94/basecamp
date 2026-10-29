@@ -80,7 +80,7 @@ class CpuSampler:
 def admin_view(settings: Settings, server: Server, status: ServerStatus,
                cpu: CpuSampler | None = None, restart_at: float | None = None,
                steam: dict | None = None, remote: dict | None = None,
-               players: dict | None = None) -> dict:
+               players: dict | None = None, schedule: dict | None = None) -> dict:
     view = friend_view(settings, server, status, players)
     view.update(
         config=server.model_dump(mode="json", exclude={"id"}),
@@ -96,6 +96,7 @@ def admin_view(settings: Settings, server: Server, status: ServerStatus,
         steam=steam,  # build ID, a queued or running install/update, the last run (R-30)
         remote=remote,  # console channels and whether the RCON/REST passwords are set
         players_detail=players,  # with when it was asked, how, and why it's unknown
+        schedule=schedule,  # daily restart and update times, and one waiting for players
     )
     return view
 

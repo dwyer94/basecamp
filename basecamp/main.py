@@ -21,6 +21,7 @@ from basecamp.livestatus import LiveStatus
 from basecamp.logs import setup_logging
 from basecamp.notify import Notifier
 from basecamp.players import Players
+from basecamp.schedule import Schedules
 from basecamp.selfupdate import LAUNCHER_ENV, SelfUpdater
 from basecamp.settings import Settings
 from basecamp.steam import SteamRunner
@@ -60,12 +61,16 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
     backups.start_scheduler()
     steam.start_scheduler()
     players.start()
+    schedules = Schedules(store, supervisor, steam, players, settings,
+                          audit=lambda who, action, sid, detail:
+                          store.add_audit(who, action, sid, detail))
+    schedules.start()
     live.poke()  # the servers as they are after adopting
     updater = SelfUpdater(settings, store, notifier, stop)
     updater.start()
     app = create_app(store, supervisor, settings, notifier=notifier, backups=backups,
                      crashes=crashes, steam=steam, updater=updater, live=live,
-                     players=players)
+                     players=players, schedules=schedules)
     config = uvicorn.Config(app, host=settings.host,
                             port=settings.port, log_config=None, access_log=False,
                             ws_ping_interval=20,
@@ -95,6 +100,7 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
         log.info("Basecamp stopping; game servers are left running")
         backups.stop_scheduler()
         players.close()
+        schedules.close()
         updater.close()
         supervisor.remote.close()
         steam.close()

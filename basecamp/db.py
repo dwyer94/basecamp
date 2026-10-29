@@ -24,7 +24,7 @@ _PLAIN_COLUMNS = (
     "start_on_boot", "boot_order", "steam_app_id", "steam_beta", "steam_validate", "save_dir",
     "log_source", "log_file", "rcon_host", "rcon_port", "rest_port", "real_exe_name",
     "ready_pattern", "ready_after_s", "min_free_ram_mb", "notes", "template_id",
-    "backup_every_h", "backup_keep",
+    "backup_every_h", "backup_keep", "restart_at", "update_at", "schedule_players",
 )
 _JSON_COLUMNS = ("config_files", "notify_off", "stop_warning", "players")
 

@@ -262,6 +262,10 @@ function metaLine(s) {
       ? el("span", {}, "no console (restart to get it back)") : null,
     s.restart_at ? el("span", { class: "unverified" },
       `restarting at ${new Date(s.restart_at * 1000).toLocaleTimeString()}`) : null,
+    s.schedule ? el("span", {}, [s.schedule.restart_at ? `restarts ${s.schedule.restart_at}` : "",
+      s.schedule.update_at ? `updates ${s.schedule.update_at}` : ""].filter(Boolean).join(", ")) : null,
+    s.schedule && Object.keys(s.schedule.waiting).length ? el("span", { class: "unverified" },
+      `scheduled ${Object.keys(s.schedule.waiting).join(" and ")} waiting for players to leave`) : null,
     s.steam ? el("span", {}, s.steam.build_id ? `build ${s.steam.build_id}`
       : s.steam.installed ? "build unknown" : "not installed") : null);
 }
@@ -644,7 +648,7 @@ const BLANK = {
   log_source: "stdout", log_file: "", rcon_host: "127.0.0.1", rcon_port: null, rest_port: null,
   real_exe_name: "", ready_pattern: "", ready_after_s: 15, min_free_ram_mb: 0,
   stop_recipe: [], stop_warning: null, notes: "", backup_every_h: 0, backup_keep: 10, notify_off: [],
-  players: null,
+  players: null, restart_at: "", update_at: "", schedule_players: "ignore",
 };
 
 function field(label, input, hint) {
@@ -866,6 +870,11 @@ function serverForm(root, id) {
         field("REST port", num("rest_port"), "Palworld's REST API (RESTAPIPort, 8212). Its commands: announce <text>, save, shutdown <seconds> <text>, info, players, metrics."),
         passwordFields(),
         playersFields()),
+      el("fieldset", {}, el("legend", {}, "Schedule"),
+        field("Restart every day at", text("restart_at", { type: "time" }), "This PC's time. Only while it's running, with the stop warning. Empty = off."),
+        field("Update every day at", text("update_at", { type: "time" }), "Steam servers: only when the update-available badge says Steam has a newer build (checked every 6 h). Same steps as Update. Empty = off."),
+        field("While players are on", select("schedule_players", ["ignore", "skip", "delay"]),
+          "ignore = go ahead anyway (they get the stop warning); skip = not that day; delay = ask again every 5 min until nobody's on, and after 2 h go ahead anyway. Needs a player count: an unknown count counts as nobody on.")),
       el("fieldset", {}, el("legend", {}, "Backups and Discord"),
         field("Back up every (hours)", num("backup_every_h", { min: 0, step: "any" }),
           "While the server runs. 0 = only by hand (and before updates)."),

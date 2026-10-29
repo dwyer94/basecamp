@@ -39,6 +39,7 @@ from basecamp.livestatus import LiveStatus
 from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig, ServerKind, ServerState
 from basecamp.notify import Notifier
 from basecamp.players import Players
+from basecamp.schedule import Schedules
 from basecamp.selfupdate import SelfUpdater, UpdateError
 from basecamp.settings import PAGE_SETTINGS, Settings, SettingsFile
 from basecamp.setup import SetupError, Setups
@@ -187,7 +188,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                settings_check_s: float = 3.0,
                fw: firewall.Firewall | None = None,
                setups: Setups | None = None,
-               players: Players | None = None) -> FastAPI:
+               players: Players | None = None,
+               schedules: Schedules | None = None) -> FastAPI:
     """The services are made by main.run; tests may leave them out (no crash restarts)."""
     hub = _Hub()
     cpu = views.CpuSampler()
@@ -227,6 +229,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     setups = setups or Setups(store, sup, steam, config_files, settings, audit=audit_as,
                               cancel_restart=lambda sid: crashes.cancel(sid) if crashes
                               else None)
+    schedules = schedules or Schedules(store, sup, steam, players, settings,
+                                       audit=audit_as)  # main.run starts its loop
     sup.add_listener(hub.poke)
     sup.add_change_listener(hub.poke)
     steam.add_listener(hub.poke)
@@ -276,7 +280,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         restart_at = crashes.restart_at(server.id) if crashes else None
         return views.admin_view(settings, server, status, cpu, restart_at,
                                 steam.view(server), remote_view(server),
-                                players.admin_view(server))
+                                players.admin_view(server), schedules.view(server))
 
     def remote_view(server) -> dict:  # type: ignore[no-untyped-def]
         """Which console channels work, and whether each password is set (never it)."""
@@ -1299,4 +1303,5 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     app.state.settings_file = settings_file
     app.state.setups = setups
     app.state.players = players
+    app.state.schedules = schedules
     return app
