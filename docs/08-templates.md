@@ -21,6 +21,7 @@ Paths are relative to the server's **install folder**, unless they start with a 
 | `name` | yes | Shown in the game picker and as the default server name |
 | `kind` | | `"steam"` (default) or `"custom"` |
 | `steam_app_id` | for steam | The **dedicated server's** app ID, not the game's (see below) |
+| `steam_installdir` | | The folder SteamCMD installs the app into under `steamapps\common` (Steam's `installdir` for the app, e.g. `"PalServer"`). A new server's install folder defaults to `<SteamCMD folder>\steamapps\common\<this>`; empty = the template's `id` (D-125) |
 | `exe` | yes | The exe Basecamp starts, e.g. `"PalServer.exe"` |
 | `args` | | Launch arguments as you'd type them. Keep any port in here the same as in `ports` |
 | `working_dir` | | Folder to start in. Empty = the exe's folder |
@@ -82,6 +83,7 @@ If the warning can't be sent (no stdin after adoption, no RCON or REST password,
 ## Finding the facts for a new game
 
 1. **App ID.** Search the game on [SteamDB](https://steamdb.info/) and open its **Dedicated Server** entry (a separate "Tool" app, usually with "Dedicated Server" in the name). The number in the URL is the app ID. Check that it says it can be downloaded anonymously; Basecamp's SteamCMD runs `+login anonymous`.
+   The same page's **Configuration** tab (or `installdir` in an `appmanifest_<appid>.acf` SteamCMD wrote without `+force_install_dir`) gives the folder name for `steam_installdir`.
 2. **Install it** on the dev PC into a scratch folder:
    `steamcmd +force_install_dir C:\Temp\MyGame +login anonymous +app_update <app id> validate +quit`
 3. **Exe.** Look in the install folder for the server exe (often `<Game>Server.exe`, or a `.bat` the developers ship: open the `.bat` to see the real exe and arguments). Start it once by hand in a console. In Task Manager → Details, check whether a *different* exe keeps running after the first one exits (Unreal games: `...\Binaries\Win64\<Name>-Win64-Shipping.exe`). If so, that's `real_exe_name`.
@@ -116,9 +118,9 @@ Researched from official guides (links in each file's `docs`), checked read-only
 |---|---|---|---|
 | Palworld | 2394010 | exe (Shipping-Cmd started directly, D-99), UDP 8211 and 27015, TCP 25575 (RCON) and 8212 (REST) once turned on, ready line, config file, save folder. Stop: REST `save` + `shutdown` saves and exits 0; Ctrl+Break alone doesn't save. Warning: REST `announce` | nothing; the ready line arrives late through the pipe, so Running usually comes from the 30 s timer |
 | Enshrouded | 2278520 | exe, UDP 15637 (plus one random port), stdout with the ready line, config file, save folder. Stop: Ctrl+Break saves `world0.ksd` and exits 0 | nothing |
-| V Rising | 1829350 | exe and args, UDP 9876 and 9877, TCP 25575 with RCON on, log file and ready line, settings files, saves. Stop: Ctrl+Break saves on exit, exit 0. Warning: RCON `announce` (RCON `shutdown` hangs the server, D-100) | nothing |
+| V Rising | 1829350 | exe and args, UDP 9876 and 9877, TCP 25575 with RCON on, log file and ready line, settings files, saves. Stop: Ctrl+Break saves on exit, exit 0. Warning: RCON `announce` (RCON `shutdown` hangs the server, D-100) | `steam_installdir` (from Steam's app info, D-125) |
 | RuneScape: Dragonwilds | 4019830 | exe, `real_exe_name`, UDP 7777, 8888, 45453, log file and ready line, config, saves. Stop: no stop saves, so `wait_save` waits for the next autosave (every 2 min with the template's args), then Ctrl+C exits cleanly, exit 0 (D-120 to D-122, [below](#runescape-dragonwilds)) | nothing in the template. Not tried with a player connected (no game client in the dev PC runs): that the autosave covers what players did, and how the server treats players still on when it exits |
-| Windrose | 4129620 | exe (Shipping exe with `-log`, D-101), working folder, log file and ready line, `R5\ServerDescription.json`, saves. Stop: Ctrl+Break saves, then exits with 0xC000013A | `ports` (only used with direct connection, which wasn't tried; with invite codes it opens none) |
+| Windrose | 4129620 | exe (Shipping exe with `-log`, D-101), working folder, log file and ready line, `R5\ServerDescription.json`, saves. Stop: Ctrl+Break saves, then exits with 0xC000013A | `ports` (only used with direct connection, which wasn't tried; with invite codes it opens none); `steam_installdir` (from Steam's app info, D-125) |
 
 ## RuneScape: Dragonwilds
 

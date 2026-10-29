@@ -26,7 +26,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-12** Optional per server: **config files** (list of paths), **save folder** (for backups), **log source** (stdout, or a log file path the game writes), **RCON** (host, port, password), **stop recipe** (see R-22), notes.
 - **R-13** **Game templates** pre-fill the form for common games (Palworld, Enshrouded, Valheim, Satisfactory, etc.): app ID, default exe, args, ports, config file locations, save folder, stop recipe. Templates are plain JSON files in the repo, easy to add to; one in the data folder adds a game or overrides a built-in one without a release (D-31, [08-templates.md](08-templates.md)).
 - **R-14** Edit and delete servers. Deleting removes Basecamp's record only; it never deletes game files (a separate "delete files too" option is **Later**).
-- **R-15** Import an existing install: point at a folder you already have, and Basecamp reads `steamapps/appmanifest_*.acf` to fill in the app ID.
+- **R-15** Import an existing install: point at a folder you already have, and Basecamp reads `steamapps/appmanifest_*.acf` to fill in the app ID. The Add form lists the folders in SteamCMD's `steamapps\common` to pick from, and a new Steam server's install folder defaults to `steamapps\common\<game folder>` (batch 1, D-125).
 
 ## Running servers
 
@@ -109,4 +109,3 @@ Ranked in [05-plan.md](05-plan.md), "After v1". Dropped: disk-space warnings and
 - **New game from a template** in one flow: pick the template → install folder (default under one games folder) → SteamCMD first install → first start to write its config files → ask for the values the template marks as required (e.g. Dragonwilds' `OwnerId`) → show the firewall command → ready to start. Today these are separate steps: add the server, press Install, edit the config by hand
 - A fresher UI: the page is a plain MVP
 - Friends can start, stop and restart servers: a friend permission (for listed logins, or anyone who reaches the page), separate from admin (no config, delete, updates or passwords), each click in the audit log by login. Needs Q-02 answered first (does a friend's request carry their login?). Until then only `admin_logins` can start or stop, and that gives friends everything
-- Default install folder for Steam servers: `<SteamCMD folder>\steamapps\common\<game folder>`, with the folder name from the template, and a list of the folders already there to import from, so adding a server from a phone needs no typed path

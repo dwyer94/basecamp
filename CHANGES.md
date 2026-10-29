@@ -5,6 +5,12 @@ GitHub release's notes, which the admin dashboard shows next to its Install butt
 
 ## Unreleased
 
+- **Add server needs no typed path.** Picking a game fills in SteamCMD's usual folder for
+  it (`<SteamCMD folder>\steamapps\common\<game folder>`), and **Or import an existing
+  install** lists the folders already in `steamapps\common`, with their app IDs and which
+  ones a server already uses. Installs SteamCMD made there without `+force_install_dir`
+  (manifest in the library, not the game folder) are detected and show their build too.
+  Templates have a new optional field, `steam_installdir`.
 - `install.ps1 -WhatIf` no longer fails with "Release check failed: No such file" when
   it would download a release: a dry run skips the download, so it now says the real run
   checks the signature once the file is there.

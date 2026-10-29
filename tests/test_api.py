@@ -450,3 +450,36 @@ def test_send_a_test_message(client, web_settings, webhook):
     webhook.answers = [(404, {"message": "Unknown Webhook"})]
     failed = client.post("/api/notify/test")
     assert failed.status_code == 502 and "404" in failed.json()["detail"]
+
+
+def test_default_install_folder_and_library(client, web_settings, tmp_path):
+    from tests.test_templates import acf
+
+    no_steam = client.post("/api/drafts", json={"template_id": "palworld"}).json()
+    assert no_steam["draft"]["install_dir"] == ""
+    assert any("SteamCMD isn't at" in m for m in no_steam["messages"])
+    assert client.get("/api/steam/library").json()["error"].startswith("SteamCMD isn't at")
+
+    steamcmd = tmp_path / "SteamCmd" / "steamcmd.exe"
+    steamcmd.parent.mkdir()
+    steamcmd.write_bytes(b"")
+    object.__setattr__(web_settings, "steamcmd_path", str(steamcmd))
+    common = steamcmd.parent / "steamapps" / "common"
+    res = client.post("/api/drafts", json={"template_id": "palworld"}).json()
+    assert res["draft"]["install_dir"] == str(common / "PalServer")
+    assert res["draft"]["exe_path"].startswith(str(common / "PalServer") + "\\")
+
+    # An install SteamCMD made without +force_install_dir: the manifest is the library's.
+    (common / "EnshroudedServer").mkdir(parents=True)
+    acf(steamcmd.parent / "steamapps", 2278520, "EnshroudedServer")
+    lib = client.get("/api/steam/library").json()
+    assert [(f["name"], f["app_id"], f["used_by"]) for f in lib["folders"]] == [
+        ("EnshroudedServer", 2278520, "")]
+    imported = client.post("/api/drafts", json={"install_dir": lib["folders"][0]["path"]}).json()
+    assert imported["draft"]["template_id"] == "enshrouded"
+    saved = client.post("/api/servers", json=imported["draft"])
+    assert saved.status_code == 201
+    lib = client.get("/api/steam/library").json()
+    assert lib["folders"][0]["used_by"] == "Enshrouded"
+    friend = client.get("/api/steam/library", headers=AS_FRIEND)
+    assert friend.status_code == 403

@@ -568,8 +568,48 @@ function serverForm(root, id) {
   const messages = el("div");
   const form = el("form", { novalidate: true });
   const tplSelect = el("select", {}, el("option", { value: "" }, "Detect from install folder"));
-  const installInput = el("input", { placeholder: "C:\\GameServers\\Palworld" });
+  const installInput = el("input", { placeholder: "C:\\GameServers\\Palworld", autocomplete: "off", spellcheck: "false" });
+  // SteamCMD's steamapps\common (D-125): the default install folder, and folders to import.
+  const folderSelect = el("select", { "aria-label": "Existing folders" });
+  const libraryHint = el("div", { class: "hint" });
+  let library = null;
+  let tplById = {};
+  let autoInstall = "";      // the default we filled in, replaced when the game changes
   let values = { ...BLANK };
+
+  const folderName = (tpl, name) => tpl ? (tpl.steam_installdir || tpl.id)
+    : (name || "").replace(/[\\/:*?"<>|\x00-\x1f]+/g, " ").replace(/^[ .]+|[ .]+$/g, "");
+  const defaultInstall = (tpl, name) => {
+    if (!library || !library.steamcmd_found || (tpl && tpl.kind !== "steam")) return "";
+    const folder = folderName(tpl, name);
+    return folder ? `${library.common}\\${folder}` : "";
+  };
+  const onGameChange = () => {
+    if (installInput.value && installInput.value !== autoInstall) return;
+    autoInstall = defaultInstall(tplById[tplSelect.value]) || "";
+    installInput.value = autoInstall;
+  };
+  tplSelect.addEventListener("change", onGameChange);
+  folderSelect.addEventListener("change", () => {
+    if (!folderSelect.value) return;
+    installInput.value = folderSelect.value;
+    autoInstall = "";
+    const f = library.folders.find((x) => x.path === folderSelect.value);
+    const match = f && f.app_id && Object.values(tplById).find((t) => t.steam_app_id === f.app_id);
+    tplSelect.value = match ? match.id : "";
+  });
+  const showLibrary = () => {
+    const folders = library.folders || [];
+    folderSelect.replaceChildren(el("option", { value: "" },
+      folders.length ? `Pick one of ${folders.length} folders…` : "No folders yet"),
+      ...folders.map((f) => el("option", { value: f.path },
+        f.name + (f.app_id ? ` · app ${f.app_id}` : " · no appmanifest")
+          + (f.used_by ? ` · already “${f.used_by}”` : ""))));
+    folderSelect.disabled = !folders.length;
+    libraryHint.replaceChildren(library.error ? el("span", { class: "unverified" }, library.error)
+      : el("span", {}, "In ", el("code", {}, library.common),
+        library.exists ? "." : " (SteamCMD makes it on the first install)."));
+  };
 
   const fill = (data) => {
     values = { ...BLANK, ...(me.backup_defaults || {}), ...data };
@@ -645,6 +685,20 @@ function serverForm(root, id) {
         "Sent before a stop, restart or update you start (never before a crash restart). The first number is the lead time, the others are reminders. {minutes} and {seconds} in the command are filled in. Kill and Stop now skip it."));
   };
 
+  // Install folder, with SteamCMD's default for a Steam server added by hand (D-125).
+  const installField = () => {
+    const input = text("install_dir");
+    const useDefault = () => {
+      const name = inputs.name ? inputs.name() : values.name;
+      const path = defaultInstall(tplById[values.template_id], name);
+      if (path) input.value = path;
+      else toast(library && library.error ? library.error : "No default: type a folder");
+    };
+    return field("Install folder", el("div", { class: "row" }, input,
+      el("button", { type: "button", class: "small", onclick: useDefault }, "Default")),
+      "Default = SteamCMD's steamapps\\common\\<game folder> (the template's, else the server name).");
+  };
+
   const collect = () => {
     const data = {};
     for (const [key, get] of Object.entries(inputs)) data[key] = get();
@@ -671,7 +725,7 @@ function serverForm(root, id) {
     form.replaceChildren(
       field("Name", text("name", { required: true })),
       field("Type", select("kind", ["steam", "custom"])),
-      field("Install folder", text("install_dir")),
+      installField(),
       field("Exe", text("exe_path", { required: true }), "Full path to the server's exe."),
       field("Launch arguments", text("args")),
       field("Working folder", text("working_dir"), "Empty = the exe's folder."),
@@ -788,7 +842,9 @@ function serverForm(root, id) {
     el("h2", { style: "margin-top:0" }, "Start from a template"),
     field("Game", tplSelect),
     field("Install folder", installInput,
-      "Leave the game on 'Detect' to read steamapps\\appmanifest_*.acf from an existing install. For a new install, pick the game and type a folder that doesn't exist yet (or is empty): save, then press Install on the server's page."),
+      "Picking a game fills in SteamCMD's usual folder for it. For a new install keep it (or pick a folder that doesn't exist yet or is empty): save, then press Install on the server's page."),
+    field("Or import an existing install", folderSelect, libraryHint),
+    el("div", { class: "hint" }, "Leave the game on 'Detect' to read the app ID from the install's appmanifest."),
     el("div", { class: "buttons" }, el("button", { class: "primary", onclick: useTemplate }, "Fill in")));
 
   root.replaceChildren(el("h2", {}, editing ? "Edit server" : "Add server"), top, messages, form);
@@ -800,11 +856,15 @@ function serverForm(root, id) {
     fill({});
     api("GET", "/api/templates").then((res) => {
       for (const t of res.templates) {
+        tplById[t.id] = t;
         tplSelect.append(el("option", { value: t.id },
           `${t.name}${t.source === "data folder" ? " (data folder)" : ""}`));
       }
     });
   }
+  api("GET", "/api/steam/library").then((res) => { library = res; showLibrary(); })
+    .catch((e) => libraryHint.replaceChildren(el("span", { class: "unverified" }, e.message)));
+  if (editing) api("GET", "/api/templates").then((res) => { for (const t of res.templates) tplById[t.id] = t; });
   return {};
 }
 

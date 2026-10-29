@@ -35,7 +35,7 @@ from basecamp.console import ConsoleLine
 from basecamp.crashes import CrashPolicy
 from basecamp.db import Store
 from basecamp.livestatus import LiveStatus
-from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig, ServerState
+from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig, ServerKind, ServerState
 from basecamp.notify import Notifier
 from basecamp.selfupdate import SelfUpdater, UpdateError
 from basecamp.settings import PAGE_SETTINGS, Settings
@@ -707,6 +707,27 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             "data_folder": str(settings.data_templates_dir),
         }
 
+    @app.get("/api/steam/library")
+    def steam_library(w: Admin) -> dict:
+        """The folders in SteamCMD's steamapps\\common, to import from (D-125). Takes no
+        path: only that one folder is ever listed."""
+        taken = [(s.name, s.install_dir) for s in store.list_servers()]
+        return templates.list_library(settings.steamcmd_exe, taken)
+
+    def default_install(template: templates.Template | None, name: str,
+                        messages: list[str]) -> str:
+        """``<SteamCMD folder>\\steamapps\\common\\<folder>`` for a new Steam server, or ""
+        with a message saying why not (D-125)."""
+        exe = settings.steamcmd_exe
+        folder = templates.folder_name(template, name)
+        if not exe.is_file():
+            messages.append(f"SteamCMD isn't at {exe}, so there's no default install folder. "
+                            "Set its path on the Settings page, or type a folder.")
+            return ""
+        if not folder:
+            return ""
+        return str(templates.common_dir(exe) / folder)
+
     @app.post("/api/drafts")
     def make_draft(body: DraftIn, w: Admin) -> dict:
         """A pre-filled server form from a template, or from an existing install (R-15)."""
@@ -715,10 +736,17 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         install = body.install_dir.strip().strip('"')
         template_id = body.template_id
         manifests: list[templates.AppManifest] = []
+        if not install and template_id in loaded.templates:
+            chosen_template = loaded.get(template_id).template
+            if chosen_template.kind is ServerKind.STEAM:
+                install = default_install(chosen_template, body.name, messages)
+                if install:
+                    messages.append("Install folder: SteamCMD's default for this game. Change "
+                                    "it if you want it somewhere else.")
         if install:
             folder = Path(install)
             if folder.is_dir():
-                manifests = templates.read_manifests(folder)
+                manifests = templates.manifests_for(folder)
             elif not template_id:
                 raise HTTPException(400, f"Folder not found: {install}")
         if not template_id:

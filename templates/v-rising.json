@@ -3,6 +3,7 @@
   "name": "V Rising",
   "kind": "steam",
   "steam_app_id": 1829350,
+  "steam_installdir": "VRisingDedicatedServer",
   "exe": "VRisingServer.exe",
   "args": "-persistentDataPath \".\\save-data\" -serverName \"V Rising\" -saveName \"world1\" -logFile \".\\logs\\VRisingServer.log\"",
   "ports": [
@@ -30,5 +31,5 @@
     "https://github.com/StunlockStudios/vrising-dedicated-server-instructions/blob/master/1.1.x-pc/INSTRUCTIONS.md",
     "https://steamdb.info/app/1829350/"
   ],
-  "unverified": []
+  "unverified": ["steam_installdir"]
 }

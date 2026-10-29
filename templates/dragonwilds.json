@@ -3,6 +3,7 @@
   "name": "RuneScape: Dragonwilds",
   "kind": "steam",
   "steam_app_id": 4019830,
+  "steam_installdir": "RuneScape Dragonwilds Dedicated Server",
   "exe": "RSDragonwildsServer.exe",
   "args": "-log -ini:Engine:[ConsoleVariables]:dom.StateSaveFrequencyMins=2",
   "real_exe_name": "RSDragonwildsServer-Win64-Shipping.exe",

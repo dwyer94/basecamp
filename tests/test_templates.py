@@ -6,7 +6,15 @@ import json
 from pathlib import Path
 
 from basecamp.settings import TEMPLATES_DIR
-from basecamp.templates import draft, load_templates, read_manifests, resolve_path
+from basecamp.templates import (
+    draft,
+    folder_name,
+    list_library,
+    load_templates,
+    manifests_for,
+    read_manifests,
+    resolve_path,
+)
 
 OWNER_GAMES = {"palworld", "enshrouded", "v-rising", "dragonwilds", "windrose"}
 
@@ -101,3 +109,72 @@ def test_stop_warnings_are_off_until_the_owner_turns_them_on(tmp_path):
         assert template.stop_warning.minutes == []  # the owner turns it on per server
         assert draft(template, r"C:\x")["stop_warning"]["command"].startswith("announce ")
     assert draft(loaded.get("enshrouded").template, "")["stop_warning"] is None
+
+
+def test_steam_installdir_is_a_plain_folder_name(tmp_path):
+    for i, bad in enumerate(["..", "a\b", "a/b", "C:x", " lead", "trail.", "x" * 101]):
+        write(tmp_path, f"bad{i}.json", minimal(id=f"bad{i}", steam_installdir=bad))
+    write(tmp_path, "ok.json", minimal(id="ok", steam_installdir="My Game Dedicated Server"))
+    loaded = load_templates(Path("missing"), tmp_path)
+    assert set(loaded.templates) == {"ok"}
+    assert len(loaded.errors) == 7
+
+
+def test_built_in_steam_folders():
+    loaded = load_templates(TEMPLATES_DIR, Path("missing"))
+    dirs = {k: t.template.steam_installdir for k, t in loaded.templates.items()}
+    assert dirs["palworld"] == "PalServer"
+    assert dirs["enshrouded"] == "EnshroudedServer"
+    assert dirs["dragonwilds"] == "RuneScape Dragonwilds Dedicated Server"
+    assert folder_name(loaded.get("palworld").template) == "PalServer"
+    assert folder_name(None, 'My: "Game" ') == "My   Game"
+
+
+def acf(folder: Path, app_id: int, installdir: str, build: str = "7") -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"appmanifest_{app_id}.acf").write_text(
+        f'"AppState"\n{{\n\t"appid"\t\t"{app_id}"\n\t"name"\t\t"App {app_id}"\n'
+        f'\t"buildid"\t\t"{build}"\n\t"installdir"\t\t"{installdir}"\n}}\n')
+
+
+def test_library_listing_and_manifests_for(tmp_path):
+    steamcmd = tmp_path / "SteamCmd" / "steamcmd.exe"
+    assert list_library(steamcmd, [])["error"].startswith("SteamCMD isn't at")
+    steamcmd.parent.mkdir()
+    steamcmd.write_bytes(b"")
+    res = list_library(steamcmd, [])
+    assert res["error"] == "" and not res["exists"] and res["folders"] == []
+    common = steamcmd.parent / "steamapps" / "common"
+    (common / "PalServer").mkdir(parents=True)
+    (common / "Forced").mkdir()
+    acf(common / "Forced" / "steamapps", 99, "Forced")  # +force_install_dir
+    (common / "Loose").mkdir()
+    (common / "notes.txt").write_text("not a folder")
+    acf(steamcmd.parent / "steamapps", 2394010, "PalServer", "123")
+    taken = [("Palworld", str(common / "palserver") + "\\")]  # case and slash don't matter
+    res = list_library(steamcmd, taken)
+    assert res["exists"]
+    rows = {f["name"]: f for f in res["folders"]}
+    assert list(rows) == ["Forced", "Loose", "PalServer"]
+    assert rows["PalServer"]["app_id"] == 2394010 and rows["PalServer"]["used_by"] == "Palworld"
+    assert rows["Forced"]["app_id"] == 99 and rows["Loose"]["app_id"] is None
+    assert rows["Loose"]["used_by"] == ""
+    # R-15 import and the installed build find the library's manifest too.
+    found = manifests_for(common / "PalServer")
+    assert [(m.app_id, m.build_id) for m in found] == [(2394010, "123")]
+    assert manifests_for(common / "Loose") == []
+    assert manifests_for(tmp_path) == []
+
+
+def test_library_skips_links(tmp_path):
+    import subprocess
+
+    steamcmd = tmp_path / "SteamCmd" / "steamcmd.exe"
+    common = steamcmd.parent / "steamapps" / "common"
+    common.mkdir(parents=True)
+    steamcmd.write_bytes(b"")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(common / "Junction"), str(outside)],
+                   check=True, capture_output=True)
+    assert list_library(steamcmd, [])["folders"] == []

@@ -168,7 +168,8 @@ Built in Phase 3 (`basecamp/steam.py`).
 - **Install** (R-11): a stopped server whose install folder is missing or empty. Same command, no backup, not started afterwards (D-46).
 - SteamCMD's output goes into the server's console (shown in green), so the console WebSocket streams it; the phase and download percent go out on the status WebSocket (D-45). Each run also has its own log file.
 - Success = exit code 0 and `Success! App '<appid>' fully installed` (or "already up to date"). SteamCMD sometimes updates itself first and exits (code 7, "Update complete, launching Steamcmd"); the runner runs it once more (D-44).
-- Installed build ID is read from `<install>\steamapps\appmanifest_<appid>.acf` and shown on the cards and the server page.
+- Installed build ID is read from `<install>\steamapps\appmanifest_<appid>.acf` and shown on the cards and the server page. For a folder in a library's `steamapps\common` without one (SteamCMD run without `+force_install_dir`), the library's `steamapps\appmanifest_*.acf` whose `installdir` is that folder counts instead.
+- **Default install folder** (D-125): a new Steam server's is `<folder of steamcmd.exe>\steamapps\common\<template's steam_installdir, else its id, else the server name>`. `GET /api/steam/library` lists that `common` folder's direct children (no links), each with the app ID whose manifest names it and the server already using it, so the Add form can import an existing install from a list. It takes no path. Without SteamCMD at `steamcmd_path`, there's no default and no list.
 - **Build checks** (R-34, D-65) use the same queue: `steamcmd +login anonymous +app_info_update 1 +app_info_print <appid> +quit`, reading `depots > branches > <branch> > buildid` (branch = the server's beta branch, else `public`). Every `steam_check_h` (6) hours for installed Steam servers, and on **Check for update**. A check takes no lock and never makes the server busy. Different from the installed build = **update available**; a failed check = "unknown".
 - Timeout 60 min per run (`steamcmd_timeout_s`); **Cancel update** takes a queued run off the queue, or kills the SteamCMD process tree (D-44).
 - Every run is a row in `steam_runs` (who, result, builds before and after, backup). A failed or interrupted run marks the server until a later run succeeds; Start still works, after a confirm (D-43).
@@ -205,7 +206,7 @@ Built in Phases 2 to 5: everything here except `/api/events`.
 | GET | `/api/servers/{id}/configs/{n}/copies/{name}` · POST `.../copies/{name}/restore` | admin |
 | GET/POST | `/api/servers/{id}/backups` (list, back up now) · POST `/backups/{b}/restore` · DELETE `/backups/{b}` · GET `/backups/{b}/download` (the zip, streamed, D-64) | admin (restore: 409 unless stopped) |
 | GET/PUT | `/api/notify` (main webhook, masked) · PUT `/api/servers/{id}/webhook` · POST `/api/notify/test` | admin |
-| GET | `/api/templates` · POST `/api/drafts` (pre-filled form from a template or an install's appmanifest) | admin |
+| GET | `/api/templates` · POST `/api/drafts` (pre-filled form from a template or an install's appmanifest; no install folder = SteamCMD's default for the template, D-125) · GET `/api/steam/library` (folders in SteamCMD's `steamapps\common`) | admin |
 | GET/PUT | `/api/settings` (join host, SteamCMD path, backup defaults, `apply_backup_defaults`, `discord_live_status`; the masked Discord info and the live status message's state; read-only admin logins) | admin |
 | GET | `/api/events` · `/api/audit` | admin |
 | GET | `/healthz` | localhost |

@@ -119,7 +119,7 @@ def installed_build(server: Server) -> str | None:
     """The build ID in ``<install>\\steamapps\\appmanifest_<appid>.acf``, if it's there."""
     if not server.install_dir.strip() or not server.steam_app_id:
         return None
-    for manifest in templates.read_manifests(Path(server.install_dir)):
+    for manifest in templates.manifests_for(Path(server.install_dir)):
         if manifest.app_id == server.steam_app_id:
             # SteamCMD writes buildid "0" while a first install is still downloading
             return manifest.build_id if manifest.build_id not in ("", "0") else None

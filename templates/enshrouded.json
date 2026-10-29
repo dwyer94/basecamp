@@ -3,6 +3,7 @@
   "name": "Enshrouded",
   "kind": "steam",
   "steam_app_id": 2278520,
+  "steam_installdir": "EnshroudedServer",
   "exe": "enshrouded_server.exe",
   "args": "",
   "ports": [

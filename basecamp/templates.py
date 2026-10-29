@@ -34,8 +34,12 @@ TemplateSource = Literal["built-in", "data folder"]
 _CHECKABLE = {
     "steam_app_id", "exe", "args", "working_dir", "real_exe_name", "ports", "join_port_label",
     "log_source", "log_file", "ready_pattern", "ready_after_s", "stop_recipe", "config_files",
-    "save_dir", "rcon_port", "rest_port", "min_free_ram_mb", "stop_warning",
+    "save_dir", "rcon_port", "rest_port", "min_free_ram_mb", "stop_warning", "steam_installdir",
 }
+# A folder name SteamCMD might use under steamapps\common: no path separators, no drive,
+# none of Windows' reserved characters, no space or dot at either end ("." and "..").
+_FOLDER_NAME = (r'^(|[^\\/:*?"<>|\x00-\x1f .]'
+                r'([^\\/:*?"<>|\x00-\x1f]{0,98}[^\\/:*?"<>|\x00-\x1f .])?)$')
 
 
 class Template(BaseModel):
@@ -45,6 +49,9 @@ class Template(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     kind: ServerKind = ServerKind.STEAM
     steam_app_id: int | None = Field(default=None, ge=1)
+    # The folder SteamCMD installs the app into under steamapps\common (the app's
+    # "installdir" on Steam). Default install folder for new servers; "" = the id.
+    steam_installdir: str = Field(default="", pattern=_FOLDER_NAME)
     exe: str = Field(min_length=1)
     args: str = ""
     working_dir: str = ""
@@ -212,6 +219,7 @@ class AppManifest:
     name: str
     build_id: str
     path: Path
+    installdir: str = ""  # the folder under steamapps\common, for a library install
 
 
 def read_manifests(install_dir: Path) -> list[AppManifest]:
@@ -231,5 +239,97 @@ def read_manifests(install_dir: Path) -> list[AppManifest]:
         except ValueError:
             continue
         found.append(AppManifest(app_id, values.get("name", ""), values.get("buildid", ""),
-                                 path))
+                                 path, values.get("installdir", "")))
     return found
+
+
+def library_root(install_dir: Path) -> Path | None:
+    """For ``<library>\\steamapps\\common\\<folder>``: ``<library>``, else None."""
+    parent = install_dir.parent
+    if parent.name.lower() == "common" and parent.parent.name.lower() == "steamapps":
+        return parent.parent.parent
+    return None
+
+
+def manifests_for(install_dir: Path) -> list[AppManifest]:
+    """The install's own ``steamapps\\appmanifest_*.acf`` (SteamCMD with
+    ``+force_install_dir``). Failing that, for a folder in a library's ``steamapps\\common``
+    (SteamCMD without it, or the Steam client), the library's manifests whose ``installdir``
+    is this folder."""
+    own = read_manifests(install_dir)
+    if own:
+        return own
+    library = library_root(install_dir)
+    if library is None:
+        return []
+    name = install_dir.name.lower()
+    return [m for m in read_manifests(library) if m.installdir.lower() == name]
+
+
+# -- the default install folder and SteamCMD's library (D-125) -------------------------
+
+_BAD_NAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+
+
+def folder_name(template: Template | None, server_name: str = "") -> str:
+    """The folder a new server goes in under ``steamapps\\common``: the template's
+    ``steam_installdir``, else its id, else the server name made safe for a folder."""
+    if template is not None:
+        return template.steam_installdir or template.id
+    return _BAD_NAME_CHARS.sub(" ", server_name).strip(" .")[:100]
+
+
+def common_dir(steamcmd_exe: Path) -> Path:
+    """``steamapps\\common`` next to steamcmd.exe, where SteamCMD installs apps by default."""
+    return steamcmd_exe.parent / "steamapps" / "common"
+
+
+def _norm(path: str) -> str:
+    return ntpath.normcase(ntpath.normpath(path.strip().strip('"'))) if path.strip() else ""
+
+
+def _is_link(path: Path) -> bool:
+    """A symlink or a junction (or any other reparse point): never listed or followed."""
+    try:
+        return path.is_symlink() or path.is_junction() or bool(
+            getattr(path.lstat(), "st_file_attributes", 0) & 0x400)  # REPARSE_POINT
+    except OSError:
+        return True
+
+
+def list_library(steamcmd_exe: Path, servers: list[tuple[str, str]]) -> dict:
+    """The folders in SteamCMD's ``steamapps\\common``, for the Add form's pick-list.
+
+    ``servers`` is ``(name, install_dir)`` of each Basecamp server, to say which folders are
+    taken. Only that one folder's direct children are listed; links are skipped. Each says
+    which app's ``appmanifest_<appid>.acf`` in ``steamapps`` names it (``installdir``)."""
+    common = common_dir(steamcmd_exe)
+    out: dict = {"steamcmd": str(steamcmd_exe), "steamcmd_found": steamcmd_exe.is_file(),
+                 "common": str(common), "exists": False, "folders": [], "error": ""}
+    if not out["steamcmd_found"]:
+        out["error"] = (f"SteamCMD isn't at {steamcmd_exe}. Set its path on the Settings "
+                        "page to get a default install folder and this list.")
+        return out
+    if not common.is_dir() or _is_link(common):
+        return out
+    out["exists"] = True
+    by_dir = {m.installdir.lower(): m for m in read_manifests(common.parent.parent)
+              if m.installdir}
+    used = {_norm(d): name for name, d in servers if d.strip()}
+    try:
+        children = sorted(common.iterdir(), key=lambda p: p.name.lower())
+    except OSError as e:
+        out["error"] = f"Can't read {common}: {e}"
+        return out
+    for child in children:
+        if _is_link(child) or not child.is_dir():
+            continue
+        own = read_manifests(child)  # installed with +force_install_dir
+        manifest = own[0] if own else by_dir.get(child.name.lower())
+        out["folders"].append({
+            "name": child.name, "path": str(child),
+            "app_id": manifest.app_id if manifest else None,
+            "app_name": manifest.name if manifest else "",
+            "used_by": used.get(_norm(str(child)), ""),
+        })
+    return out

@@ -3,6 +3,7 @@
   "name": "Windrose",
   "kind": "steam",
   "steam_app_id": 4129620,
+  "steam_installdir": "Windrose Dedicated Server",
   "exe": "R5\\Binaries\\Win64\\WindroseServer-Win64-Shipping.exe",
   "args": "R5 -log",
   "working_dir": ".",
@@ -26,5 +27,5 @@
     "https://steamcommunity.com/sharedfiles/filedetails/?id=3777107389",
     "https://hostingbuff.com/guides/windrose-dedicated-server-setup.html"
   ],
-  "unverified": ["ports"]
+  "unverified": ["ports", "steam_installdir"]
 }

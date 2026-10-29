@@ -3,6 +3,7 @@
   "name": "Palworld",
   "kind": "steam",
   "steam_app_id": 2394010,
+  "steam_installdir": "PalServer",
   "exe": "Pal\\Binaries\\Win64\\PalServer-Win64-Shipping-Cmd.exe",
   "args": "Pal -port=8211 -players=16",
   "ports": [
