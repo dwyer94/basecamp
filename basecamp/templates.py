@@ -37,7 +37,7 @@ _CHECKABLE = {
     "steam_app_id", "exe", "args", "working_dir", "real_exe_name", "ports", "join_port_label",
     "log_source", "log_file", "ready_pattern", "ready_after_s", "stop_recipe", "config_files",
     "save_dir", "rcon_port", "rest_port", "min_free_ram_mb", "stop_warning", "steam_installdir",
-    "required_values", "players",
+    "required_values", "players", "quick_commands",
 }
 # A key in an INI file or a dotted path in a JSON one: one line, no '=' or brackets.
 _VALUE_KEY = r"^[^\x00-\x1f=\[\]]{1,100}$"
@@ -54,6 +54,25 @@ class RequiredValue(BaseModel):
     key: str = Field(pattern=_VALUE_KEY)  # INI key, or a.b.c in JSON
     label: str = Field(min_length=1, max_length=100)
     hint: str = Field(default="", max_length=500)
+class QuickCommand(BaseModel):
+    """One tap in the console's Quick row (batch 3, D-137). A command with ``{message}``
+    isn't sent: it goes into the command box for the owner to finish. ``friend`` lets
+    friends tap it too; the server checks that against the template, never the page."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=40)
+    command: str = Field(min_length=1, max_length=200, pattern=r"^[^\x00-\x1f]+$")
+    friend: bool = False
+    channel: Literal["", "stdin", "rcon", "rest"] = ""  # "" = the server's default
+
+    @model_validator(mode="after")
+    def _check(self) -> QuickCommand:
+        if self.friend and "{message}" in self.command:
+            raise ValueError("quick_commands: a command with {message} can't be friend: true")
+        return self
+
+
 # A folder name SteamCMD might use under steamapps\common: no path separators, no drive,
 # none of Windows' reserved characters, no space or dot at either end ("." and "..").
 _FOLDER_NAME = (r'^(|[^\\/:*?"<>|\x00-\x1f .]'
@@ -89,6 +108,7 @@ class Template(BaseModel):
     min_free_ram_mb: int = Field(default=0, ge=0)
     required_values: list[RequiredValue] = Field(default_factory=list, max_length=20)
     players: PlayerQuery | None = None  # how to ask for the player count (D-132)
+    quick_commands: list[QuickCommand] = Field(default_factory=list, max_length=20)
     notes: str = ""
     docs: list[str] = Field(default_factory=list)
     unverified: list[str] = Field(default_factory=list)
@@ -278,6 +298,7 @@ class AppManifest:
     build_id: str
     path: Path
     installdir: str = ""  # the folder under steamapps\common, for a library install
+    last_updated: int = 0  # LastUpdated: when Steam last changed the files (Unix time)
 
 
 def read_manifests(install_dir: Path) -> list[AppManifest]:
@@ -296,8 +317,12 @@ def read_manifests(install_dir: Path) -> list[AppManifest]:
             app_id = int(values.get("appid", ""))
         except ValueError:
             continue
+        try:
+            last_updated = int(values.get("lastupdated", "0") or 0)
+        except ValueError:
+            last_updated = 0
         found.append(AppManifest(app_id, values.get("name", ""), values.get("buildid", ""),
-                                 path, values.get("installdir", "")))
+                                 path, values.get("installdir", ""), last_updated))
     return found
 
 

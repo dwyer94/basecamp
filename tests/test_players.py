@@ -115,7 +115,7 @@ def test_friends_get_the_count_and_nothing_else(store, settings):
                 "count": None, "max": None}  # not asked yet: unknown
             app.state.players.poll_once()
             friend = c.get(f"/api/servers/{server.id}", headers=AS_FRIEND).json()
-            assert tuple(friend) == views.FRIEND_FIELDS
+            assert tuple(friend) == views.FRIEND_DETAIL_FIELDS
             assert friend["players"] == {"count": 2, "max": 4}
             admin = c.get(f"/api/servers/{server.id}").json()
             assert admin["players_detail"]["source"] == "a2s"

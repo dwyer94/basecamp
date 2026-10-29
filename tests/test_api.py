@@ -87,12 +87,13 @@ def test_friend_json_has_only_friend_fields(client):
     client.post(f"/api/servers/{server['id']}/start")
     wait_for(lambda: client.get(f"/api/servers/{server['id']}").json()["state"] == "running")
 
-    for res in (client.get("/api/servers", headers=AS_FRIEND),
-                client.get(f"/api/servers/{server['id']}", headers=AS_FRIEND)):
+    for res, fields in ((client.get("/api/servers", headers=AS_FRIEND), views.FRIEND_FIELDS),
+                        (client.get(f"/api/servers/{server['id']}", headers=AS_FRIEND),
+                         views.FRIEND_DETAIL_FIELDS)):
         data = res.json()
         items = data if isinstance(data, list) else [data]
         for item in items:
-            assert tuple(item) == views.FRIEND_FIELDS
+            assert tuple(item) == fields
         assert not all_keys(data) & set(ADMIN_ONLY)
         assert "secret notes" not in res.text and "fake_server" not in res.text
 
@@ -126,6 +127,13 @@ def test_friend_cannot_do_admin_things(client):
         ("post", f"/api/servers/{sid}/restart", None),
         ("post", f"/api/servers/{sid}/kill", None),
         ("post", f"/api/servers/{sid}/command", {"text": "save"}),
+        ("post", f"/api/servers/{sid}/update", None),
+        ("post", f"/api/servers/{sid}/steam/cancel", None),
+        ("get", f"/api/servers/{sid}/configs", None),
+        ("get", "/api/settings", None),
+        ("get", "/api/setups", None),
+        ("post", "/api/activity/dismiss", None),
+        ("post", "/api/activity/1/dismiss", None),
         ("get", f"/api/servers/{sid}/console", None),
         ("post", "/api/servers", config),
         ("put", f"/api/servers/{sid}", config),
@@ -146,10 +154,6 @@ def test_friend_cannot_do_admin_things(client):
         assert res.status_code == 403, (method, path, res.text)
     assert client.app.state is not None
     assert client.sup.state(sid) is ServerState.STOPPED  # type: ignore[attr-defined]
-    with pytest.raises(WebSocketDisconnect) as e, \
-            ws_connect(client, f"/ws/servers/{sid}/console", headers=AS_FRIEND):
-        pass
-    assert e.value.code == 4403
 
 
 def test_spoofed_header_from_outside_loopback_is_a_friend(store, web_settings):
@@ -297,7 +301,8 @@ def test_draft_from_template_then_save(client, tmp_path):
         str(install / "Pal" / "Saved" / "Config" / "WindowsServer" / "PalWorldSettings.ini")]
     assert draft["join_port"] == 8211 and draft["template_id"] == "palworld"
     assert any("doesn't exist" in m for m in res["messages"])
-    assert res["unverified"] == ["players"]  # the rest checked by running it (D-98)
+    # the rest checked by running it (D-98)
+    assert res["unverified"] == ["players", "quick_commands"]
     saved = client.post("/api/servers", json=draft)
     assert saved.status_code == 201 and saved.json()["config"]["template_id"] == "palworld"
 
@@ -504,7 +509,6 @@ def test_firewall_endpoint_is_admin_only_cached_and_per_port(store, web_settings
     with TestClient(app, base_url=BASE, client=("127.0.0.1", 50123)) as c:
         open_one = add_fake(c, "open", port=40000)
         missing = add_fake(c, "missing")
-        assert c.get("/api/firewall", headers=AS_FRIEND).status_code == 403
         res = c.get("/api/firewall").json()
         assert res["servers"][str(open_one["id"])]["status"] == "open"
         gone = res["servers"][str(missing["id"])]
@@ -514,6 +518,14 @@ def test_firewall_endpoint_is_admin_only_cached_and_per_port(store, web_settings
         assert len(reads) == 1  # cached
         assert c.post("/api/firewall/check").status_code == 200 and len(reads) == 2
         assert c.post("/api/firewall/check", headers=AS_FRIEND).status_code == 403
+        # Friends get each port's status, never rule names, paths or commands (D-135).
+        friend = c.get("/api/firewall", headers=AS_FRIEND).json()
+        assert set(friend) == {"servers", "checked_at"}
+        for status in friend["servers"].values():
+            assert tuple(status) == views.FRIEND_FIREWALL_FIELDS
+            assert all(tuple(p) == views.FRIEND_FIREWALL_PORT_FIELDS for p in status["ports"])
+        assert friend["servers"][str(missing["id"])]["ports"][0]["status"] == "missing"
+        assert "python" not in json.dumps(friend) and "Fake" not in json.dumps(friend)
     stop_everything(sup, store)
 
 

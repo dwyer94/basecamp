@@ -37,6 +37,8 @@ class AuditEntry:
     action: str
     server_id: int | None
     detail: str
+    cleared_at: str | None = None  # a failure that no longer counts (D-134)
+    cleared_by: str = ""
 
 
 @dataclass(frozen=True)
@@ -246,24 +248,71 @@ class Store:
     # -- audit log (R-83) -----------------------------------------------------
 
     def add_audit(self, who: str, action: str, server_id: int | None = None,
-                  detail: str = "") -> None:
+                  detail: str = "") -> int:
         with self._lock:
-            self._conn.execute(
+            cur = self._conn.execute(
                 "INSERT INTO audit_log (ts, who, action, server_id, detail) VALUES (?, ?, ?, ?, ?)",
                 (_now(), who, action, server_id, detail),
             )
+        assert cur.lastrowid is not None
+        return cur.lastrowid
 
-    def list_audit(self, limit: int = 200, server_id: int | None = None) -> list[AuditEntry]:
-        sql = "SELECT * FROM audit_log"
+    def list_audit(self, limit: int = 200, server_id: int | None = None, *,
+                   actions: tuple[str, ...] | None = None, before: int | None = None,
+                   open_only: tuple[str, ...] | None = None) -> list[AuditEntry]:
+        """Newest first. ``actions`` keeps only those actions (the friend allow-list);
+        ``open_only`` keeps only those actions while they aren't cleared (D-134)."""
+        where: list[str] = []
         params: list[object] = []
         if server_id is not None:
-            sql += " WHERE server_id = ?"
+            where.append("server_id = ?")
             params.append(server_id)
+        if actions is not None:
+            where.append(f"action IN ({', '.join('?' * len(actions))})" if actions else "0")
+            params.extend(actions)
+        if open_only is not None:
+            where.append("cleared_at IS NULL")
+            where.append(f"action IN ({', '.join('?' * len(open_only))})" if open_only
+                         else "0")
+            params.extend(open_only)
+        if before is not None:
+            where.append("id < ?")
+            params.append(before)
+        sql = "SELECT * FROM audit_log"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
         return [AuditEntry(**dict(row)) for row in rows]
+
+    def count_open(self, actions: tuple[str, ...]) -> int:
+        """Failures that still count towards the red badge (D-134)."""
+        if not actions:
+            return 0
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE cleared_at IS NULL AND action IN "
+                f"({', '.join('?' * len(actions))})", actions).fetchone()
+        return int(row[0])
+
+    def clear_audit(self, actions: tuple[str, ...], by: str, *, entry_id: int | None = None,
+                    server_id: int | None = None) -> int:
+        """Clear open rows of ``actions``: one row, one server's, or all of them."""
+        if not actions:
+            return 0
+        sql = (f"UPDATE audit_log SET cleared_at = ?, cleared_by = ? WHERE cleared_at IS NULL"
+               f" AND action IN ({', '.join('?' * len(actions))})")
+        params: list[object] = [_now(), by, *actions]
+        if entry_id is not None:
+            sql += " AND id = ?"
+            params.append(entry_id)
+        if server_id is not None:
+            sql += " AND server_id = ?"
+            params.append(server_id)
+        with self._lock:
+            return self._conn.execute(sql, params).rowcount
 
     # -- SteamCMD runs (R-30..R-32) ---------------------------------------------
 
@@ -304,6 +353,15 @@ class Store:
         params: list[object] = [server_id]
         with self._lock:
             row = self._conn.execute(sql + " ORDER BY id DESC LIMIT 1", params).fetchone()
+        return SteamRun(**dict(row)) if row is not None else None
+
+    def last_ok_steam_run(self, server_id: int) -> SteamRun | None:
+        """The newest install or update that worked."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM steam_runs WHERE server_id = ? AND result = 'ok'"
+                " AND kind IN ('install', 'update') ORDER BY id DESC LIMIT 1",
+                (server_id,)).fetchone()
         return SteamRun(**dict(row)) if row is not None else None
 
     def end_unfinished_steam_runs(self) -> int:

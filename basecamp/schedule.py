@@ -188,6 +188,7 @@ class Schedules:
             self._sup.restart(server.id, warn=True)
         except SupervisorError as e:
             self._sup.console(server.id).system(f"Scheduled restart failed: {e}")
+            self._audit(WHO, "schedule.restart.failed", server.id, str(e))
         except Exception:
             log.exception("Scheduled restart of %s failed", server.name)
 

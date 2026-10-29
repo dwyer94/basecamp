@@ -40,12 +40,13 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
 import psutil
 
-from basecamp import procs, templates
+from basecamp import activity, procs, templates
 from basecamp.backups import BackupError, Backups, save_folder
 from basecamp.console import Console, LineSource
 from basecamp.db import SteamRun, Store
@@ -123,6 +124,24 @@ def installed_build(server: Server) -> str | None:
         if manifest.app_id == server.steam_app_id:
             # SteamCMD writes buildid "0" while a first install is still downloading
             return manifest.build_id if manifest.build_id not in ("", "0") else None
+    return None
+
+
+def last_updated(server: Server, store: Store) -> dict | None:
+    """When the game was last updated (batch 3, D-136): the app manifest's LastUpdated,
+    which also counts SteamCMD runs outside Basecamp, else Basecamp's own last good update
+    or install. ``{"at": epoch seconds, "source": "steam" | "basecamp"}``, or None."""
+    if server.install_dir.strip() and server.steam_app_id:
+        for manifest in templates.manifests_for(Path(server.install_dir)):
+            if manifest.app_id == server.steam_app_id and manifest.last_updated > 0:
+                return {"at": float(manifest.last_updated), "source": "steam"}
+    run = store.last_ok_steam_run(server.id)
+    if run is not None and run.ended_at:
+        try:
+            return {"at": datetime.fromisoformat(run.ended_at).timestamp(),
+                    "source": "basecamp"}
+        except ValueError:
+            return None
     return None
 
 
@@ -585,6 +604,8 @@ class SteamRunner:
         except SupervisorError as e:
             log.error("%s: start after the update failed: %s", server.name, e)
             self._sup.console(server.id).system(f"Start after the update failed: {e}")
+            activity.record(self._store, "start.failed", server.id,
+                            f"Start after the update failed: {e}")
             self._notify(server, f":warning: **{server.name}** couldn't be started after "
                          f"the update: {e}")
 
@@ -593,6 +614,7 @@ class SteamRunner:
         self._store.update_steam_run(job.run_id, result=result, message=message,
                                      ended_at=True)
         level = logging.INFO if result in ("ok", "cancelled") else logging.ERROR
+        activity.record(self._store, f"steam.{job.kind.value}.{result}", server.id, message)
         log.log(level, "%s: %s %s: %s", server.name, job.kind, result, message)
         self._sup.console(server.id).system(
             message if result == "ok" else

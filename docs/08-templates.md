@@ -41,6 +41,7 @@ Paths are relative to the server's **install folder**, unless they start with a 
 | `min_free_ram_mb` | | Warn before starting if free RAM is below this (never blocks) |
 | `required_values` | | Values the game needs before it works, asked for by **New game** and written into a config file, see below (D-130) |
 | `players` | | How to ask the game how many players are on, see below (D-132) |
+| `quick_commands` | | One-tap console commands for the server page, see below (D-137). Optional |
 | `notes` | | Setup tips shown on the Templates page and copied into the server's notes |
 | `docs` | | Links to where the facts came from. Built-in templates must have at least one |
 | `unverified` | | Field names not yet checked against a real install, e.g. `["ready_pattern", "stop_recipe"]`. Shown as "Not yet checked" in the UI and the form. Remove a name once you've checked it |
@@ -115,6 +116,26 @@ A first start that doesn't write the file is fine if its folder exists: the file
 
 Basecamp asks once a minute while the server runs and shows "unknown" when it can't tell (no answer, no password, an answer the pattern doesn't match). Friends see the count, never names. Scheduled restarts and updates use it to skip or wait while players are on (D-133). Put `players` in `unverified` until you've seen the right count with someone on.
 
+### Quick commands
+
+```json
+"quick_commands": [
+  {"label": "Save", "command": "save", "channel": "rest", "friend": true},
+  {"label": "Players", "command": "players", "channel": "rest", "friend": true},
+  {"label": "Broadcast…", "command": "announce {message}", "channel": "rest"}
+]
+```
+
+The console's Quick row on the server page: one tap per command, shown while the server runs (D-137). At most 20.
+
+- `label`: the button text, up to 40 characters.
+- `command`: what is sent, one line.
+- `channel`: `rcon`, `rest` or `stdin`; empty or left out = the server's default (RCON if it has a port and password, else REST, else the console).
+- `{message}` in the command: not sent straight away. It goes into the command box for the owner to finish.
+- `friend: true`: friends may tap it too, when friend controls let them (D-131). Basecamp checks the flag against the template on the server; the page only sends the number. A command with `{message}` can't be a friend command. Friends see the console read-only, so they also see the answer (Palworld's `players` lists names).
+
+Older templates without the field keep working. Put `quick_commands` in `unverified` until each one has been tried on the real game.
+
 ## Finding the facts for a new game
 
 1. **App ID.** Search the game on [SteamDB](https://steamdb.info/) and open its **Dedicated Server** entry (a separate "Tool" app, usually with "Dedicated Server" in the name). The number in the URL is the app ID. Check that it says it can be downloaded anonymously; Basecamp's SteamCMD runs `+login anonymous`.
@@ -151,9 +172,9 @@ Researched from official guides (links in each file's `docs`), checked read-only
 
 | Game | App ID | Checked by running it under Basecamp | Unverified |
 |---|---|---|---|
-| Palworld | 2394010 | exe (Shipping-Cmd started directly, D-99), UDP 8211 and 27015, TCP 25575 (RCON) and 8212 (REST) once turned on, ready line, config file, save folder. Stop: REST `save` + `shutdown` saves and exits 0; Ctrl+Break alone doesn't save. Warning: REST `announce` | `players` (REST `metrics`, D-132); the ready line arrives late through the pipe, so Running usually comes from the 30 s timer |
+| Palworld | 2394010 | exe (Shipping-Cmd started directly, D-99), UDP 8211 and 27015, TCP 25575 (RCON) and 8212 (REST) once turned on, ready line, config file, save folder. Stop: REST `save` + `shutdown` saves and exits 0; Ctrl+Break alone doesn't save. Warning: REST `announce` | `players` (REST `metrics`, D-132); the ready line arrives late through the pipe, so Running usually comes from the 30 s timer; `quick_commands` (REST `save` and `announce` work in the stop recipe and warning; `players` as a quick command not tried) |
 | Enshrouded | 2278520 | exe, UDP 15637 (plus one random port), stdout with the ready line, config file, save folder. Stop: Ctrl+Break saves `world0.ksd` and exits 0 | `players` (Steam query on 15637, D-132) |
-| V Rising | 1829350 | exe and args, UDP 9876 and 9877, TCP 25575 with RCON on, log file and ready line, settings files, saves. Stop: Ctrl+Break saves on exit, exit 0. Warning: RCON `announce` (RCON `shutdown` hangs the server, D-100) | `steam_installdir` (from Steam's app info, D-125); `players` (Steam query on 9877, D-132) |
+| V Rising | 1829350 | exe and args, UDP 9876 and 9877, TCP 25575 with RCON on, log file and ready line, settings files, saves. Stop: Ctrl+Break saves on exit, exit 0. Warning: RCON `announce` (RCON `shutdown` hangs the server, D-100) | `steam_installdir` (from Steam's app info, D-125); `players` (Steam query on 9877, D-132); `quick_commands` (RCON `announce` works as the warning; `announcerestart 5` not tried) |
 | RuneScape: Dragonwilds | 4019830 | exe, `real_exe_name`, UDP 7777, 8888, 45453, log file and ready line, config, saves. Stop: no stop saves, so `wait_save` waits for the next autosave (every 2 min with the template's args), then Ctrl+C exits cleanly, exit 0 (D-120 to D-122, [below](#runescape-dragonwilds)) | `required_values` (the OwnerId the new-game flow asks for: section and key as seen on the dev PC, but the flow not run with the real game). Not tried with a player connected (no game client in the dev PC runs): that the autosave covers what players did, and how the server treats players still on when it exits |
 | Windrose | 4129620 | exe (Shipping exe with `-log`, D-101), working folder, log file and ready line, `R5\ServerDescription.json`, saves. Stop: Ctrl+Break saves, then exits with 0xC000013A | `ports` (only used with direct connection, which wasn't tried; with invite codes it opens none); `steam_installdir` (from Steam's app info, D-125) |
 

@@ -1,8 +1,11 @@
-"""The web app: REST API, status and console WebSockets, and the two pages (Phase 2).
+"""The web app: REST API, status and console WebSockets, and the page (Phase 2, batch 3).
 
 Who is asking comes from basecamp/auth.py. Admin-only routes use ``Depends(admin)``.
-Friends can reach ``/``, ``/api/me``, ``GET /api/servers`` and ``/ws/status``, and get only
-the friend fields (views.FRIEND_FIELDS).
+Friends get the same page with the owner's parts hidden (D-135). The routes they can reach
+answer with friend views built from allow-lists (views.FRIEND_*, activity.FRIEND_*):
+``/api/me``, ``GET /api/servers[/{id}]``, ``GET /api/firewall``, ``GET /api/activity``,
+``/ws/status``, the read-only console WebSocket, and ``/api/friend/...`` for the actions
+the friend permission allows.
 
 Supervisor calls block (a stop can take minutes), so routes are plain ``def`` (run in the
 thread pool), and stop/restart/kill run on their own thread and answer 202 at once; the
@@ -28,11 +31,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from basecamp import __version__, auth, configs, firewall, notify, templates
+from basecamp import __version__, activity, auth, configs, firewall, notify, templates
 from basecamp.api import views
 from basecamp.backups import BackupError, Backups, save_folder
 from basecamp.configs import ConfigFiles
-from basecamp.console import ConsoleLine
+from basecamp.console import ConsoleLine, LineSource
 from basecamp.crashes import CrashPolicy
 from basecamp.db import Store
 from basecamp.livestatus import LiveStatus
@@ -43,7 +46,7 @@ from basecamp.schedule import Schedules
 from basecamp.selfupdate import SelfUpdater, UpdateError
 from basecamp.settings import PAGE_SETTINGS, Settings, SettingsFile
 from basecamp.setup import SetupError, Setups
-from basecamp.steam import Kind, SteamError, SteamRunner
+from basecamp.steam import Kind, SteamError, SteamRunner, last_updated
 from basecamp.supervisor import InvalidState, PortInUse, Supervisor, SupervisorError
 
 log = logging.getLogger(__name__)
@@ -53,6 +56,7 @@ STARTED_AT = time.time()  # tells the page a restart happened (D-126)
 STATUS_INTERVAL_S = 5.0  # uptime, CPU and RAM refresh on the status WebSocket
 _UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 _CONSOLE_QUEUE_MAX = 5000  # a console client this far behind is dropped
+QUICK_GAP_S = 5.0  # one friend quick command per server per this long (D-137)
 mimetypes.add_type("application/manifest+json", ".webmanifest")  # add to home screen (R-72)
 
 
@@ -150,6 +154,29 @@ def _console_line(line: ConsoleLine) -> dict:
     return {"seq": line.seq, "ts": line.ts, "source": line.source.value, "text": line.text}
 
 
+def _hidden_strings(server, settings: Settings) -> list[str]:  # type: ignore[no-untyped-def]
+    """What a friend's console must not show (D-135): the server's paths and launch
+    arguments, which can hold a password, and Basecamp's own folders."""
+    found = {server.install_dir, server.exe_path, server.working_dir, server.save_dir,
+             server.args, str(settings.data_dir), str(settings.steamcmd_exe.parent)}
+    return sorted((s.strip() for s in found if len(s.strip()) >= 3), key=len, reverse=True)
+
+
+def _friend_line(line: ConsoleLine, hidden: list[str]) -> dict | None:
+    """A console line for a friend: SteamCMD's output is left out (it names folders), the
+    server's paths and arguments are blanked out of the rest."""
+    if line.source is LineSource.STEAM:
+        return None
+    text = line.text
+    for secret in hidden:
+        start, parts, lower, key = 0, [], text.lower(), secret.lower()
+        while (i := lower.find(key, start)) >= 0:
+            parts += [text[start:i], "<hidden>"]
+            start = i + len(key)
+        text = "".join(parts) + text[start:]
+    return {"seq": line.seq, "ts": line.ts, "source": line.source.value, "text": text}
+
+
 class _Hub:
     """Wakes every status WebSocket when a server changes state (called from supervisor
     threads)."""
@@ -233,6 +260,12 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                                        audit=audit_as)  # main.run starts its loop
     sup.add_listener(hub.poke)
     sup.add_change_listener(hub.poke)
+
+    def running_again(server_id: int, old: ServerState, new: ServerState) -> None:
+        if old is ServerState.STARTING and new is ServerState.RUNNING:
+            activity.running_again(store, server_id)  # its crashes stop counting (D-134)
+
+    sup.add_listener(running_again)
     steam.add_listener(hub.poke)
     players.add_listener(hub.poke)
 
@@ -276,11 +309,39 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         except KeyError:
             raise HTTPException(404, "No such server") from None
 
+    def restart_at(server_id: int) -> float | None:
+        return crashes.restart_at(server_id) if crashes else None
+
     def admin_view(server, status) -> dict:  # type: ignore[no-untyped-def]
-        restart_at = crashes.restart_at(server.id) if crashes else None
-        return views.admin_view(settings, server, status, cpu, restart_at,
+        last_line = None
+        if status.state is ServerState.CRASHED:
+            last_line = sup.console(server.id).last_text(LineSource.OUT)
+        return views.admin_view(settings, server, status, cpu, restart_at(server.id),
                                 steam.view(server), remote_view(server),
-                                players.admin_view(server), schedules.view(server))
+                                players.admin_view(server), schedules.view(server),
+                                last_updated(server, store), last_line)
+
+    def friend_view(server, status) -> dict:  # type: ignore[no-untyped-def]
+        return views.friend_view(settings, server, status, players.friend_view(server),
+                                 cpu_percent=cpu.percent(status.pid),
+                                 steam=steam.view(server),
+                                 last_updated=last_updated(server, store),
+                                 restart_at=restart_at(server.id))
+
+    def quick_commands(server) -> list[dict]:  # type: ignore[no-untyped-def]
+        """The quick console commands from the server's template (D-137), numbered."""
+        if not server.template_id:
+            return []
+        try:
+            template = load_templates().get(server.template_id).template
+        except KeyError:
+            return []
+        return [{"n": n, **q.model_dump(mode="json")}
+                for n, q in enumerate(template.quick_commands)]
+
+    def last_backup(server_id: int) -> float | None:
+        found = backups.list(server_id)
+        return found[0].created if found else None
 
     def remote_view(server) -> dict:  # type: ignore[no-untyped-def]
         """Which console channels work, and whether each password is set (never it)."""
@@ -307,11 +368,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             status = sup.status(server.id)
             if status.pid is not None:
                 pids.add(status.pid)
-            if w.is_admin:
-                out.append(admin_view(server, status))
-            else:
-                out.append(views.friend_view(settings, server, status,
-                                             players.friend_view(server)))
+            out.append(admin_view(server, status) if w.is_admin else friend_view(server, status))
         cpu.forget_others(pids)
         return out
 
@@ -342,6 +399,9 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             info["join_host"] = settings.join_host
             info["backup_defaults"] = {"backup_every_h": settings.default_backup_every_h,
                                        "backup_keep": settings.default_backup_keep}
+            info["failures"] = activity.open_failures(store)
+            info["steamcmd_found"] = settings.steamcmd_exe.is_file()
+            info["steamcmd"] = str(settings.steamcmd_exe)
         return info
 
     # -- servers ---------------------------------------------------------------------
@@ -352,11 +412,15 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
 
     @app.get("/api/servers/{server_id}")
     def read_server(server_id: int, w: Who) -> dict:
+        """The server page: the card, plus the quick commands and the last backup."""
         server = get_server(server_id)
         status = sup.status(server_id)
+        quick = quick_commands(server)
         if w.is_admin:
-            return admin_view(server, status)
-        return views.friend_view(settings, server, status, players.friend_view(server))
+            return {**admin_view(server, status), "quick_commands": quick,
+                    "last_backup": last_backup(server_id)}
+        return views.friend_detail(friend_view(server, status), steam.view(server),
+                                   schedules.view(server), last_backup(server_id), quick)
 
     def save(config: ServerConfig, server_id: int | None = None) -> Any:
         try:
@@ -463,15 +527,26 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         in_background("kill", server_id, lambda: sup.kill(server_id))
         return {"accepted": True}
 
-    # -- friend start, stop, restart (D-131) ------------------------------------------
+    # -- friend start, stop, restart (D-131) and update (D-135) ---------------------------
 
     friend_clicks: dict[int, float] = {}  # server id -> when a friend last clicked
+    quick_clicks: dict[int, float] = {}  # server id -> a friend's last quick command
     friend_lock = threading.Lock()
 
+    def friend_gap(clicks: dict[int, float], server_id: int, gap: float) -> None:
+        with friend_lock:
+            now = time.monotonic()
+            last = clicks.get(server_id)
+            if last is not None and now - last < gap:
+                wait = max(1, round(gap - (now - last)))
+                raise HTTPException(429, f"Someone just did that; try again in {wait} s")
+            clicks[server_id] = now
+
     def friend_action(server_id: int, w: auth.Who, action: str) -> Any:
-        """Start, stop or restart from the friend view, for whoever the friend permission
-        lets in. Nothing else: no kill, no Stop now, the stop warning always runs (R-25).
-        One click per server per ``friend_control_gap_s``, whoever clicks."""
+        """Start, stop, restart or update from the friend view, for whoever the friend
+        permission lets in. Nothing else: no kill, no Stop now, the stop warning always runs
+        (R-25), an update backs up the save first like the admin's. One click per server per
+        ``friend_control_gap_s``, whoever clicks."""
         if not auth.can_control(w, settings):
             raise HTTPException(403, "Not allowed")
         server = get_server(server_id)
@@ -479,22 +554,20 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         not_updating(server_id)
         not_counting_down(server_id)
         state = sup.state(server_id)
+        steam_view = steam.view(server)
         if action == "start":
             if state in ACTIVE_STATES:
                 raise HTTPException(409, f"{server.name} is {state.value}")
-            steam_view = steam.view(server)
             if steam_view and steam_view["failed"]:
                 raise HTTPException(409, "Its last install or update failed; ask the admin")
+        elif action == "update":
+            if not steam_view or not steam_view["installed"]:
+                raise HTTPException(409, f"{server.name} isn't a Steam server that's installed")
+            if state not in (ServerState.RUNNING, ServerState.STOPPED, ServerState.CRASHED):
+                raise HTTPException(409, f"{server.name} is {state.value}")
         elif state not in (ServerState.STARTING, ServerState.RUNNING):
             raise HTTPException(409, f"{server.name} is {state.value}")
-        with friend_lock:
-            now = time.monotonic()
-            last = friend_clicks.get(server_id)
-            gap = settings.friend_control_gap_s
-            if last is not None and now - last < gap:
-                wait = round(gap - (now - last))
-                raise HTTPException(429, f"Someone just did that; try again in {wait} s")
-            friend_clicks[server_id] = now
+        friend_gap(friend_clicks, server_id, settings.friend_control_gap_s)
         store.add_audit(who, f"friend.{action}", server_id, server.name)
         log.info("audit: %s friend.%s server=%s", who, action, server_id)
         if action == "start":
@@ -503,13 +576,21 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             except SupervisorError as e:
                 raise HTTPException(409, str(e)) from None
             return {"accepted": True}
+        lead = server.stop_warning.lead_s if server.stop_warning else 0
+        warning_s = lead if state is ServerState.RUNNING else 0
+        if action == "update":
+            try:
+                steam.enqueue(server_id, Kind.UPDATE, who)
+            except SteamError as e:
+                raise HTTPException(409, str(e)) from None
+            cancel_restart(server_id)
+            return {"accepted": True, "warning_s": warning_s}
         if action == "stop":
             cancel_restart(server_id)
             in_background("stop", server_id, lambda: sup.stop(server_id, warn=True))
         else:
             in_background("restart", server_id, lambda: sup.restart(server_id, warn=True))
-        lead = server.stop_warning.lead_s if server.stop_warning else 0
-        return {"accepted": True, "warning_s": lead if state is ServerState.RUNNING else 0}
+        return {"accepted": True, "warning_s": warning_s}
 
     @app.post("/api/friend/servers/{server_id}/start", status_code=202)
     def friend_start(server_id: int, w: Who) -> dict:
@@ -522,6 +603,34 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     @app.post("/api/friend/servers/{server_id}/restart", status_code=202)
     def friend_restart(server_id: int, w: Who) -> dict:
         return friend_action(server_id, w, "restart")
+
+    @app.post("/api/friend/servers/{server_id}/update", status_code=202)
+    def friend_update(server_id: int, w: Who) -> dict:
+        return friend_action(server_id, w, "update")
+
+    @app.post("/api/friend/servers/{server_id}/quick/{n}", status_code=202)
+    def friend_quick(server_id: int, n: int, w: Who) -> dict:
+        """A quick console command the template marks ``friend: true`` (D-137), picked by
+        number: the command itself comes from the template, never from the page."""
+        if not auth.can_control(w, settings):
+            raise HTTPException(403, "Not allowed")
+        server = get_server(server_id)
+        quick = quick_commands(server)
+        if not 0 <= n < len(quick) or not quick[n]["friend"] or "{message}" in quick[n]["command"]:
+            raise HTTPException(403, "Not one of the commands friends may send")
+        if sup.state(server_id) is not ServerState.RUNNING:
+            raise HTTPException(409, f"{server.name} isn't running")
+        friend_gap(quick_clicks, server_id, QUICK_GAP_S)
+        command = quick[n]["command"]
+        channel = quick[n]["channel"] or sup.remote.default_channel(server)
+        who = w.login or "unknown"
+        store.add_audit(who, "friend.command", server_id, command)
+        log.info("audit: %s friend.command server=%s %s", who, server_id, command)
+        try:
+            sup.send_command(server_id, command, channel)
+        except SupervisorError as e:
+            raise HTTPException(409, str(e)) from None
+        return {"accepted": True}
 
     def send(server_id: int, text: str, w: auth.Who, channel: str = "") -> None:
         server = get_server(server_id)
@@ -640,7 +749,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         except BackupError as e:
             raise backup_error(e) from None
         removed = backups.prune(server)
-        audit(w, "backup", server_id, backup.name)
+        activity.record(store, "backup", server_id, backup.name, w.label)  # clears a failure
+        log.info("audit: %s backup server=%s %s", w.label, server_id, backup.name)
         return {"backup": backup.as_dict(), "removed": removed}
 
     @app.post("/api/servers/{server_id}/backups/{name}/restore")
@@ -1120,10 +1230,15 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                 "notes": firewall.profile_notes(policy), "cache_s": fw.cache_s}
 
     @app.get("/api/firewall")
-    def firewall_status(w: Admin) -> dict:
+    def firewall_status(w: Who) -> dict:
         """Each server's ports against Windows Firewall's inbound rules, read-only and
-        cached (D-128). Not part of the status WebSocket: the rules take ~0.5 s to read."""
-        return firewall_view(False)
+        cached (D-128). Not part of the status WebSocket: the rules take ~0.5 s to read.
+        Friends get each port's status only (D-135), never rule names or commands."""
+        view = firewall_view(False)
+        if w.is_admin:
+            return view
+        return {"servers": {sid: views.friend_firewall(s) for sid, s in view["servers"].items()},
+                "checked_at": view["checked_at"]}
 
     @app.post("/api/firewall/check")
     def firewall_check(w: Admin) -> dict:
@@ -1173,12 +1288,36 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         audit(w, "update.dismiss")
         return updater.view()
 
-    # -- audit log (R-83) ------------------------------------------------------------
+    # -- audit log (R-83) and the Activity feed (D-134) ----------------------------------
 
     @app.get("/api/audit")
     def audit_log(w: Admin, server_id: int | None = None, limit: int = 200) -> list[dict]:
         entries = store.list_audit(min(max(limit, 1), 1000), server_id)
         return [e.__dict__ for e in entries]
+
+    @app.get("/api/activity")
+    def activity_feed(w: Who, server_id: int | None = None, limit: int = 200,
+                      before: int | None = None, failures: bool = False) -> dict:
+        """Newest first. Friends get the server events only, filtered here (D-134)."""
+        items = activity.feed(store, w.is_admin, limit=min(max(limit, 1), 1000),
+                              server_id=server_id, before=before, failures_only=failures)
+        out: dict[str, Any] = {"items": items}
+        if w.is_admin:
+            out["open_failures"] = activity.open_failures(store)
+        return out
+
+    @app.post("/api/activity/{entry_id}/dismiss")
+    def dismiss_failure(entry_id: int, w: Admin) -> dict:
+        if not activity.dismiss(store, w.label, entry_id):
+            raise HTTPException(404, "No open failure with that id")
+        hub.poke()
+        return {"open_failures": activity.open_failures(store)}
+
+    @app.post("/api/activity/dismiss")
+    def dismiss_all(w: Admin) -> dict:
+        dismissed = activity.dismiss(store, w.label)
+        hub.poke()
+        return {"dismissed": dismissed, "open_failures": activity.open_failures(store)}
 
     # -- WebSockets -----------------------------------------------------------------
 
@@ -1187,6 +1326,13 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             return None
         peer = ws.client.host if ws.client else None
         return auth.identify(peer, ws.headers, settings)
+
+    def status_message(w: auth.Who) -> dict:
+        msg: dict[str, Any] = {"type": "servers", "servers": server_list(w),
+                               "host": views.host_view(w.is_admin)}
+        if w.is_admin:
+            msg["failures"] = activity.open_failures(store)  # the red badge (D-134)
+        return msg
 
     @app.websocket("/ws/status")
     async def status_ws(ws: WebSocket) -> None:
@@ -1203,8 +1349,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                 if now is None or now.is_admin != w.is_admin:
                     await ws.close(code=4401)  # the page reconnects as what it is now
                     return
-                servers = await run_in_threadpool(server_list, w)
-                await ws.send_json({"type": "servers", "servers": servers})
+                msg = await run_in_threadpool(status_message, w)
+                await ws.send_json(msg)
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(event.wait(), STATUS_INTERVAL_S)
                 await asyncio.sleep(0.1)  # coalesce bursts of state changes
@@ -1215,15 +1361,21 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
 
     @app.websocket("/ws/servers/{server_id}/console")
     async def console_ws(ws: WebSocket, server_id: int, after: int = 0) -> None:
+        """The live console. Friends get it read-only, earlier lines included, with
+        SteamCMD's output left out and paths blanked (D-135)."""
         w = ws_who(ws)
-        if w is None or not w.is_admin:
+        if w is None:
             await ws.close(code=4403)
             return
         try:
-            store.get_server(server_id)
+            server = store.get_server(server_id)
         except KeyError:
             await ws.close(code=4404)
             return
+        hidden = [] if w.is_admin else _hidden_strings(server, settings)
+
+        def view(line: ConsoleLine) -> dict | None:
+            return _console_line(line) if w.is_admin else _friend_line(line, hidden)
         await ws.accept()
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[ConsoleLine | None] = asyncio.Queue()
@@ -1243,7 +1395,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         async def sender() -> None:
             backlog = con.lines(after)
             last = backlog[-1].seq if backlog else after
-            await ws.send_json({"type": "lines", "lines": [_console_line(x) for x in backlog]})
+            lines = [x for x in map(view, backlog) if x is not None]
+            await ws.send_json({"type": "lines", "lines": lines})
             while True:
                 line = await queue.get()
                 if line is None:
@@ -1252,7 +1405,9 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                 if line.seq <= last:
                     continue
                 last = line.seq
-                await ws.send_json({"type": "line", **_console_line(line)})
+                shown = view(line)
+                if shown is not None:
+                    await ws.send_json({"type": "line", **shown})
 
         async def receiver() -> None:
             while True:
@@ -1260,6 +1415,10 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                 text = str(msg.get("text", "")) if isinstance(msg, dict) else ""
                 channel = str(msg.get("channel", "")) if isinstance(msg, dict) else ""
                 if not text.strip():
+                    continue
+                if not w.is_admin:
+                    await ws.send_json({"type": "error", "message": "The console is read-only "
+                                                                   "for friends"})
                     continue
                 if channel not in ("", "stdin", "rcon", "rest"):
                     await ws.send_json({"type": "error", "message": "Unknown channel"})
@@ -1270,11 +1429,11 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                     await ws.send_json({"type": "error", "message": e.detail})
 
         async def still_admin() -> None:
-            while True:  # admin_logins may lose this login (D-127)
+            while True:  # admin_logins may add or drop this login (D-127)
                 await asyncio.sleep(2)
                 now = ws_who(ws)
-                if now is None or not now.is_admin:
-                    await ws.close(code=4403)
+                if now is None or now.is_admin != w.is_admin:
+                    await ws.close(code=4403 if now is None else 4401)
                     return
 
         tasks = [asyncio.create_task(sender()), asyncio.create_task(receiver()),

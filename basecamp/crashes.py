@@ -18,6 +18,7 @@ import threading
 import time
 from collections import deque
 
+from basecamp import activity
 from basecamp.db import Store
 from basecamp.models import NotifyEvent, ServerState
 from basecamp.notify import Notifier
@@ -82,6 +83,8 @@ class CrashPolicy:
                            "Press Start when it's fixed")
             log.error("%s crashed %d times in %d minutes; giving up", server.name, count,
                       minutes)
+            activity.record(self._store, "crash.gave_up", server_id,
+                            f"Crashed {count} times in {minutes} min ({how}); not restarting")
             self._notify(server_id, NotifyEvent.GAVE_UP,
                          f":warning: **{server.name}** crashed {count} times in {minutes} "
                          f"minutes ({how}). Not restarting it until someone presses Start.")
@@ -90,6 +93,8 @@ class CrashPolicy:
         console.system(f"Crashed ({how}); restarting in {delay:g} s "
                        f"(crash {count} of {s.crash_limit} allowed in {minutes} minutes)")
         log.warning("%s crashed (%s); restarting in %g s", server.name, how, delay)
+        activity.record(self._store, "crash", server_id,
+                        f"Crashed ({how}); restarting in {delay:g} s")
         self._notify(server_id, NotifyEvent.CRASHED,
                      f":boom: **{server.name}** crashed ({how}). Restarting in {delay:g} s.")
         timer = threading.Timer(delay, self._restart, args=(server_id,))
@@ -122,6 +127,8 @@ class CrashPolicy:
             self._sup.console(server_id).system(f"Restart after the crash failed: {e}")
             with self._mu:
                 self._crashes.pop(server_id, None)
+            activity.record(self._store, "start.failed", server_id,
+                            f"Restart after the crash failed: {e}")
             self._notify(server_id, NotifyEvent.GAVE_UP,
                          f":warning: **{server.name}** crashed and couldn't be restarted: {e}")
 

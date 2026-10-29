@@ -28,6 +28,11 @@
   "rest_port": 8212,
   "min_free_ram_mb": 8192,
   "players": {"source": "rest"},
+  "quick_commands": [
+    {"label": "Save", "command": "save", "channel": "rest", "friend": true},
+    {"label": "Players", "command": "players", "channel": "rest", "friend": true},
+    {"label": "Broadcast…", "command": "announce {message}", "channel": "rest"}
+  ],
   "notes": "Settings: before the first edit, copy DefaultPalWorldSettings.ini from the install folder to Pal\\Saved\\Config\\WindowsServer\\PalWorldSettings.ini (editing the Default file does nothing; the first start leaves an empty one there). The whole config is one OptionSettings=(...) line, plain ASCII with CRLF and no BOM. For a clean stop, turn on the REST API: RESTAPIEnabled=True and an AdminPassword in that file, then put the same password in the server's REST password. The stop then saves and shuts down over REST (the game writes Level.sav and exits by itself with code 0), and the stop warning is a REST announce, which keeps its spaces. Without REST the stop falls back to Ctrl+Break, which ends the server at once without saving: Palworld autosaves every 30 s (AutoSaveSpan), so up to that much is lost. RCON (RCONEnabled=True, TCP 25575, same password) works for console commands, but Palworld marks it deprecated, answers every command with packet id 0, and its Broadcast stops at the first space. REST and RCON listen on all addresses: don't add firewall rules for them. Basecamp starts the Shipping-Cmd exe directly rather than PalServer.exe, a launcher that starts it in a console of its own that the pipe can't see. Its output is buffered when piped, so the ready line often arrives late and Running comes from the 30 s timer. Keep -port= and the game port the same. Mods can open more ports: the PalDefender anti-cheat's REST API listens on a TCP port of its own, so add it to the ports if you run it. Each world is a folder under Pal\\Saved\\SaveGames\\0\\, with its own backup\\ of recent saves.",
   "docs": [
     "https://docs.palworldgame.com/getting-started/deploy-dedicated-server",
@@ -36,5 +41,5 @@
     "https://docs.palworldgame.com/category/rest-api",
     "https://steamdb.info/app/2394010/"
   ],
-  "unverified": ["players"]
+  "unverified": ["players", "quick_commands"]
 }

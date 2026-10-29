@@ -80,6 +80,14 @@ class Console:
     def system(self, text: str, *, to_file: bool = True) -> ConsoleLine:
         return self.write(text, LineSource.SYS, to_file=to_file)
 
+    def last_text(self, source: LineSource | None = None) -> str | None:
+        """The newest line's text (of that source), for a crashed server's card."""
+        with self._lock:
+            for line in reversed(self._lines):
+                if source is None or line.source is source:
+                    return line.text
+        return None
+
     def lines(self, after_seq: int = 0) -> list[ConsoleLine]:
         with self._lock:
             return [ln for ln in self._lines if ln.seq > after_seq]

@@ -31,7 +31,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
-from basecamp import __version__
+from basecamp import __version__, activity
 from basecamp.db import Store
 from basecamp.models import NotifyEvent, Server, ServerState
 from basecamp.settings import Settings
@@ -270,10 +270,18 @@ class Notifier:
         if retry_after is None or msg.tries >= len(delays):
             self.failed += 1
             log.error("Discord message not sent (%s): %s", error, msg.text)
+            if self._store is not None:  # never the URL (R-82)
+                activity.record(self._store, "notify.failed", None,
+                                f"{error}: {_plain(msg.text)}"[:300])
             return
         wait = max(retry_after, delays[msg.tries])
         log.warning("Discord message failed (%s); trying again in %.0f s", error, wait)
         self._enqueue(msg.url, msg.text, time.monotonic() + wait, msg.tries + 1)
+
+
+def _plain(text: str) -> str:
+    """A Discord message without its emoji codes and bold, for the Activity feed."""
+    return re.sub(r":[a-z_]+: ?", "", text).replace("**", "").replace("`", "").strip()
 
 
 def send(url: str, text: str) -> tuple[bool, float | None, str]:

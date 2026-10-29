@@ -147,7 +147,9 @@ def test_api_stop_counts_down_and_stop_now_skips(store, settings):
             view = c.get(f"/api/servers/{server.id}").json()
             assert view["stop_warning"]["kind"] == "stop" and view["state"] == "running"
             assert view["config"]["stop_warning"]["minutes"] == [1]
-            assert "stop_warning" not in c.get("/api/servers", headers=AS_FRIEND).json()[0]
+            friend = c.get("/api/servers", headers=AS_FRIEND).json()[0]  # the countdown only
+            assert friend["stop_warning"] == {"kind": "stop",
+                                              "stop_at": view["stop_warning"]["stop_at"]}
             assert c.post(f"/api/servers/{server.id}/stop").status_code == 409
             assert c.post(f"/api/servers/{server.id}/restart").status_code == 409
             assert c.post(f"/api/servers/{server.id}/stop?now=true",

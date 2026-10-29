@@ -51,7 +51,7 @@ def test_off_by_default(store, settings):
     with make_client(store, settings) as c:
         assert c.get("/api/me", headers=AS_FRIEND).json()["can_control"] is False
         assert c.get("/api/me").json()["can_control"] is True  # the admin
-        for action in ("start", "stop", "restart"):
+        for action in ("start", "stop", "restart", "update"):
             res = c.post(f"/api/friend/servers/{server.id}/{action}", headers=AS_FRIEND)
             assert res.status_code == 403
         assert state(c, server.id) == "stopped"

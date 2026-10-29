@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from basecamp import activity
 from basecamp.db import Store
 from basecamp.models import NotifyEvent, Server, ServerState, save_folder
 from basecamp.settings import Settings
@@ -230,11 +231,13 @@ class Backups:
                 continue
             self._last_try[server.id] = time.time()
             try:
-                self.make(server, "scheduled")
+                backup = self.make(server, "scheduled")
                 self.prune(server)
                 done.append(server.id)
+                activity.record(self._store, "backup.scheduled", server.id, backup.name)
             except BackupError as e:
                 log.error("%s: scheduled backup failed: %s", server.name, e)
+                activity.record(self._store, "backup.failed", server.id, str(e))
                 self._sup.console(server.id).system(f"Scheduled backup failed: {e}")
                 if self._report is not None:
                     self._report(server, NotifyEvent.BACKUP_FAILED,
