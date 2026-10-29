@@ -29,6 +29,8 @@ from basecamp.models import LogSource, Port, ServerKind, StopStep, StopWarning
 log = logging.getLogger(__name__)
 
 TemplateSource = Literal["built-in", "data folder"]
+MAX_BYTES = 256 * 1024  # a template added from the page (D-129); the built-ins are ~5 KB
+ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 # Fields a template can mark as not yet checked against a real install.
 _CHECKABLE = {
@@ -45,7 +47,7 @@ _FOLDER_NAME = (r'^(|[^\\/:*?"<>|\x00-\x1f .]'
 class Template(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+    id: str = Field(pattern=ID_PATTERN.pattern)
     name: str = Field(min_length=1, max_length=100)
     kind: ServerKind = ServerKind.STEAM
     steam_app_id: int | None = Field(default=None, ge=1)
@@ -121,23 +123,44 @@ def _describe(e: ValidationError) -> str:
     return "; ".join(parts)
 
 
-def load_file(path: Path) -> Template:
-    """Read and validate one template. Raises ValueError with a readable message."""
+def parse(text: str) -> Template:
+    """Validate a template's JSON text, as strictly as a file (D-31). Raises ValueError with
+    a readable message."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-    except OSError as e:
-        raise ValueError(f"can't read it: {e}") from e
+        data = json.loads(text.removeprefix("\ufeff"))
     except json.JSONDecodeError as e:
         raise ValueError(f"not valid JSON: line {e.lineno} column {e.colno}: {e.msg}") from e
     if not isinstance(data, dict):
         raise ValueError("must be a JSON object")
     try:
-        template = Template.model_validate(data)
+        return Template.model_validate(data)
     except ValidationError as e:
         raise ValueError(_describe(e)) from e
+
+
+def load_file(path: Path) -> Template:
+    """Read and validate one template. Raises ValueError with a readable message."""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError as e:
+        raise ValueError(f"can't read it: {e}") from e
+    template = parse(text)
     if path.stem != template.id:
         raise ValueError(f"file name must match the id: rename it to {template.id}.json")
     return template
+
+
+def save_data_template(data_dir: Path, template_id: str, text: str) -> Path:
+    """Write a checked template's text as ``<data_dir>\\<id>.json`` (via a temp file, so a
+    half-written file is never read)."""
+    if not ID_PATTERN.fullmatch(template_id):
+        raise ValueError(f"bad template id {template_id!r}")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    path = data_dir / f"{template_id}.json"
+    tmp = data_dir / f".{template_id}.json.tmp"  # not *.json, so never loaded
+    tmp.write_text(text.removeprefix("\ufeff"), encoding="utf-8", newline="")
+    os.replace(tmp, path)
+    return path
 
 
 def load_templates(builtin_dir: Path, data_dir: Path) -> TemplateSet:

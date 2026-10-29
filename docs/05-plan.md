@@ -130,7 +130,7 @@ The Later list in [01-requirements.md](01-requirements.md), ranked (first cut, 2
 2. ~~**Restart Basecamp** button (S).~~ **Done** (D-126).
 3. ~~Apply `settings.toml` changes without a restart, `admin_logins` included (S-M).~~ **Done** (D-127).
 4. ~~Firewall indicator per server (M). Catches the "Running but nobody can join" case on the host PC, where Windows never shows its popup.~~ **Done** (D-128).
-5. Add a template from the page (S-M).
+5. ~~Add a template from the page (S-M).~~ **Done** (D-129).
 
 **Batch 2: friends and new games**
 6. **New game from a template** in one flow (M-L). Builds on 1 and 5; templates gain a field for the values a game needs before it works (e.g. Dragonwilds' `OwnerId`).

@@ -514,3 +514,55 @@ def test_firewall_endpoint_is_admin_only_cached_and_per_port(store, web_settings
         assert c.post("/api/firewall/check").status_code == 200 and len(reads) == 2
         assert c.post("/api/firewall/check", headers=AS_FRIEND).status_code == 403
     stop_everything(sup, store)
+
+
+def test_add_and_delete_a_template_from_the_page(client, web_settings):
+    from tests.test_templates import minimal
+
+    text = json.dumps(minimal(id="mygame", name="My Game"), indent=2)
+    check = client.post("/api/templates", json={"text": text, "dry_run": True}).json()
+    assert check["id"] == "mygame" and check["conflict"] == ""
+    assert not (web_settings.data_templates_dir / "mygame.json").exists()  # only checked
+    saved = client.post("/api/templates", json={"text": text})
+    assert saved.status_code == 200 and saved.json()["saved"]
+    assert (web_settings.data_templates_dir / "mygame.json").read_text() == text
+    listed = {t["id"]: t for t in client.get("/api/templates").json()["templates"]}
+    assert listed["mygame"]["source"] == "data folder"
+
+    again = client.post("/api/templates", json={"text": text})
+    assert again.status_code == 409 and "replace" in again.json()["detail"]
+    assert client.post("/api/templates", json={"text": text, "replace": True}).status_code == 200
+
+    palworld = json.dumps(minimal(id="palworld", name="Palworld (mine)"))
+    assert client.post("/api/templates", json={"text": palworld, "dry_run": True}
+                       ).json()["conflict"] == "override"
+    assert client.post("/api/templates", json={"text": palworld}).status_code == 409
+    assert client.post("/api/templates", json={"text": palworld, "replace": True}
+                       ).status_code == 200
+    assert client.delete("/api/templates/palworld").status_code == 204
+    listed = {t["id"]: t for t in client.get("/api/templates").json()["templates"]}
+    assert listed["palworld"]["source"] == "built-in"  # back
+    assert client.delete("/api/templates/palworld").status_code == 409  # built-in
+    assert client.delete("/api/templates/nope").status_code == 404
+    assert client.delete("/api/templates/..%5Csettings").status_code == 404
+
+    bad = client.post("/api/templates", json={"text": json.dumps(minimal(prots=[]))})
+    assert bad.status_code == 400 and "prots: Extra inputs are not permitted" in bad.text
+    assert client.post("/api/templates", json={"text": "{"}).status_code == 400
+    huge = json.dumps(minimal(notes="x" * (256 * 1024)))
+    assert client.post("/api/templates", json={"text": huge}).status_code in (413, 422)
+    assert client.post("/api/templates", json={"text": text},
+                       headers=AS_FRIEND).status_code == 403
+    assert client.delete("/api/templates/mygame", headers=AS_FRIEND).status_code == 403
+
+    # A broken file in the data folder can be deleted from the page too.
+    (web_settings.data_templates_dir / "broken.json").write_text("{")
+    assert client.delete("/api/templates/broken").status_code == 204
+    assert client.delete("/api/templates/mygame").status_code == 204
+    actions = [(e.action, e.detail) for e in client.sup._store.list_audit()
+               if e.action.startswith("template.")]
+    assert ("template.add", "mygame") in actions
+    assert ("template.replace", "mygame") in actions
+    assert ("template.override", "palworld") in actions
+    assert ("template.delete", "palworld (built-in is back)") in actions
+    assert any(a == "template.refused" for a, _ in actions)

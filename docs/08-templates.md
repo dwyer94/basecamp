@@ -97,7 +97,7 @@ Anything you got from a guide but didn't see yourself goes in `unverified`.
 
 ## Testing a new template locally (dev PC)
 
-1. Save it as `.\data\templates\<id>.json` and open **Templates** in Basecamp (`http://127.0.0.1:8150/#templates`): it should be listed with the source "data folder", and any mistake is shown in red with the reason.
+1. Save it as `.\data\templates\<id>.json` (or paste it into **Add a template** on the Templates page) and open **Templates** in Basecamp (`http://127.0.0.1:8150/#templates`): it should be listed with the source "data folder", and any mistake is shown in red with the reason.
 2. **Add server** → pick it → enter the scratch install folder → **Fill in**. Check the paths it filled in, and any warnings (exe not found, unverified fields).
 3. Save, **Start**, and watch the console: it should reach Running by the ready line, not the timer. Send a command if the game reads stdin.
 4. **Stop**: the console shows each step. It should exit during a recipe step, not "killed". Check the save folder was written.
@@ -107,7 +107,7 @@ Anything you got from a guide but didn't see yourself goes in `unverified`.
 
 ## Shipping it
 
-- **Just for this PC, now:** copy the file to `C:\BasecampData\templates\` on the prod PC. It works at once, no release needed.
+- **Just for this PC, now:** on the **Templates** page, open **Add a template**, paste the JSON or pick the `.json` file (from a phone too), **Check**, then **Save template**. It's checked exactly like a file, saved as `<data>\templates\<id>.json` (at most 256 KB), and works at once, no release needed. Saving one with a built-in's id asks before overriding it, and one with a data-folder template's id asks before replacing it. A data-folder template (or a broken file there) has **Delete** on that page; deleting an override brings the built-in back, and servers made from it keep their settings (D-129). Copying the file to `C:\BasecampData\templates\` by hand still works too.
 - **For good:** move it to `templates\` in the repo, drop the fields from `unverified` that you checked, run `pytest` and `ruff check .`, and commit to `main`. It goes out with the next release ([07-updates.md](07-updates.md#making-a-release-dev-pc)), which the owner publishes. Then delete the data-folder copy on the prod PC, or it keeps overriding the built-in one.
 
 ## Built-in templates and what's not yet checked

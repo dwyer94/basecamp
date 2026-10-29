@@ -946,13 +946,29 @@ function serverForm(root, id) {
 
 // -- templates -----------------------------------------------------------------------
 
+const TEMPLATE_DOCS = "https://github.com/dwyer94/basecamp/blob/main/docs/08-templates.md";
+
 async function templatesPage(root) {
   root.replaceChildren(el("h2", {}, "Game templates"), el("p", { class: "empty" }, "Loading…"));
   const res = await api("GET", "/api/templates");
+  const again = () => templatesPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
+  const remove = async (id, what) => {
+    if (!confirm(`Delete the data-folder template ${id}?${what} Servers made from it keep their settings.`)) return;
+    try { await api("DELETE", `/api/templates/${encodeURIComponent(id)}`); toast(`Deleted ${id}`); again(); }
+    catch (e) { alert(e.message); }
+  };
+  const brokenId = (file) => {
+    const m = file.match(/^data folder: ([a-z0-9][a-z0-9-]{0,62})\.json$/);
+    return m ? m[1] : null;
+  };
   root.replaceChildren(el("h2", {}, "Game templates"),
-    el("p", { class: "muted" }, "Built-in templates ship with Basecamp. Add or override one by putting a JSON file in ",
-      el("code", {}, res.data_folder), " (see docs/08-templates.md). Changes show up here at once."),
-    ...res.errors.map((e) => notice(`${e.file}: ${e.error}`, "error")),
+    el("p", { class: "muted" }, "Built-in templates ship with Basecamp. Add one below, or put a JSON file in ",
+      el("code", {}, res.data_folder), ". The format: ",
+      el("a", { href: TEMPLATE_DOCS, target: "_blank", rel: "noreferrer" }, "docs/08-templates.md"), "."),
+    addTemplateCard(again),
+    ...res.errors.map((e) => el("div", { class: "notice error" }, `${e.file}: ${e.error}`,
+      brokenId(e.file) ? el("div", { class: "buttons" },
+        el("button", { class: "small danger", onclick: () => remove(brokenId(e.file), "") }, "Delete this file")) : null)),
     ...res.templates.map((t) => el("div", { class: "card" },
       el("div", { class: "card-head" }, el("span", { class: "name" }, t.name),
         el("span", { class: "tag" }, t.overrides ? "data folder (overrides built-in)" : t.source)),
@@ -963,7 +979,57 @@ async function templatesPage(root) {
       t.unverified.length
         ? el("div", { class: "unverified" }, "Not yet checked: ", t.unverified.join(", ")) : null,
       t.notes ? el("p", { class: "muted" }, t.notes) : null,
-      el("div", { class: "muted" }, t.docs.map((d) => el("div", {}, el("a", { href: d, target: "_blank", rel: "noreferrer" }, d)))))));
+      el("div", { class: "muted" }, t.docs.map((d) => el("div", {}, el("a", { href: d, target: "_blank", rel: "noreferrer" }, d)))),
+      t.source === "data folder" ? el("div", { class: "buttons" },
+        el("button", { class: "small danger", onclick: () => remove(t.id, t.overrides ? " The built-in one comes back." : "") },
+          t.overrides ? "Delete (back to built-in)" : "Delete")) : null)));
+}
+
+// Add a template (D-129): paste JSON or pick a .json file; checked like a file (D-31).
+function addTemplateCard(done) {
+  const area = el("textarea", { rows: 12, spellcheck: "false", autocapitalize: "off",
+    placeholder: ['{', '  "id": "mygame",', '  "name": "My Game",', '  "steam_app_id": 123456,',
+      '  "exe": "MyGameServer.exe",', '  "ports": [{"port": 7777, "protocol": "udp", "label": "game"}]', '}'].join("\n") });
+  const file = el("input", { type: "file", accept: ".json,application/json" });
+  const out = el("div");
+  const MAX = 256 * 1024;
+  file.addEventListener("change", async () => {
+    const f = file.files[0];
+    if (!f) return;
+    if (f.size > MAX) { out.replaceChildren(notice(`${f.name} is ${Math.round(f.size / 1024)} KB; a template is at most 256 KB.`, "error")); return; }
+    area.value = await f.text();
+    out.replaceChildren(notice(`Loaded ${f.name}. Check or save it.`, "ok"));
+  });
+  const send = async (save) => {
+    const text = area.value;
+    if (!text.trim()) { out.replaceChildren(notice("Paste a template or pick a file first.", "error")); return; }
+    try {
+      const check = await api("POST", "/api/templates", { text, dry_run: true });
+      const unv = check.unverified.length ? ` Not yet checked: ${check.unverified.join(", ")}.` : "";
+      if (!save) {
+        out.replaceChildren(notice(`${check.name} (${check.id}) is valid.${unv}` +
+          (check.conflict === "override" ? " Saving it overrides the built-in template." : check.conflict === "replace" ? " Saving it replaces the data-folder template with that id." : ""), "ok"));
+        return;
+      }
+      if (check.conflict === "override" && !confirm(`${check.id} is a built-in template. Save this one to override it? Delete it later to get the built-in back.`)) return;
+      if (check.conflict === "replace" && !confirm(`Replace the data-folder template ${check.id}?`)) return;
+      const saved = await api("POST", "/api/templates", { text, replace: !!check.conflict });
+      toast(`Saved ${saved.id}`);
+      done();
+    } catch (e) {
+      out.replaceChildren(el("div", { class: "notice error" }, el("strong", {}, "Not valid: "), el("pre", { class: "notes" }, e.message)));
+    }
+  };
+  return el("details", { class: "card" },
+    el("summary", {}, "Add a template"),
+    el("p", { class: "hint" }, "Paste the JSON, or pick a .json file (phones: from Files or a download). It's checked the same way as a file in the data folder, then saved as ",
+      el("code", {}, "<id>.json"), " there. It shows up in Add server at once."),
+    field("JSON file", file),
+    field("Or paste it", area),
+    out,
+    el("div", { class: "buttons" },
+      el("button", { onclick: () => send(false) }, "Check"),
+      el("button", { class: "primary", onclick: () => send(true) }, "Save template")));
 }
 
 // -- config editor (R-40..R-43) -------------------------------------------------------------

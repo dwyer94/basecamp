@@ -26,6 +26,10 @@ GitHub release's notes, which the admin dashboard shows next to its Install butt
   command to copy). It only reads the rules, about once a minute or on **Check again**,
   and it isn't a reachability test: Tailscale's access rules, the address the game listens
   on or Steam networking can still stop friends.
+- **Add a template from the page**: paste the JSON or pick a `.json` file on the Templates
+  page. It's checked as strictly as a file and saved to the data folder's `templates`, so a
+  new game needs no file copied onto the host PC. Overriding a built-in or replacing an
+  existing one asks first; data-folder templates (and broken files) can be deleted there.
 - `install.ps1 -WhatIf` no longer fails with "Release check failed: No such file" when
   it would download a release: a dry run skips the download, so it now says the real run
   checks the signature once the file is there.

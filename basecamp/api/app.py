@@ -97,6 +97,14 @@ class SettingsIn(BaseModel):
     apply_backup_defaults: bool = False
 
 
+class TemplateIn(BaseModel):
+    """A template pasted or uploaded on the Templates page (D-129)."""
+
+    text: str = Field(min_length=1, max_length=templates.MAX_BYTES)
+    replace: bool = False  # override a built-in, or replace a data-folder template
+    dry_run: bool = False  # only check it
+
+
 class DraftIn(BaseModel):
     install_dir: str = ""
     template_id: str = ""  # "" = detect from the install's appmanifest (R-15)
@@ -741,6 +749,62 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             "errors": loaded.errors,
             "data_folder": str(settings.data_templates_dir),
         }
+
+    def template_files(template_id: str) -> tuple[Path, bool]:
+        """The data-folder file for ``template_id``, and whether a built-in has that id."""
+        return (settings.data_templates_dir / f"{template_id}.json",
+                (settings.templates_dir / f"{template_id}.json").is_file())
+
+    @app.post("/api/templates")
+    def add_template(body: TemplateIn, w: Admin) -> dict:
+        """Add a template from the page (D-129): validated like a file (D-31), saved as
+        ``<data>\\templates\\<id>.json``. Overriding a built-in or replacing a data-folder
+        template needs ``replace``; ``dry_run`` only checks it."""
+        if len(body.text.encode("utf-8")) > templates.MAX_BYTES:
+            raise HTTPException(413, f"Too big: a template is at most "
+                                     f"{templates.MAX_BYTES // 1024} KB")
+        try:
+            template = templates.parse(body.text)
+        except ValueError as e:
+            if not body.dry_run:
+                audit(w, "template.refused", None, str(e)[:300])
+            raise HTTPException(400, str(e)) from None
+        path, built_in = template_files(template.id)
+        conflict = "replace" if path.exists() else "override" if built_in else ""
+        result = {"id": template.id, "name": template.name, "conflict": conflict,
+                  "file": str(path), "unverified": template.unverified}
+        if body.dry_run:
+            return result
+        if conflict and not body.replace:
+            raise HTTPException(409, f"A data-folder template {template.id!r} is already "
+                                     "there; confirm to replace it" if conflict == "replace"
+                                else f"{template.id!r} is a built-in template; confirm to "
+                                     "override it")
+        try:
+            templates.save_data_template(settings.data_templates_dir, template.id, body.text)
+        except OSError as e:
+            raise HTTPException(500, f"Couldn't save it: {e}") from None
+        action = {"replace": "template.replace", "override": "template.override"}.get(
+            conflict, "template.add")
+        audit(w, action, None, template.id)
+        return {**result, "saved": True}
+
+    @app.delete("/api/templates/{template_id}", status_code=204)
+    def delete_template(template_id: str, w: Admin) -> None:
+        """Delete a data-folder template (a broken one too). Built-ins can't be deleted;
+        deleting an override brings the built-in back. Servers keep their settings."""
+        if not templates.ID_PATTERN.fullmatch(template_id):
+            raise HTTPException(404, "No such template")
+        path, built_in = template_files(template_id)
+        if not path.is_file() or path.is_symlink():
+            if built_in:
+                raise HTTPException(409, "Built-in templates can't be deleted")
+            raise HTTPException(404, "No such template in the data folder")
+        if path.resolve().parent != settings.data_templates_dir.resolve():
+            raise HTTPException(404, "No such template in the data folder")
+        path.unlink()
+        audit(w, "template.delete", None, template_id + (" (built-in is back)" if built_in
+                                                         else ""))
 
     @app.get("/api/steam/library")
     def steam_library(w: Admin) -> dict:

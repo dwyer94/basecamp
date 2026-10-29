@@ -24,7 +24,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-10** Add a server with: name, type (**Steam** or **Custom**), install folder, exe path, launch arguments, working folder, ports (each with UDP/TCP and a label such as "game" or "query"), **join port** (the one friends type in), start-on-boot toggle.
 - **R-11** Steam servers also have: Steam **app ID**, optional beta branch, "validate on update" toggle. Basecamp can do the **first install** too (run SteamCMD into an empty folder).
 - **R-12** Optional per server: **config files** (list of paths), **save folder** (for backups), **log source** (stdout, or a log file path the game writes), **RCON** (host, port, password), **stop recipe** (see R-22), notes.
-- **R-13** **Game templates** pre-fill the form for common games (Palworld, Enshrouded, Valheim, Satisfactory, etc.): app ID, default exe, args, ports, config file locations, save folder, stop recipe. Templates are plain JSON files in the repo, easy to add to; one in the data folder adds a game or overrides a built-in one without a release (D-31, [08-templates.md](08-templates.md)).
+- **R-13** **Game templates** pre-fill the form for common games (Palworld, Enshrouded, Valheim, Satisfactory, etc.): app ID, default exe, args, ports, config file locations, save folder, stop recipe. Templates are plain JSON files in the repo, easy to add to; one in the data folder adds a game or overrides a built-in one without a release, and can be pasted or uploaded on the Templates page (D-31, D-129, [08-templates.md](08-templates.md)).
 - **R-14** Edit and delete servers. Deleting removes Basecamp's record only; it never deletes game files (a separate "delete files too" option is **Later**).
 - **R-15** Import an existing install: point at a folder you already have, and Basecamp reads `steamapps/appmanifest_*.acf` to fill in the app ID. The Add form lists the folders in SteamCMD's `steamapps\common` to pick from, and a new Steam server's install folder defaults to `steamapps\common\<game folder>` (batch 1, D-125).
 
@@ -102,7 +102,6 @@ Ranked in [05-plan.md](05-plan.md), "After v1". Dropped: disk-space warnings and
 - Copying backups off the PC
 - Mod management (Workshop, Thunderstore)
 - A built-in relay for friends without Tailscale (see [03-friend-access.md](03-friend-access.md))
-- Add a template from the page (paste or upload JSON, validated as in D-31, saved to `<data>\templates\`), so a new game needs no file copied onto the host PC
 - **New game from a template** in one flow: pick the template → install folder (default under one games folder) → SteamCMD first install → first start to write its config files → ask for the values the template marks as required (e.g. Dragonwilds' `OwnerId`) → show the firewall command → ready to start. Today these are separate steps: add the server, press Install, edit the config by hand
 - A fresher UI: the page is a plain MVP
 - Friends can start, stop and restart servers: a friend permission (for listed logins, or anyone who reaches the page), separate from admin (no config, delete, updates or passwords), each click in the audit log by login. Needs Q-02 answered first (does a friend's request carry their login?). Until then only `admin_logins` can start or stop, and that gives friends everything
