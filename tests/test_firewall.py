@@ -79,7 +79,7 @@ def test_wrong_port_protocol_exe_or_profile_is_missing():
     assert status(policy(allow(remote="LocalSubnet")))["status"] == "too_broad"
 
 
-@pytest.mark.parametrize("remote", ["*", "LocalSubnet", f"{TS},192.168.1.0/24",
+@pytest.mark.parametrize("remote", ["*", "LocalSubnet", f"{TS},10.0.0.0/8",
                                     "0.0.0.0/0", "100.0.0.0/8", "10.0.0.1-10.0.0.9",
                                     "Internet", "fe80::/64"])
 def test_non_tailscale_remotes_are_too_broad(remote):
