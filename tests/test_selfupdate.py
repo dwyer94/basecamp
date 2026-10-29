@@ -501,3 +501,40 @@ def test_update_api_is_admin_only_and_audited(up_settings, store, keys, root, re
     sup.detach()
     actions = [e.action for e in store.list_audit()]
     assert {"update.check", "update.refused", "update.install", "settings"} <= set(actions)
+
+
+def test_restart_exits_for_the_launcher_and_is_audited(settings, store, keys, root):
+    stop = threading.Event()
+    u = updater(settings, store, keys, root, stop=stop)
+    sup = Supervisor(store, settings)
+    app = create_app(store, sup, settings, updater=u)
+    friend = {"x-forwarded-for": "100.64.0.7", "host": "box.example.ts.net",
+              "tailscale-user-login": "pal@example.com"}
+    with TestClient(app, base_url="http://127.0.0.1:8150", client=("127.0.0.1", 5)) as c:
+        assert c.post("/api/restart", headers=friend).status_code == 403
+        assert not stop.is_set()
+        started = c.get("/api/me").json()["started_at"]
+        res = c.post("/api/restart")
+        assert res.status_code == 202 and res.json()["started_at"] == started
+        assert stop.is_set() and u.exit_code == selfupdate.EXIT_RESTART
+        assert c.get("/api/update").json()["restarting"]
+        assert c.post("/api/restart").status_code == 409  # already on its way out
+        assert c.post("/api/update/install").status_code == 409
+    sup.detach()
+    assert u.finish_exit() == selfupdate.EXIT_RESTART
+    assert not (root / "pending.txt").exists()
+    actions = [e.action for e in store.list_audit()]
+    assert actions.count("basecamp.restart") == 1
+
+
+def test_restart_needs_the_launcher(settings, store, keys):
+    u = SelfUpdater(settings, store, root=None, launcher=None, current="0.1.0",
+                    public_key=keys[1].public_key())
+    sup = Supervisor(store, settings)
+    app = create_app(store, sup, settings, updater=u)
+    with TestClient(app, base_url="http://127.0.0.1:8150", client=("127.0.0.1", 5)) as c:
+        res = c.post("/api/restart")
+        assert res.status_code == 409 and "launcher" in res.json()["detail"]
+    sup.detach()
+    assert u.exit_code == 0
+    assert [e.action for e in store.list_audit()] == ["basecamp.restart.refused"]

@@ -60,6 +60,9 @@ from basecamp.settings import Settings
 log = logging.getLogger(__name__)
 
 EXIT_UPDATE = 3  # tells the launcher: pending.txt names the version to start
+# Restart Basecamp (D-126). Any exit but 3 makes the launcher start the same version again
+# after its back-off (5 s at first); its own code just makes the launcher's log clear.
+EXIT_RESTART = 4
 ROOT_ENV = "BASECAMP_ROOT"
 LAUNCHER_ENV = "BASECAMP_LAUNCHER"  # the launcher's version number (min_launcher)
 PUBLIC_KEY_FILE = Path(__file__).resolve().parent / "release_key.pub"
@@ -554,6 +557,8 @@ class SelfUpdater:
                                   "install updates here")
             if self._status == "installing":
                 raise UpdateError("Already installing")
+            if self.exit_code == EXIT_RESTART:
+                raise UpdateError("Basecamp is restarting; install it once it's back")
             ready = self._state.get("ready") or {}
             version = ready.get("version")
             if self._status != "ready" or not version or self._ready_dir is None:
@@ -569,6 +574,18 @@ class SelfUpdater:
         self.exit_code = EXIT_UPDATE
         self._stop.set()
         return version
+
+    def restart(self, who: str = "") -> None:
+        """Exit so the launcher starts this version again (D-126); games keep running."""
+        with self._lock:
+            if self.root is None or self.launcher is None:
+                raise UpdateError("Basecamp isn't running under the launcher, so nothing "
+                                  "would start it again. Restart it by hand")
+            if self._status == "installing" or self.exit_code:
+                raise UpdateError("Basecamp is already on its way out")
+            self.exit_code = EXIT_RESTART
+        log.info("Restarting Basecamp (asked by %s); exiting for the launcher", who)
+        self._stop.set()
 
     def maybe_auto_install(self, now: datetime | None = None) -> bool:
         hour = self._settings.update_auto_hour
@@ -703,6 +720,7 @@ class SelfUpdater:
                 "ready_version": ready.get("version", ""),
                 "last_check": self._state.get("last_check", ""),
                 "can_install": self.root is not None and self.launcher is not None,
+                "restarting": self.exit_code == EXIT_RESTART,
                 "launcher": self.launcher,
                 "has_key": self._key is not None,
                 "beta": self._settings.update_beta,

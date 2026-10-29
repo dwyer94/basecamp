@@ -17,6 +17,7 @@ import logging
 import mimetypes
 import sqlite3
 import threading
+import time
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -45,6 +46,7 @@ from basecamp.supervisor import InvalidState, PortInUse, Supervisor, SupervisorE
 log = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+STARTED_AT = time.time()  # tells the page a restart happened (D-126)
 STATUS_INTERVAL_S = 5.0  # uptime, CPU and RAM refresh on the status WebSocket
 _UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 _CONSOLE_QUEUE_MAX = 5000  # a console client this far behind is dropped
@@ -258,7 +260,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     @app.get("/api/me")
     def me(w: Who) -> dict:
         info: dict[str, Any] = {"login": w.login, "name": w.name, "is_admin": w.is_admin,
-                                "version": __version__}
+                                "version": __version__, "started_at": STARTED_AT}
         if w.is_admin:
             info["join_host"] = settings.join_host
             info["backup_defaults"] = {"backup_every_h": settings.default_backup_every_h,
@@ -809,6 +811,21 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             raise HTTPException(409, str(e)) from None
         audit(w, "update.install", None, f"{updater.current} -> {version}")
         return updater.view()
+
+    @app.post("/api/restart", status_code=202)
+    def restart_basecamp(w: Admin) -> dict:
+        """Restart Basecamp itself through the launcher (D-126). Game servers keep running
+        (R-04a); the page waits for a new ``started_at`` on /api/me."""
+        if any(j.get("kind") != Kind.CHECK.value for j in steam.jobs()):  # the queue is lost
+            raise HTTPException(409, "An install or update is running or queued; wait for it "
+                                     "or cancel it first")
+        try:
+            updater.restart(w.label)
+        except UpdateError as e:
+            audit(w, "basecamp.restart.refused", None, str(e))
+            raise HTTPException(409, str(e)) from None
+        audit(w, "basecamp.restart")
+        return {"restarting": True, "started_at": STARTED_AT}
 
     @app.post("/api/update/dismiss")
     def update_dismiss(w: Admin) -> dict:

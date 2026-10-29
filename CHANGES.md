@@ -11,6 +11,9 @@ GitHub release's notes, which the admin dashboard shows next to its Install butt
   ones a server already uses. Installs SteamCMD made there without `+force_install_dir`
   (manifest in the library, not the game folder) are detected and show their build too.
   Templates have a new optional field, `steam_installdir`.
+- **Restart Basecamp** button on the Settings page: Basecamp exits and the launcher starts
+  it again within seconds; game servers keep running. The page waits and reloads. It's
+  refused while an install or update is queued or running, and under `python -m basecamp`.
 - `install.ps1 -WhatIf` no longer fails with "Release check failed: No such file" when
   it would download a release: a dry run skips the download, so it now says the real run
   checks the signature once the file is there.

@@ -236,6 +236,30 @@ async function waitForVersion(from, box) {
   box.replaceChildren(notice("Basecamp hasn't come back after 5 minutes. Check the launcher's log on the host PC.", "error"));
 }
 
+// After Restart Basecamp (D-126): wait for a Basecamp that started after this one.
+async function waitForRestart(startedAt, box) {
+  box.replaceChildren(notice("Restarting… Game servers keep running. The page reloads when Basecamp is back."));
+  const deadline = Date.now() + 5 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const now = await api("GET", "/api/me");
+      if (now.started_at !== startedAt) { location.reload(); return; }
+    } catch (e) { /* down while it restarts */ }
+  }
+  box.replaceChildren(notice("Basecamp hasn't come back after 5 minutes. Check the launcher's log on the host PC.", "error"));
+}
+
+async function restartBasecamp(box) {
+  const busy = servers.filter((s) => s.steam && s.steam.job).length;
+  if (busy) { alert("An install or update is running or queued. Wait for it or cancel it first."); return; }
+  if (!confirm("Restart Basecamp? The page goes away for a few seconds; game servers keep running.")) return;
+  try {
+    const res = await api("POST", "/api/restart");
+    waitForRestart(res.started_at, box);
+  } catch (e) { alert(e.message); }
+}
+
 async function installUpdate(u, box) {
   const v = u.ready_version;
   const again = u.failed_versions.includes(v)
@@ -1259,7 +1283,22 @@ async function settingsPage(root) {
       el("p", { class: "muted", style: "margin-top:0" }, "Change these in ", el("code", {}, res.settings_file), " and restart Basecamp."),
       el("table", {}, el("tbody", {},
         el("tr", {}, el("td", {}, "Admin logins"), el("td", {}, res.admin_logins.length ? res.admin_logins.join(", ") : "none (only this PC)")),
-        el("tr", {}, el("td", {}, "Config copies kept"), el("td", {}, String(res.config_copies_keep)))))));
+        el("tr", {}, el("td", {}, "Config copies kept"), el("td", {}, String(res.config_copies_keep)))))),
+
+    el("h2", {}, "Basecamp"),
+    restartCard(res.update));
+}
+
+// Restart Basecamp (D-126): only under the launcher, which starts it again.
+function restartCard(u) {
+  const box = el("div");
+  if (u.restarting) waitForRestart(me.started_at, box);
+  return el("div", { class: "card" }, box,
+    el("div", { class: "buttons", style: "margin-top:0" },
+      el("button", { class: "danger", disabled: !u.can_install, onclick: () => restartBasecamp(box) }, "Restart Basecamp")),
+    el("div", { class: "hint" }, u.can_install
+      ? "Basecamp exits and its launcher starts it again within seconds. Game servers keep running and are picked up again; an install or update must finish first."
+      : "Basecamp isn't running under its launcher here (python -m basecamp), so nothing would start it again. Restart it by hand."));
 }
 
 // -- audit log -------------------------------------------------------------------------

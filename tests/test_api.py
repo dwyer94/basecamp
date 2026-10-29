@@ -78,7 +78,8 @@ def test_local_and_listed_logins_are_admin_others_friends(client):
     assert client.get("/api/me").json()["is_admin"]  # this PC
     assert client.get("/api/me", headers=AS_ADMIN).json()["is_admin"]
     me = client.get("/api/me", headers=AS_FRIEND).json()
-    assert me == {"login": FRIEND, "name": "", "is_admin": False, "version": me["version"]}
+    assert me == {"login": FRIEND, "name": "", "is_admin": False, "version": me["version"],
+                  "started_at": me["started_at"]}
 
 
 def test_friend_json_has_only_friend_fields(client):

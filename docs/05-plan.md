@@ -127,7 +127,7 @@ The Later list in [01-requirements.md](01-requirements.md), ranked (first cut, 2
 
 **Batch 1: managing it from the phone** (small, independent; one release)
 1. ~~Default Steam install folder and a pick-list of `steamapps\common` folders (S). Adding or importing a server needs no typed path.~~ **Done** (D-125).
-2. **Restart Basecamp** button (S).
+2. ~~**Restart Basecamp** button (S).~~ **Done** (D-126).
 3. Apply `settings.toml` changes without a restart, `admin_logins` included (S-M).
 4. Firewall indicator per server (M). Catches the "Running but nobody can join" case on the host PC, where Windows never shows its popup.
 5. Add a template from the page (S-M).

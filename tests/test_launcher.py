@@ -275,3 +275,17 @@ def test_only_one_launcher_per_folder(tmp_path):
     assert first is not None
     assert launcher_mod._single_instance(tmp_path) is None
     first.close()
+
+
+def test_restart_exit_starts_the_same_version_again(env):
+    """Restart Basecamp (D-126) needs nothing new from launcher 2: exit code 4 is just
+    another exit, started again after the first back-off step."""
+    from basecamp.selfupdate import EXIT_RESTART
+
+    add_version(env.root, "1.0.0")
+    env.launcher.write("current.txt", "1.0.0")
+    env.run()
+    wait_for(lambda: env.starts() == ["1.0.0"])
+    env.exit_basecamp(EXIT_RESTART)
+    wait_for(lambda: env.starts() == ["1.0.0", "1.0.0"])
+    assert env.file("current.txt") == "1.0.0"
