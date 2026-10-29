@@ -123,7 +123,30 @@ Picked by the owner after Phase 6 (a disk-space guard was dropped).
 
 ## After v1
 
-The Later list in [01-requirements.md](01-requirements.md), roughly in this order: player counts → update-available badge + scheduled updates → scheduled restarts → playit.gg join addresses (if chosen) → custom update commands → backups off the PC.
+The Later list in [01-requirements.md](01-requirements.md), ranked (first cut, 2026-10-28). Size: S = a day or less, M = a few days, L = a week or more.
+
+**Batch 1: managing it from the phone** (small, independent; one release)
+1. Default Steam install folder and a pick-list of `steamapps\common` folders (S). Adding or importing a server needs no typed path.
+2. **Restart Basecamp** button (S).
+3. Apply `settings.toml` changes without a restart, `admin_logins` included (S-M).
+4. Firewall indicator per server (M). Catches the "Running but nobody can join" case on the host PC, where Windows never shows its popup.
+5. Add a template from the page (S-M).
+
+**Batch 2: friends and new games**
+6. **New game from a template** in one flow (M-L). Builds on 1 and 5; templates gain a field for the values a game needs before it works (e.g. Dragonwilds' `OwnerId`).
+7. Friend start/stop/restart permission (M). First the Q-02 test with one friend (cheap, and it decides whether this works at all).
+8. Player count (M). Friends see who's on; and 9 can skip or delay a restart or update while players are on.
+9. Scheduled restarts, then scheduled updates (S-M each). Use the stop warnings that exist, and 8 when it's there.
+
+**Batch 3: the fresher UI** (L)
+10. After batches 1 and 2, so the new screens (the new-game flow, friend controls, player counts) are designed once rather than restyled twice.
+
+**Only when a need shows up**
+11. Copying backups off the PC (M). Same-disk backups are fine for now (Q-08).
+12. Update commands for custom servers (S). When a non-Steam server is added.
+13. Steam login for games that need a real account (M; a password and Steam Guard to keep in the data folder). When a game needs it.
+14. Mod management (L, per game). When a game is modded through Basecamp.
+15. A relay for friends without Tailscale (L, and it changes the security model). Only if a friend can't use Tailscale (Q-03), see [03-friend-access.md](03-friend-access.md).
 
 ## Rough size
 

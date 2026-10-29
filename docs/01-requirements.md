@@ -92,6 +92,8 @@ Details in [07-updates.md](07-updates.md).
 
 ## Out of scope for v1 (Later list)
 
+Ranked in [05-plan.md](05-plan.md), "After v1". Dropped: disk-space warnings and a PC-wide CPU/RAM graph (owner, 2026-10-28; a separate monitoring tool covers the PC). Multiple admins already work (`admin_logins` is a list); per-friend rights are the friend permission below.
+
 - Player count / player list (A2S query, Palworld REST API, RCON `players`)
 - Scheduled updates (R-34; the update-available badge is built)
 - Scheduled restarts (e.g. daily 4 am)
@@ -100,8 +102,6 @@ Details in [07-updates.md](07-updates.md).
 - Copying backups off the PC
 - Mod management (Workshop, Thunderstore)
 - A built-in relay for friends without Tailscale (see [03-friend-access.md](03-friend-access.md))
-- Multiple admins / per-friend permissions to start and stop
-- PC-wide CPU/RAM graph (a separate monitoring tool may already cover this). Disk-space warnings were dropped (owner, 2026-10-28)
 - Firewall indicator per server: whether each port has a Tailscale-only allow rule, is missing one, is blocked or is too broad (read-only; the page shows the `add-game-firewall-rule.ps1` command to copy)
 - **Restart Basecamp** button on the Settings page (games keep running), instead of `schtasks /End` + `/Run`
 - Apply `settings.toml` changes such as `admin_logins` without a restart
