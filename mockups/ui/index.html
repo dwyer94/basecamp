@@ -1,0 +1,1577 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Basecamp UI Mock</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,650;12..96,750&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Basecamp UI mock (batch 3). Plain HTML/CSS/JS, no build step, so it carries over to basecamp/web/.
+   Layout: sidebar + content on wide screens; top bar + bottom tab bar on phones.
+   Every server shows its state twice: a coloured band with the state word, and the key fact for that state. */
+:root {
+  /* neutrals: cool lichen grey, a touch of green */
+  --bg: #f1f4f1;
+  --surface: #ffffff;
+  --surface-2: #e8ece8;
+  --ink: #17201c;
+  --muted: #59675f;
+  --line: #d6ddd7;
+  /* accent: indigo, kept apart from every state colour */
+  --accent: #3446c9;
+  --accent-hover: #2a3aae;
+  --accent-ink: #ffffff;
+  --accent-soft: #e5e8fb;
+  /* states */
+  --run: #157f47;     --run-soft: #dcf0e3;
+  --warn: #965800;    --warn-soft: #faead0;
+  --bad: #be2a2a;     --bad-soft: #f8dfdc;
+  --upd: #0b6a8f;     --upd-soft: #d9eef5;
+  --idle: #5f6b65;    --idle-soft: #e4e9e5;
+  --console-bg: #131915;
+  --console-ink: #cfe0d5;
+  --console-dim: #7f9488;
+  /* mock-only annotations, deliberately off-palette */
+  --note: #a8137a;    --note-soft: #fbe2f2;
+
+  --f-display: "Bricolage Grotesque", "Segoe UI Variable Display", system-ui, sans-serif;
+  --f-body: "Instrument Sans", "Segoe UI Variable Text", system-ui, -apple-system, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --side: 236px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1311; --surface: #161c19; --surface-2: #1f2723; --ink: #e5ece8; --muted: #93a29a; --line: #2a342f;
+    --accent: #95a1ff; --accent-hover: #b0b9ff; --accent-ink: #10142e; --accent-soft: #222849;
+    --run: #55cd89; --run-soft: #15301f; --warn: #f1b04e; --warn-soft: #36280f; --bad: #ff7d72; --bad-soft: #3c1a18;
+    --upd: #54c4e8; --upd-soft: #112e39; --idle: #9ba8a1; --idle-soft: #232c28;
+    --console-bg: #090d0b; --console-ink: #cfe0d5; --console-dim: #6f8479;
+    --note: #ff80cc; --note-soft: #3a1631;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1311; --surface: #161c19; --surface-2: #1f2723; --ink: #e5ece8; --muted: #93a29a; --line: #2a342f;
+  --accent: #95a1ff; --accent-hover: #b0b9ff; --accent-ink: #10142e; --accent-soft: #222849;
+  --run: #55cd89; --run-soft: #15301f; --warn: #f1b04e; --warn-soft: #36280f; --bad: #ff7d72; --bad-soft: #3c1a18;
+  --upd: #54c4e8; --upd-soft: #112e39; --idle: #9ba8a1; --idle-soft: #232c28;
+  --console-bg: #090d0b; --console-ink: #cfe0d5; --console-dim: #6f8479;
+  --note: #ff80cc; --note-soft: #3a1631;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 var(--f-body);
+  -webkit-font-smoothing: antialiased;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10;
+  background: var(--surface);
+}
+a { color: var(--accent); }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 650; letter-spacing: -0.01em; text-wrap: balance; margin: 0; }
+h1 { font-size: 1.85rem; line-height: 1.15; }
+h2 { font-size: 1.25rem; line-height: 1.25; }
+h3 { font-size: 1.02rem; line-height: 1.3; }
+p { margin: 0; }
+code, .mono-t { font-family: var(--f-mono); font-size: 0.88em; }
+svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.muted { color: var(--muted); }
+.small { font-size: 0.86rem; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ---------- mock bar (not part of the design) ---------- */
+.mockbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  padding-block: 7px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--note-soft); color: var(--note); font-size: 0.82rem; font-weight: 500;
+  border-bottom: 1px dashed var(--note);
+}
+.mockbar a { color: var(--note); }
+.mockbar label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.mockbar .seg button { color: var(--note); border-color: var(--note); }
+.mockbar .seg button[aria-pressed="true"] { background: var(--note); color: var(--surface); }
+.note {
+  display: flex; gap: 8px; align-items: flex-start;
+  border: 1px dashed var(--note); background: var(--note-soft); color: var(--note);
+  border-radius: var(--r-sm); padding: 8px 10px; font-size: 0.82rem; line-height: 1.4;
+}
+.note b { font-weight: 600; }
+.newtag {
+  display: inline-block; vertical-align: middle; font: 600 0.68rem/1 var(--f-body); letter-spacing: 0.04em;
+  color: var(--note); border: 1px dashed var(--note); border-radius: 99px; padding: 3px 7px; background: var(--note-soft);
+}
+body.no-notes .note, body.no-notes .newtag { display: none !important; }
+
+/* ---------- top bar ---------- */
+.topbar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+  display: flex; align-items: center; gap: 12px; min-height: 56px;
+  padding-block: 8px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 9px; color: var(--ink); text-decoration: none; font: 750 1.15rem/1 var(--f-display); letter-spacing: -0.02em; }
+.brand .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--ink); color: var(--surface); display: grid; place-items: center; }
+.brand .logo svg { width: 19px; height: 19px; stroke-width: 2; }
+.topbar .spacer { flex: 1; }
+.offline { display: inline-flex; gap: 6px; align-items: center; font-size: 0.82rem; font-weight: 600; color: var(--warn); background: var(--warn-soft); border-radius: 99px; padding: 4px 10px; }
+.iconbtn { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.iconbtn:hover { background: var(--surface-2); }
+.who { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; color: var(--muted); }
+.avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 600; font-size: 0.8rem; }
+.topbar .newgame-top { display: none; }
+
+/* ---------- shell ---------- */
+.shell { display: grid; grid-template-columns: var(--side) minmax(0, 1fr); min-height: calc(100vh - 56px); }
+.side {
+  position: sticky; top: calc(56px + env(safe-area-inset-top, 0px)); align-self: start; height: calc(100vh - 56px);
+  padding: 18px 12px; padding-left: max(12px, env(safe-area-inset-left, 0px));
+  border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px;
+}
+.side .btn.primary { justify-content: center; margin-bottom: 12px; }
+.navlink { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: 9px; color: var(--ink); text-decoration: none; font-weight: 500; }
+.navlink:hover { background: var(--surface-2); }
+.navlink[aria-current="page"] { background: var(--accent-soft); color: var(--accent); }
+.navlink .count { margin-left: auto; font-size: 0.75rem; font-weight: 600; background: var(--bad); color: var(--surface); border-radius: 99px; padding: 1px 7px; }
+.side .foot { margin-top: auto; font-size: 0.78rem; color: var(--muted); padding: 10px 11px; }
+
+main {
+  min-width: 0;
+  padding-block: 24px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.view { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+.view.narrow { max-width: 820px; }
+.pagehead { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 20px; }
+.pagehead .grow { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.crumb { font-size: 0.85rem; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.crumb a { color: var(--muted); text-decoration: none; }
+.crumb a:hover { color: var(--accent); }
+
+/* tab bar on phones */
+.tabbar { display: none; }
+
+/* ---------- buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 15px;
+  border-radius: var(--r-md); border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  font: 600 0.92rem/1 var(--f-body); text-decoration: none; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--surface-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover { background: var(--surface-2); }
+.btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.btn.danger:hover { background: var(--bad-soft); }
+.btn.danger.solid { background: var(--bad); color: var(--surface); border-color: var(--bad); }
+.btn.sm { min-height: 32px; padding: 0 11px; font-size: 0.84rem; border-radius: 8px; }
+.btn.lg { min-height: 52px; padding: 0 22px; font-size: 1.02rem; border-radius: 12px; }
+.btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.btnrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.seg { display: inline-flex; border-radius: 9px; overflow: hidden; }
+.seg button { font: 500 0.82rem/1 var(--f-body); padding: 6px 10px; background: transparent; border: 1px solid var(--line); color: var(--ink); cursor: pointer; }
+.seg button + button { border-left: 0; }
+.seg button:first-child { border-radius: 9px 0 0 9px; }
+.seg button:last-child { border-radius: 0 9px 9px 0; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+
+/* ---------- state pills and chips ---------- */
+[data-st="run"]  { --st: var(--run);  --st-soft: var(--run-soft); }
+[data-st="warn"] { --st: var(--warn); --st-soft: var(--warn-soft); }
+[data-st="bad"]  { --st: var(--bad);  --st-soft: var(--bad-soft); }
+[data-st="upd"]  { --st: var(--upd);  --st-soft: var(--upd-soft); }
+[data-st="idle"] { --st: var(--idle); --st-soft: var(--idle-soft); }
+.pill { display: inline-flex; align-items: center; gap: 7px; font-weight: 650; font-size: 0.86rem; color: var(--st); background: var(--st-soft); border-radius: 99px; padding: 4px 11px 4px 9px; white-space: nowrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--st); flex: none; }
+.pill .dot.hollow, .band .dot.hollow { background: transparent; box-shadow: inset 0 0 0 2px var(--st); }
+[data-st="run"] .dot.live { animation: pulse 2.4s ease-out infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run) 55%, transparent); } 70%, 100% { box-shadow: 0 0 0 7px transparent; } }
+@media (prefers-reduced-motion: reduce) { .dot.live { animation: none !important; } }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; font-weight: 500; padding: 3px 9px; border-radius: 99px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.chip svg.i { width: 14px; height: 14px; }
+.chip.c-upd { background: var(--upd-soft); color: var(--upd); }
+.chip.c-ok { background: var(--run-soft); color: var(--run); }
+.chip.c-warn { background: var(--warn-soft); color: var(--warn); }
+.chip.c-bad { background: var(--bad-soft); color: var(--bad); }
+
+/* ---------- surfaces ---------- */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.panel > header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.panel > header h2, .panel > header h3 { flex: 1 1 auto; }
+.hint { font-size: 0.84rem; color: var(--muted); }
+.callout { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: var(--r-md); background: var(--st-soft); color: var(--ink); }
+.callout > svg.i { color: var(--st); margin-top: 2px; }
+.callout .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.callout strong { color: var(--st); }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th { text-align: left; font-weight: 600; font-size: 0.8rem; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--line); }
+td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td .hint { margin-top: 2px; }
+
+/* ---------- dashboard ---------- */
+.summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 26px; }
+.summary h1 { font-size: clamp(1.6rem, 3.2vw, 2.2rem); }
+.summary .stats { display: flex; gap: 22px; flex-wrap: wrap; }
+.stat { display: flex; flex-direction: column; }
+.stat b { font: 650 1.5rem/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
+.stat span { font-size: 0.82rem; color: var(--muted); }
+
+.attention { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); overflow: hidden; }
+.attention > header { padding: 12px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
+.att { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 16px; border-top: 1px solid var(--line); }
+.att:first-of-type { border-top: 0; }
+.att .ico { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--st-soft); color: var(--st); flex: none; }
+.att .what { flex: 1 1 240px; min-width: 0; }
+.att .what b { font-weight: 600; }
+.att details { flex-basis: 100%; font-size: 0.86rem; color: var(--muted); padding-left: 48px; }
+.att details pre { font-family: var(--f-body); white-space: pre-wrap; margin: 6px 0 0; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 16px; }
+.srv { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+.band { display: flex; align-items: center; gap: 9px; padding: 10px 16px; background: var(--st-soft); color: var(--st); text-decoration: none; font-weight: 650; }
+.band .fact { margin-left: auto; font-weight: 500; font-size: 0.86rem; font-variant-numeric: tabular-nums; text-align: right; }
+.srv-body { padding: 14px 16px 4px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
+.srv-title { display: flex; align-items: center; gap: 12px; }
+.mono { width: 42px; height: 42px; border-radius: 11px; display: grid; place-items: center; background: var(--surface-2); font: 750 0.95rem/1 var(--f-display); color: var(--ink); flex: none; letter-spacing: -0.02em; }
+.srv-name { font: 650 1.15rem/1.2 var(--f-display); color: var(--ink); text-decoration: none; }
+.srv-name:hover { color: var(--accent); }
+.srv-title .grow { flex: 1; min-width: 0; }
+.players { text-align: right; line-height: 1.1; }
+.players b { display: block; font: 650 1.45rem/1 var(--f-display); font-variant-numeric: tabular-nums; }
+.players span { font-size: 0.76rem; color: var(--muted); }
+.addr { display: flex; align-items: center; gap: 6px; background: var(--surface-2); border-radius: var(--r-md); padding: 4px 4px 4px 12px; min-width: 0; }
+.addr code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
+.progress { height: 8px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+.progress i { display: block; height: 100%; background: var(--upd); border-radius: 99px; }
+.lastline { font: 0.8rem/1.4 var(--f-mono); background: var(--console-bg); color: var(--console-ink); border-radius: var(--r-sm); padding: 8px 10px; overflow-x: auto; white-space: pre; }
+.srv-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px 16px; }
+.srv-actions .btn { flex: 1 1 auto; justify-content: center; }
+.srv-actions .btn.ghost { flex: 0 0 auto; }
+
+/* ---------- server page ---------- */
+.srvhead { display: flex; flex-direction: column; gap: 16px; }
+.srvhead .top { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: center; }
+.srvhead .mono { width: 56px; height: 56px; font-size: 1.15rem; border-radius: 14px; }
+.srvhead h1 { font-size: clamp(1.6rem, 3vw, 2.1rem); }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 0.88rem; color: var(--muted); }
+.facts b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.actionbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.actionbar .sep { flex: 1; }
+.force { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--line); }
+.force .hint { font-size: 0.78rem; }
+
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.tabs button { font: 600 0.9rem/1 var(--f-body); padding: 12px 14px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; display: inline-flex; gap: 7px; align-items: center; white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tabs button:hover { color: var(--ink); }
+
+.console { background: var(--console-bg); color: var(--console-ink); border-radius: var(--r-lg); overflow: hidden; display: flex; flex-direction: column; }
+.console .lines { font: 0.82rem/1.6 var(--f-mono); padding: 14px 16px; height: 340px; overflow: auto; white-space: pre; }
+.console .l-sys { color: var(--console-dim); }
+.console .l-in { color: #9fb2ff; }
+.console .l-warn { color: #f1c27a; }
+.console .l-steam { color: #7fd3ef; }
+.console form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid color-mix(in srgb, var(--console-ink) 15%, transparent); flex-wrap: wrap; }
+.console select, .console input { background: color-mix(in srgb, var(--console-ink) 8%, var(--console-bg)); color: var(--console-ink); border: 1px solid color-mix(in srgb, var(--console-ink) 20%, transparent); border-radius: 8px; font: 0.88rem var(--f-mono); padding: 8px 10px; min-height: 40px; }
+.console input { flex: 1 1 200px; min-width: 0; }
+.quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+.list { display: flex; flex-direction: column; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 0; border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; }
+.row .grow { flex: 1 1 220px; min-width: 0; }
+.row .grow b { font-weight: 600; }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+
+/* ---------- forms ---------- */
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field label, .flabel { font-weight: 600; font-size: 0.9rem; }
+input[type="text"], input[type="number"], input[type="time"], input[type="password"], input:not([type]), select, textarea {
+  font: 0.95rem var(--f-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: 9px 11px; min-height: 42px; width: 100%; min-width: 0;
+}
+textarea { font-family: var(--f-mono); font-size: 0.85rem; line-height: 1.5; resize: vertical; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.inline { display: flex; gap: 8px; align-items: center; }
+.inline > input, .inline > select { flex: 1; }
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 0.92rem; cursor: pointer; }
+.check input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+.fgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 14px 16px; }
+.formlayout { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 28px; align-items: start; }
+.formindex { position: sticky; top: 80px; display: flex; flex-direction: column; gap: 2px; font-size: 0.88rem; }
+.formindex a { color: var(--muted); text-decoration: none; padding: 6px 10px; border-radius: 7px; }
+.formindex a:hover { background: var(--surface-2); color: var(--ink); }
+.formindex a.danger-link { color: var(--bad); margin-top: 8px; }
+.formsections { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.dangerzone { border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
+.dangerzone h2 { color: var(--bad); }
+.choice { display: flex; flex-direction: column; gap: 8px; }
+.choice label { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); cursor: pointer; }
+.choice label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.choice input { accent-color: var(--accent); width: 18px; height: 18px; margin-top: 2px; flex: none; }
+.choice b { display: block; font-weight: 600; }
+.stickybar { position: sticky; bottom: 0; z-index: 5; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: 0 -6px 24px color-mix(in srgb, var(--ink) 8%, transparent); }
+.stickybar .grow { flex: 1; min-width: 0; }
+.drop { border: 2px dashed var(--line); border-radius: var(--r-lg); padding: 22px; text-align: center; display: flex; flex-direction: column; gap: 8px; align-items: center; color: var(--muted); }
+.drop svg.i { width: 28px; height: 28px; color: var(--accent); }
+
+/* ---------- new game stepper ---------- */
+.stepper { display: flex; gap: 0; counter-reset: s; overflow-x: auto; padding-bottom: 2px; }
+.stepper button { flex: 1 0 auto; display: flex; align-items: center; gap: 8px; background: none; border: 0; border-top: 3px solid var(--line); padding: 10px 14px 4px 0; color: var(--muted); font: 600 0.86rem/1.2 var(--f-body); cursor: pointer; text-align: left; }
+.stepper button::before { counter-increment: s; content: counter(s); width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--muted); font-size: 0.78rem; flex: none; }
+.stepper button.done { border-top-color: var(--run); color: var(--ink); }
+.stepper button.done::before { content: "✓"; background: var(--run); color: var(--surface); }
+.stepper button[aria-current="step"] { border-top-color: var(--accent); color: var(--ink); }
+.stepper button[aria-current="step"]::before { background: var(--accent); color: var(--accent-ink); }
+.games { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 10px; }
+.game { display: flex; gap: 12px; align-items: center; text-align: left; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); cursor: pointer; font: inherit; color: inherit; }
+.game[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.game b { display: block; font-weight: 600; }
+.game .mono { width: 38px; height: 38px; }
+
+/* ---------- activity ---------- */
+.feed { display: flex; flex-direction: column; }
+.day { font: 650 0.95rem/1 var(--f-display); padding: 18px 0 8px; color: var(--muted); }
+.ev { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 11px 0; border-top: 1px solid var(--line); }
+.ev .ico { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--st-soft); color: var(--st); }
+.ev time { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; padding-top: 2px; }
+.ev .who { font-size: 0.82rem; }
+.filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.filters button { font: 500 0.84rem/1 var(--f-body); padding: 8px 12px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.filters button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+
+/* ---------- welcome ---------- */
+.welcome { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.welcome h1 { font-size: clamp(2rem, 4.5vw, 3rem); line-height: 1.05; letter-spacing: -0.025em; }
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: w; display: flex; flex-direction: column; gap: 10px; }
+.steps li { counter-increment: w; display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 4px 12px; padding: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.steps li::before { content: counter(w); grid-row: span 3; width: 32px; height: 32px; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; font: 650 0.9rem/1 var(--f-display); }
+.steps li.ok::before { content: "✓"; background: var(--run); color: var(--surface); }
+.steps li .btnrow { margin-top: 6px; }
+
+/* ---------- friend view ---------- */
+body[data-role="friend"] .side, body[data-role="friend"] .tabbar, body[data-role="friend"] .admin-only { display: none !important; }
+body[data-role="friend"] .shell { grid-template-columns: minmax(0, 1fr); }
+.friend { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.friend h1 { font-size: 1.7rem; }
+.fcard { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; }
+.fcard .band { padding: 12px 18px; font-size: 1rem; }
+.fcard .body { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 14px; }
+.fcard .titlerow { display: flex; align-items: center; gap: 12px; }
+.fcard .titlerow h2 { flex: 1; font-size: 1.4rem; }
+.fcard .players b { font-size: 1.9rem; }
+.ticket { border: 1.5px dashed var(--line); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.ticket code { font-size: 1.15rem; font-weight: 500; letter-spacing: 0.01em; overflow-wrap: anywhere; }
+.ticket .btn { justify-content: center; }
+.fcard .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.fcard .controls .btn { justify-content: center; }
+.fcard .controls .btn.primary { grid-column: 1 / -1; }
+body.friend-locked .controls { display: none; }
+
+/* ---------- views index ---------- */
+.vindex { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 12px; }
+.vindex a { display: flex; flex-direction: column; gap: 6px; padding: 14px; border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-lg); text-decoration: none; color: var(--ink); }
+.vindex a:hover { border-color: var(--accent); }
+.vindex a b { font-family: var(--f-display); font-weight: 650; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.vindex a span { font-size: 0.86rem; color: var(--muted); }
+
+/* ---------- dialog and toast ---------- */
+dialog { border: 1px solid var(--line); border-radius: 18px; background: var(--surface); color: var(--ink); padding: 0; width: min(440px, calc(100vw - 32px)); }
+dialog::backdrop { background: color-mix(in srgb, #000 45%, transparent); }
+dialog .inner { padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+dialog .btnrow { justify-content: flex-end; }
+.toast { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--surface); padding: 10px 16px; border-radius: 99px; font-size: 0.88rem; font-weight: 500; z-index: 50; max-width: calc(100vw - 32px); }
+
+/* ---------- phones and small tablets ---------- */
+@media (max-width: 899px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .side { display: none; }
+  .who .name { display: none; }
+  .topbar .newgame-top { display: inline-flex; }
+  .tabbar {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    background: var(--surface); border-top: 1px solid var(--line);
+    padding-top: 6px; padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px));
+  }
+  .tabbar a { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 0.72rem; font-weight: 600; color: var(--muted); text-decoration: none; padding: 6px 0; border-radius: 10px; position: relative; }
+  .tabbar a[aria-current="page"] { color: var(--accent); }
+  .tabbar a svg.i { width: 22px; height: 22px; }
+  .tabbar .count { position: absolute; top: 2px; left: calc(50% + 6px); font-size: 0.66rem; background: var(--bad); color: var(--surface); border-radius: 99px; padding: 0 5px; }
+  body[data-role="admin"] main { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+  .formlayout { grid-template-columns: minmax(0, 1fr); }
+  .formindex { position: static; flex-direction: row; overflow-x: auto; scrollbar-width: none; }
+  .formindex a { white-space: nowrap; background: var(--surface); border: 1px solid var(--line); border-radius: 99px; }
+  .formindex a.danger-link { margin-top: 0; }
+  .split, .welcome { grid-template-columns: minmax(0, 1fr); }
+  .force { border-left: 0; padding-left: 0; }
+  .actionbar .sep { display: none; }
+}
+@media (max-width: 520px) {
+  .who { display: none; }
+  .summary .stats { gap: 16px; }
+  .srvhead .mono { width: 46px; height: 46px; }
+  .console .lines { height: 300px; font-size: 0.76rem; }
+  .actionbar .btn { flex: 1 1 auto; justify-content: center; }
+  .force { flex-basis: 100%; }
+  .force .btn { flex: 0 0 auto; }
+  .ev { grid-template-columns: 34px minmax(0, 1fr); }
+  .ev time { grid-column: 2; padding-top: 0; }
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-logo" viewBox="0 0 24 24"><path d="M3 20 12 4l9 16z"/><path d="M9.5 20 12 15.5l2.5 4.5"/></symbol>
+    <symbol id="i-servers" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-template" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 9v11"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h4"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></symbol>
+    <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 4.5a3.5 3.5 0 0 1 0 7M18 14c2 .7 3 2.6 3 6"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/></symbol>
+  </defs>
+</svg>
+
+<div class="mockbar">
+  <strong>Mockup</strong>
+  <span class="seg" role="group" aria-label="Preview as">
+    <button type="button" id="as-admin" aria-pressed="true">Admin</button>
+    <button type="button" id="as-friend" aria-pressed="false">Friend</button>
+  </span>
+  <a href="#views">All views</a>
+  <label><input type="checkbox" id="mock-notes" checked> Notes</label>
+  <label><input type="checkbox" id="mock-offline"> Connection lost</label>
+</div>
+
+<header class="topbar">
+  <a class="brand" href="#dashboard" id="brand"><span class="logo"><svg class="i"><use href="#i-logo"/></svg></span><span id="brand-name">Basecamp</span></a>
+  <span class="offline" id="offline" hidden><svg class="i"><use href="#i-wifi"/></svg>Reconnecting…</span>
+  <span class="spacer"></span>
+  <a class="btn primary sm newgame-top admin-only" href="#newgame"><svg class="i"><use href="#i-plus"/></svg>New game</a>
+  <button class="iconbtn" id="theme" type="button" aria-label="Theme: follows the system"><svg class="i"><use href="#i-auto"/></svg></button>
+  <span class="who admin-only"><span class="avatar">OW</span><span class="name">Owner</span></span>
+</header>
+
+<div class="shell">
+  <nav class="side" aria-label="Main">
+    <a class="btn primary" href="#newgame"><svg class="i"><use href="#i-plus"/></svg>New game</a>
+    <a class="navlink" href="#dashboard" data-nav="dashboard"><svg class="i"><use href="#i-servers"/></svg>Servers</a>
+    <a class="navlink" href="#activity" data-nav="activity"><svg class="i"><use href="#i-activity"/></svg>Activity<span class="count">2</span></a>
+    <a class="navlink" href="#templates" data-nav="templates"><svg class="i"><use href="#i-template"/></svg>Templates</a>
+    <a class="navlink" href="#prefs" data-nav="prefs"><svg class="i"><use href="#i-sliders"/></svg>Settings</a>
+    <div class="foot">Basecamp 0.10.2<br>Up 6 days on the host PC</div>
+  </nav>
+
+  <main id="main">
+
+<!-- ===================================================== DASHBOARD -->
+<section class="view" id="v-dashboard" data-view>
+  <div class="summary">
+    <h1>3 of 5 servers up</h1>
+    <div class="stats">
+      <div class="stat"><b>9</b><span>players online</span></div>
+      <div class="stat"><b>2</b><span>need you</span></div>
+      <div class="stat"><b>21.4 GB</b><span>RAM free of 32</span></div>
+    </div>
+  </div>
+
+  <section class="attention" aria-label="Needs you">
+    <header><h2>Needs you</h2><span class="newtag">New</span></header>
+    <div class="att" data-st="bad">
+      <span class="ico"><svg class="i"><use href="#i-alert"/></svg></span>
+      <div class="what"><b>V Rising crashed 3 times and Basecamp stopped retrying.</b><div class="hint">Last at 14:02, exit code -1073741819. Check the console, then start it again.</div></div>
+      <div class="btnrow"><a class="btn sm" href="#server" data-open="vr">Open console</a><button class="btn sm primary" data-toast="Start: V Rising">Start</button></div>
+    </div>
+    <div class="att" data-st="upd">
+      <span class="ico"><svg class="i"><use href="#i-download"/></svg></span>
+      <div class="what"><b>Basecamp 0.11.0 is ready to install.</b><div class="hint">This PC runs 0.10.2. The page goes away for about a minute; game servers keep running.</div></div>
+      <div class="btnrow"><button class="btn sm" data-toast="Hidden until the next release">Not now</button><button class="btn sm primary" data-confirm="install">Install</button></div>
+      <details><summary>Release notes</summary><pre>New game flow keeps its place after a restart.
+Player count for V Rising over A2S.
+Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
+    </div>
+    <div class="att" data-st="warn">
+      <span class="ico"><svg class="i"><use href="#i-plus"/></svg></span>
+      <div class="what"><b>Setting up Valheim: waiting for the values it needs.</b><div class="hint">Step 4 of 6. It needs a server password and a world name.</div></div>
+      <div class="btnrow"><a class="btn sm primary" href="#newgame" data-step="4">Continue</a></div>
+    </div>
+    <div class="note"><b>Why:</b> today crashes, the self-update banner and unfinished setups are spread across cards and notices at the top of the list. One "Needs you" list puts everything that waits on the owner in one place, with the action next to it. It disappears when empty.</div>
+  </section>
+
+  <div class="pagehead">
+    <div class="grow"><h2>Servers</h2></div>
+    <div class="btnrow"><a class="btn sm" href="#edit"><svg class="i"><use href="#i-plus"/></svg>Add existing server</a></div>
+  </div>
+
+  <div class="grid">
+    <!-- Palworld: running, update available -->
+    <article class="srv" data-st="run">
+      <a class="band" href="#server" data-open="pal"><span class="dot live"></span>Running<span class="fact">up 2 d 4 h</span></a>
+      <div class="srv-body">
+        <div class="srv-title">
+          <span class="mono">Pw</span>
+          <div class="grow"><a class="srv-name" href="#server" data-open="pal">Palworld</a><div class="hint">CPU 18%, RAM 9.2 GB</div></div>
+          <div class="players"><b>6</b><span>of 32 on</span></div>
+        </div>
+        <div class="addr"><code>100.64.0.10:8211</code><button class="btn ghost sm" data-copy="100.64.0.10:8211" aria-label="Copy join address"><svg class="i"><use href="#i-copy"/></svg>Copy</button></div>
+        <div class="chips"><span class="chip c-upd"><svg class="i"><use href="#i-download"/></svg>Update available</span><span class="chip"><svg class="i"><use href="#i-clock"/></svg>Restarts 05:00</span><span class="chip c-ok"><svg class="i"><use href="#i-shield"/></svg>Firewall open</span></div>
+      </div>
+      <div class="srv-actions"><button class="btn" data-confirm="restart" data-name="Palworld">Restart</button><button class="btn" data-confirm="stop" data-name="Palworld">Stop</button><button class="btn" data-confirm="update" data-name="Palworld">Update</button></div>
+    </article>
+
+    <!-- Enshrouded: restart countdown -->
+    <article class="srv" data-st="warn">
+      <a class="band" href="#server" data-open="ens"><span class="dot"></span><span>Restarting in <span class="num" data-countdown="252">4:12</span></span><span class="fact">players warned</span></a>
+      <div class="srv-body">
+        <div class="srv-title">
+          <span class="mono">En</span>
+          <div class="grow"><a class="srv-name" href="#server" data-open="ens">Enshrouded</a><div class="hint">Daily restart, started by the schedule</div></div>
+          <div class="players"><b>3</b><span>of 16 on</span></div>
+        </div>
+        <div class="addr"><code>100.64.0.10:15637</code><button class="btn ghost sm" data-copy="100.64.0.10:15637" aria-label="Copy join address"><svg class="i"><use href="#i-copy"/></svg>Copy</button></div>
+        <div class="chips"><span class="chip c-ok"><svg class="i"><use href="#i-shield"/></svg>Firewall open</span></div>
+      </div>
+      <div class="srv-actions"><button class="btn primary" data-confirm="now" data-name="Enshrouded">Restart now</button><button class="btn" data-toast="Restart cancelled: Enshrouded">Cancel restart</button></div>
+    </article>
+
+    <!-- V Rising: crashed -->
+    <article class="srv" data-st="bad">
+      <a class="band" href="#server" data-open="vr"><svg class="i"><use href="#i-alert"/></svg>Crashed<span class="fact">gave up after 3 tries</span></a>
+      <div class="srv-body">
+        <div class="srv-title">
+          <span class="mono">VR</span>
+          <div class="grow"><a class="srv-name" href="#server" data-open="vr">V Rising</a><div class="hint">Exit code -1073741819 at 14:02</div></div>
+          <div class="players"><b>–</b><span>offline</span></div>
+        </div>
+        <div class="lastline">[Error] Unhandled exception in ServerBootstrapSystem</div>
+        <div class="chips"><span class="chip c-ok"><svg class="i"><use href="#i-shield"/></svg>Firewall open</span></div>
+      </div>
+      <div class="srv-actions"><button class="btn primary" data-toast="Start: V Rising">Start</button><a class="btn" href="#server" data-open="vr">Open console</a></div>
+    </article>
+
+    <!-- Dragonwilds: updating -->
+    <article class="srv" data-st="upd">
+      <a class="band" href="#server" data-open="dw"><svg class="i"><use href="#i-refresh"/></svg>Updating<span class="fact">SteamCMD 62%</span></a>
+      <div class="srv-body">
+        <div class="srv-title">
+          <span class="mono">DW</span>
+          <div class="grow"><a class="srv-name" href="#server" data-open="dw">Dragonwilds</a><div class="hint">Save backed up first. Starts again when done.</div></div>
+          <div class="players"><b>–</b><span>offline</span></div>
+        </div>
+        <div class="progress" role="progressbar" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="Update progress"><i style="width:62%"></i></div>
+        <div class="chips"><span class="chip"><svg class="i"><use href="#i-check"/></svg>Backup 13:58</span><span class="chip">Build 19820144 to 19911020</span></div>
+      </div>
+      <div class="srv-actions"><button class="btn" data-confirm="cancel" data-name="Dragonwilds">Cancel update</button></div>
+    </article>
+
+    <!-- Windrose: stopped, firewall missing -->
+    <article class="srv" data-st="idle">
+      <a class="band" href="#server" data-open="wr"><span class="dot hollow"></span>Stopped<span class="fact">since yesterday 23:40</span></a>
+      <div class="srv-body">
+        <div class="srv-title">
+          <span class="mono">Wr</span>
+          <div class="grow"><a class="srv-name" href="#server" data-open="wr">Windrose</a><div class="hint">Build 2214 up to date</div></div>
+          <div class="players"><b>–</b><span>offline</span></div>
+        </div>
+        <div class="addr"><code>100.64.0.10:7787</code><button class="btn ghost sm" data-copy="100.64.0.10:7787" aria-label="Copy join address"><svg class="i"><use href="#i-copy"/></svg>Copy</button></div>
+        <div class="chips"><span class="chip c-warn"><svg class="i"><use href="#i-shield"/></svg>Firewall rule missing</span></div>
+      </div>
+      <div class="srv-actions"><button class="btn primary" data-toast="Start: Windrose">Start</button><button class="btn" data-confirm="update" data-name="Windrose">Update</button></div>
+    </article>
+  </div>
+  <div class="note"><b>Card layout:</b> the coloured band carries the state word and the one fact that matters for it (uptime, countdown, crash count, progress). The player count is the biggest number on the card. Only the actions that make sense for the state are shown, so there are no greyed-out buttons. Kill lives on the server page, behind a confirm. "Copy for Discord" moves to the server page.</div>
+</section>
+
+<!-- ===================================================== SERVER PAGE -->
+<section class="view" id="v-server" data-view hidden data-state="run">
+  <div class="srvhead">
+    <div class="crumb"><a href="#dashboard">Servers</a><svg class="i" style="width:14px;height:14px"><use href="#i-chevron"/></svg><span data-f="name">Palworld</span></div>
+    <div class="top">
+      <span class="mono" data-f="mono">Pw</span>
+      <div style="flex:1 1 220px;min-width:0;display:flex;flex-direction:column;gap:6px">
+        <h1 data-f="name">Palworld</h1>
+        <div><span class="pill" data-f="pill" data-st="run"><span class="dot live"></span><span data-f="state">Running</span></span></div>
+      </div>
+      <div class="players" data-when="run warn"><b data-f="players">6</b><span data-f="max">of 32 on</span></div>
+    </div>
+    <div class="facts">
+      <span data-when="run warn">Up <b>2 d 4 h</b></span>
+      <span data-when="run warn">CPU <b>18%</b></span>
+      <span data-when="run warn">RAM <b>9.2 GB</b></span>
+      <span>Build <b data-f="build">17643921</b></span>
+      <span>PID <b data-when="run warn">20148</b><b data-when="bad idle upd">none</b></span>
+    </div>
+
+    <div class="callout" data-st="warn" data-when="warn">
+      <svg class="i"><use href="#i-clock"/></svg>
+      <div class="grow"><div><strong>Restarting in <span class="num" data-countdown="252">4:12</span></strong>. Players got a warning at 5 min and get another at 1 min.</div></div>
+      <button class="btn sm" data-confirm="now">Restart now</button>
+    </div>
+    <div class="callout" data-st="bad" data-when="bad">
+      <svg class="i"><use href="#i-alert"/></svg>
+      <div class="grow"><div><strong>Crashed 3 times in 10 minutes</strong>, so Basecamp stopped retrying. Last exit code -1073741819 at 14:02. The console below has its last output.</div></div>
+    </div>
+    <div class="callout" data-st="upd" data-when="upd">
+      <svg class="i"><use href="#i-refresh"/></svg>
+      <div class="grow"><div><strong>Updating: SteamCMD 62%</strong>. Save backed up at 13:58. It starts again when the update is done.</div><div class="progress"><i style="width:62%"></i></div></div>
+    </div>
+
+    <div class="addr" style="max-width:560px"><code data-f="addr">100.64.0.10:8211</code><button class="btn ghost sm" data-copy="100.64.0.10:8211"><svg class="i"><use href="#i-copy"/></svg>Copy</button><button class="btn ghost sm" data-copy="Palworld is up: 100.64.0.10:8211" data-toast-text="Copied for Discord"><svg class="i"><use href="#i-chat"/></svg>For Discord</button></div>
+
+    <div class="actionbar">
+      <button class="btn primary" data-when="idle bad" data-toast="Start"><svg class="i"><use href="#i-play"/></svg>Start</button>
+      <button class="btn" data-when="run" data-confirm="restart"><svg class="i"><use href="#i-refresh"/></svg>Restart</button>
+      <button class="btn" data-when="run" data-confirm="stop"><svg class="i"><use href="#i-stop"/></svg>Stop</button>
+      <button class="btn" data-when="run idle" data-confirm="update"><svg class="i"><use href="#i-download"/></svg>Update</button>
+      <button class="btn" data-when="upd" data-confirm="cancel">Cancel update</button>
+      <a class="btn ghost" href="#edit"><svg class="i"><use href="#i-sliders"/></svg>Edit settings</a>
+      <span class="sep"></span>
+      <div class="force" data-when="run warn upd">
+        <span class="hint">Not responding?</span>
+        <button class="btn danger sm" data-confirm="kill"><svg class="i"><use href="#i-bolt"/></svg>Kill</button>
+      </div>
+    </div>
+    <div class="note"><b>Mock:</b> open another server from the dashboard to see this page in its state (crashed, updating, countdown, stopped). Kill sits apart at the end of the row with a plain question in front of it and a red outline; it always asks first.</div>
+  </div>
+
+  <div data-tabs>
+    <div class="tabs" role="tablist">
+      <button role="tab" data-tab="console" aria-selected="true"><svg class="i"><use href="#i-terminal"/></svg>Console</button>
+      <button role="tab" data-tab="files" aria-selected="false"><svg class="i"><use href="#i-file"/></svg>Config files</button>
+      <button role="tab" data-tab="backups" aria-selected="false"><svg class="i"><use href="#i-box"/></svg>Backups</button>
+      <button role="tab" data-tab="schedule" aria-selected="false"><svg class="i"><use href="#i-cal"/></svg>Schedule</button>
+      <button role="tab" data-tab="firewall" aria-selected="false"><svg class="i"><use href="#i-shield"/></svg>Firewall</button>
+      <button role="tab" data-tab="history" aria-selected="false"><svg class="i"><use href="#i-activity"/></svg>History</button>
+    </div>
+
+    <div data-panel="console" style="padding-top:16px;display:flex;flex-direction:column;gap:10px">
+      <div class="console">
+        <div class="lines" id="console-lines"></div>
+        <form id="console-form">
+          <select id="console-channel" aria-label="Send by"><option>RCON</option><option>REST</option><option>console</option></select>
+          <input id="console-input" autocomplete="off" spellcheck="false" placeholder="Command, e.g. broadcast Hello">
+          <button class="btn primary" type="submit">Send</button>
+        </form>
+      </div>
+      <div class="quick"><span class="hint">Quick:</span><button class="btn sm" data-cmd="save">save</button><button class="btn sm" data-cmd="showplayers">showplayers</button><button class="btn sm" data-cmd="broadcast Server restarts at 05:00">broadcast…</button><span class="newtag">New</span></div>
+      <div class="note"><b>New idea:</b> one-tap commands taken from the template (Palworld's REST commands are already listed in the edit form's help text). Is this worth having?</div>
+    </div>
+
+    <div data-panel="files" hidden style="padding-top:16px">
+      <div class="panel">
+        <div class="list">
+          <div class="row"><svg class="i"><use href="#i-file"/></svg><div class="grow"><b>PalWorldSettings.ini</b><div class="hint"><code>Pal\Saved\Config\WindowsServer\PalWorldSettings.ini</code></div></div><span class="hint">3 KB, changed 2 days ago</span><a class="btn sm" href="#config">Open</a></div>
+          <div class="row"><svg class="i"><use href="#i-file"/></svg><div class="grow"><b>Engine.ini</b><div class="hint"><code>Pal\Saved\Config\WindowsServer\Engine.ini</code></div></div><span class="hint">Doesn't exist yet</span><a class="btn sm" href="#config">Create</a></div>
+        </div>
+      </div>
+    </div>
+
+    <div data-panel="backups" hidden style="padding-top:16px">
+      <div class="panel">
+        <header><h3>Every 6 h while running, keeping the newest 10</h3><button class="btn primary sm" data-toast="Backup made: palworld-2026-10-29-1412.zip">Back up now</button></header>
+        <p class="hint">From <code>Pal\Saved\SaveGames</code>. Stopping the server unlocks Restore.</p>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Made</th><th>Size</th><th>Why</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="num">Today 12:00</td><td class="num">412 MB</td><td>Schedule</td><td><div class="btnrow" style="justify-content:flex-end"><button class="btn sm" disabled title="Stop the server first">Restore</button><button class="btn sm ghost"><svg class="i"><use href="#i-download"/></svg>Download</button><button class="btn sm ghost danger" aria-label="Delete backup" data-confirm="delbackup"><svg class="i"><use href="#i-trash"/></svg></button></div></td></tr>
+            <tr><td class="num">Today 06:00</td><td class="num">409 MB</td><td>Schedule</td><td><div class="btnrow" style="justify-content:flex-end"><button class="btn sm" disabled>Restore</button><button class="btn sm ghost"><svg class="i"><use href="#i-download"/></svg>Download</button><button class="btn sm ghost danger" aria-label="Delete backup" data-confirm="delbackup"><svg class="i"><use href="#i-trash"/></svg></button></div></td></tr>
+            <tr><td class="num">Yesterday 04:31</td><td class="num">405 MB</td><td>Before update</td><td><div class="btnrow" style="justify-content:flex-end"><button class="btn sm" disabled>Restore</button><button class="btn sm ghost"><svg class="i"><use href="#i-download"/></svg>Download</button><button class="btn sm ghost danger" aria-label="Delete backup" data-confirm="delbackup"><svg class="i"><use href="#i-trash"/></svg></button></div></td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div data-panel="schedule" hidden style="padding-top:16px;display:flex;flex-direction:column;gap:12px">
+      <div class="split">
+        <div class="panel">
+          <h3>Daily restart</h3>
+          <div class="field"><label for="sch-restart">Time on the host PC</label><input id="sch-restart" type="time" value="05:00"></div>
+          <p class="hint">Next: tomorrow 05:00, with the 5 and 1 minute warnings.</p>
+        </div>
+        <div class="panel">
+          <h3>Daily update</h3>
+          <div class="field"><label for="sch-update">Time on the host PC</label><input id="sch-update" type="time" value="04:30"></div>
+          <p class="hint">Only when Steam has a newer build. Steam has one now, so it runs tomorrow 04:30.</p>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>While players are on</h3>
+        <div class="choice">
+          <label><input type="radio" name="sch-players" id="sch-p-ignore"><span><b>Go ahead</b><span class="hint">They get the stop warning first.</span></span></label>
+          <label><input type="radio" name="sch-players" id="sch-p-skip"><span><b>Skip that day</b></span></label>
+          <label><input type="radio" name="sch-players" id="sch-p-delay" checked><span><b>Wait until nobody's on</b><span class="hint">Checks every 5 min. After 2 h it goes ahead anyway.</span></span></label>
+        </div>
+        <div class="btnrow"><button class="btn primary" data-toast="Schedule saved">Save schedule</button></div>
+      </div>
+      <div class="note"><b>Moved:</b> schedules live in the Edit form today. Here they get their own tab with the next run spelled out.</div>
+    </div>
+
+    <div data-panel="firewall" hidden style="padding-top:16px">
+      <div class="panel">
+        <header><h3>Windows Firewall, for Tailscale traffic</h3><button class="btn sm" data-toast="Checked just now"><svg class="i"><use href="#i-refresh"/></svg>Check again</button></header>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Port</th><th>Status</th><th>Rule</th></tr></thead>
+          <tbody>
+            <tr><td class="num">UDP 8211<div class="hint">game</div></td><td><span class="chip c-ok">Open to Tailscale</span></td><td class="hint">Basecamp Palworld UDP 8211, from 100.64.0.0/10</td></tr>
+            <tr><td class="num">UDP 27015<div class="hint">query</div></td><td><span class="chip c-warn">Too broad</span></td><td class="hint">Allows any address. Narrow it to Tailscale.</td></tr>
+          </tbody>
+        </table></div>
+        <p class="hint">This only reads the firewall's rules. Tailscale's access rules or the game's listen address can still keep friends out, so it isn't a reachability test. Checked 14:06.</p>
+      </div>
+    </div>
+
+    <div data-panel="history" hidden style="padding-top:16px">
+      <div class="panel">
+        <div class="list">
+          <div class="row"><div class="grow"><b>Backup made</b> by the schedule<div class="hint">palworld-2026-10-29-1200.zip</div></div><span class="hint num">Today 12:00</span></div>
+          <div class="row"><div class="grow"><b>Restarted</b> by Sam (friend)</div><span class="hint num">Yesterday 21:14</span></div>
+          <div class="row"><div class="grow"><b>Config saved</b> by Owner<div class="hint">PalWorldSettings.ini: ExpRate 1.0 to 1.5</div></div><span class="hint num">Yesterday 20:50</span></div>
+          <div class="row"><div class="grow"><b>Console</b> by Owner<div class="hint">broadcast Restarting for a settings change</div></div><span class="hint num">Yesterday 20:49</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================== CONFIG EDITOR -->
+<section class="view narrow" id="v-config" data-view hidden>
+  <div class="pagehead">
+    <div class="grow">
+      <div class="crumb"><a href="#dashboard">Servers</a><svg class="i" style="width:14px;height:14px"><use href="#i-chevron"/></svg><a href="#server" data-open="pal">Palworld</a><svg class="i" style="width:14px;height:14px"><use href="#i-chevron"/></svg>Config files</div>
+      <h1>PalWorldSettings.ini</h1>
+      <div class="chips"><span class="chip">INI</span><span class="chip">UTF-8</span><span class="chip c-warn">2 unsaved changes</span></div>
+    </div>
+    <span class="seg" role="group" aria-label="Edit as">
+      <button type="button" aria-pressed="true" data-mode="fields">Fields</button>
+      <button type="button" aria-pressed="false" data-mode="text">Text</button>
+    </span>
+  </div>
+
+  <div class="panel" id="cfg-fields">
+    <input id="cfg-filter" placeholder="Filter settings, e.g. rate" autocomplete="off" aria-label="Filter settings">
+    <div class="fgrid">
+      <div class="field"><label for="o1">ServerName</label><input id="o1" type="text" value="Camp Pals"></div>
+      <div class="field"><label for="o2">ServerPlayerMaxNum</label><input id="o2" type="number" value="32"></div>
+      <div class="field"><label for="o3">ExpRate</label><input id="o3" type="text" value="1.500000"></div>
+      <div class="field"><label for="o4">PalCaptureRate</label><input id="o4" type="text" value="1.200000"></div>
+      <div class="field"><label for="o5">DeathPenalty</label><select id="o5"><option>None</option><option selected>Item</option><option>ItemAndEquipment</option><option>All</option></select></div>
+      <div class="field"><label for="o6">bEnablePlayerToPlayerDamage</label><select id="o6"><option>True</option><option selected>False</option></select></div>
+      <div class="field"><label for="o7">RESTAPIEnabled</label><select id="o7"><option selected>True</option><option>False</option></select></div>
+      <div class="field"><label for="o8">RESTAPIPort</label><input id="o8" type="number" value="8212"></div>
+    </div>
+    <p class="hint">Showing 8 of 74 settings. Text values keep their quotes when saved.</p>
+  </div>
+  <div class="panel" id="cfg-text" hidden>
+    <textarea id="cfg-area" rows="14" spellcheck="false" wrap="off">[/Script/Pal.PalGameWorldSettings]
+OptionSettings=(Difficulty=None,DayTimeSpeedRate=1.000000,NightTimeSpeedRate=1.000000,ExpRate=1.500000,PalCaptureRate=1.200000,DeathPenalty=Item,bEnablePlayerToPlayerDamage=False,ServerPlayerMaxNum=32,ServerName="Camp Pals",RESTAPIEnabled=True,RESTAPIPort=8212)</textarea>
+    <label class="check"><input type="checkbox" id="cfg-wrap"> Wrap long lines</label>
+  </div>
+
+  <div class="stickybar">
+    <div class="grow small"><b>Palworld is running.</b> <span class="muted">It reads this file when it starts.</span></div>
+    <button class="btn" data-toast="Reloaded from disk">Reload</button>
+    <button class="btn" data-toast="Saved. Restart Palworld to use it.">Save</button>
+    <button class="btn primary" data-confirm="saverestart">Save and restart</button>
+  </div>
+  <div class="note"><b>Changed:</b> Save stays at the bottom of the screen while you scroll, and a running server gets "Save and restart" in one step instead of a second question after saving.</div>
+
+  <div class="panel">
+    <header><h3>Earlier copies</h3><span class="hint">The newest 20 are kept</span></header>
+    <div class="list">
+      <div class="row"><div class="grow"><b>Yesterday 20:50</b> <span class="chip">newest</span><div class="hint">Before a save, 3 KB</div></div><div class="btnrow"><button class="btn sm">View</button><button class="btn sm">Restore</button></div></div>
+      <div class="row"><div class="grow"><b>12 Oct 18:03</b><div class="hint">Before a restore, 3 KB</div></div><div class="btnrow"><button class="btn sm">View</button><button class="btn sm">Restore</button></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================== ADD / EDIT -->
+<section class="view" id="v-edit" data-view hidden>
+  <div class="pagehead">
+    <div class="grow">
+      <div class="crumb"><a href="#dashboard">Servers</a><svg class="i" style="width:14px;height:14px"><use href="#i-chevron"/></svg>Add existing server</div>
+      <h1>Add a server that's already installed</h1>
+      <p class="muted">For a fresh install, use <a href="#newgame">New game</a> instead. Editing a server uses this same form.</p>
+    </div>
+  </div>
+
+  <div class="formlayout">
+    <nav class="formindex" aria-label="Form sections">
+      <a href="#edit" data-jump="f-start">Start from</a>
+      <a href="#edit" data-jump="f-basics">Basics</a>
+      <a href="#edit" data-jump="f-ports">Ports and joining</a>
+      <a href="#edit" data-jump="f-running">Running</a>
+      <a href="#edit" data-jump="f-stop">Stopping</a>
+      <a href="#edit" data-jump="f-remote">Remote access</a>
+      <a href="#edit" data-jump="f-backups">Backups and Discord</a>
+      <a href="#edit" class="danger-link" data-jump="f-danger">Delete</a>
+    </nav>
+    <div class="formsections">
+      <section class="panel" id="f-start">
+        <header><h2>Start from</h2></header>
+        <div class="field">
+          <label for="e-import">Installed game folders</label>
+          <select id="e-import">
+            <option>Pick one of 6 folders in steamapps\common…</option>
+            <option>PalServer, app 2394010, already "Palworld"</option>
+            <option selected>EnshroudedServer, app 2278520</option>
+            <option>VRisingDedicatedServer, app 1829350, already "V Rising"</option>
+            <option>Valheim dedicated server, app 896660</option>
+            <option>OldTest, no appmanifest</option>
+          </select>
+          <span class="hint">In <code>C:\SteamCMD\steamapps\common</code>. Picking a folder also picks its game.</span>
+        </div>
+        <div class="fgrid">
+          <div class="field"><label for="e-tpl">Game template</label><select id="e-tpl"><option>Detect from the folder</option><option selected>Enshrouded</option><option>Palworld</option><option>V Rising</option><option>Dragonwilds</option><option>Windrose</option></select></div>
+          <div class="field"><label for="e-dir">Install folder</label><div class="inline"><input id="e-dir" type="text" value="C:\SteamCMD\steamapps\common\EnshroudedServer"><button class="btn sm" type="button">Default</button></div></div>
+        </div>
+        <div class="callout" data-st="run"><svg class="i"><use href="#i-check"/></svg><div class="grow"><div><strong>Filled in from the Enshrouded template.</strong> Found enshrouded_server.exe and app 2278520 in the folder.</div></div></div>
+      </section>
+
+      <section class="panel" id="f-basics">
+        <header><h2>Basics</h2></header>
+        <div class="fgrid">
+          <div class="field"><label for="e-name">Name</label><input id="e-name" type="text" value="Enshrouded"></div>
+          <div class="field"><label for="e-kind">Type</label><select id="e-kind"><option selected>Steam</option><option>Custom</option></select></div>
+        </div>
+        <div class="field"><label for="e-exe">Exe</label><input id="e-exe" type="text" value="C:\SteamCMD\steamapps\common\EnshroudedServer\enshrouded_server.exe"></div>
+        <div class="fgrid">
+          <div class="field"><label for="e-args">Launch arguments</label><input id="e-args" type="text" value=""></div>
+          <div class="field"><label for="e-wd">Working folder</label><input id="e-wd" type="text" placeholder="The exe's folder"></div>
+        </div>
+        <label class="check"><input type="checkbox" id="e-boot" checked><span>Start when Basecamp starts<span class="hint" style="display:block">Boot order 2</span></span></label>
+      </section>
+
+      <section class="panel" id="f-ports">
+        <header><h2>Ports and joining</h2></header>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Port</th><th>Protocol</th><th>Label</th><th>Friends join here</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><input type="number" value="15636" aria-label="Port" id="p1"></td><td><select aria-label="Protocol" id="p1p"><option selected>UDP</option><option>TCP</option></select></td><td><input value="game" aria-label="Label" id="p1l"></td><td><input type="radio" name="joinport" aria-label="Join port" id="p1j"></td><td><button class="btn ghost sm" aria-label="Remove port">✕</button></td></tr>
+            <tr><td><input type="number" value="15637" aria-label="Port" id="p2"></td><td><select aria-label="Protocol" id="p2p"><option selected>UDP</option><option>TCP</option></select></td><td><input value="query" aria-label="Label" id="p2l"></td><td><input type="radio" name="joinport" aria-label="Join port" checked id="p2j"></td><td><button class="btn ghost sm" aria-label="Remove port">✕</button></td></tr>
+          </tbody>
+        </table></div>
+        <div class="btnrow"><button class="btn sm"><svg class="i"><use href="#i-plus"/></svg>Add port</button></div>
+        <div class="note"><b>Changed:</b> the join port is picked from the port list with a radio button, instead of a separate number to type and keep in step.</div>
+      </section>
+
+      <section class="panel" id="f-running">
+        <header><h2>Running</h2></header>
+        <div class="fgrid">
+          <div class="field"><label for="e-out">Output</label><select id="e-out"><option>Console pipe (stdout)</option><option selected>A log file the game writes</option></select></div>
+          <div class="field"><label for="e-log">Log file</label><input id="e-log" type="text" value="logs\enshrouded_server.log"></div>
+          <div class="field"><label for="e-ready">Ready line</label><input id="e-ready" type="text" value="[Session] 'HostOnline' (up)!"></div>
+          <div class="field"><label for="e-after">Ready after (s), if no ready line</label><input id="e-after" type="number" value="15"></div>
+        </div>
+        <details><summary class="flabel">More: real exe name, steam app and branch, free RAM warning</summary>
+          <div class="fgrid" style="margin-top:12px">
+            <div class="field"><label for="e-real">Real exe name</label><input id="e-real" type="text"></div>
+            <div class="field"><label for="e-app">Steam app ID</label><input id="e-app" type="number" value="2278520"></div>
+            <div class="field"><label for="e-beta">Beta branch</label><input id="e-beta" type="text"></div>
+            <div class="field"><label for="e-ram">Warn below free RAM (MB)</label><input id="e-ram" type="number" value="4096"></div>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel" id="f-stop">
+        <header><h2>Stopping</h2></header>
+        <div class="flabel">Steps, in order</div>
+        <div class="list">
+          <div class="row"><span class="chip">1</span><div class="grow">Send <code>save</code> by RCON, then wait up to 30 s for the save</div><button class="btn ghost sm">Edit</button></div>
+          <div class="row"><span class="chip">2</span><div class="grow">Ctrl+Break, then wait up to 30 s to exit</div><button class="btn ghost sm">Edit</button></div>
+          <div class="row"><span class="chip">3</span><div class="grow muted">Kill, if it's still running</div></div>
+        </div>
+        <div class="fgrid">
+          <div class="field"><label for="e-warn">Warn players with</label><input id="e-warn" type="text" value="broadcast Server restarts in {minutes} min"></div>
+          <div class="field"><label for="e-warnat">Warn at (minutes before)</label><input id="e-warnat" type="text" value="5, 1"></div>
+        </div>
+        <p class="hint">Sent before a stop, restart or update you start. Kill and "now" skip it.</p>
+      </section>
+
+      <section class="panel" id="f-remote">
+        <header><h2>Remote access and player count</h2></header>
+        <div class="fgrid">
+          <div class="field"><label for="e-rcon">RCON port</label><input id="e-rcon" type="number" value="25575"></div>
+          <div class="field"><label for="e-rconpw">RCON password</label><input id="e-rconpw" type="password" placeholder="Set (type to change)" autocomplete="new-password"></div>
+          <div class="field"><label for="e-pc">Player count from</label><select id="e-pc"><option>Don't ask</option><option>REST API</option><option>RCON command</option><option selected>Steam server query (A2S)</option></select></div>
+          <div class="field"><label for="e-qport">Query port</label><input id="e-qport" type="number" value="15637"></div>
+        </div>
+        <p class="hint">Passwords are kept in the data folder's secrets file, never shown again and never in the audit log.</p>
+      </section>
+
+      <section class="panel" id="f-backups">
+        <header><h2>Backups and Discord</h2></header>
+        <div class="fgrid">
+          <div class="field"><label for="e-save">Save folder</label><input id="e-save" type="text" value="savegame"></div>
+          <div class="field"><label for="e-every">Back up every (hours)</label><input id="e-every" type="number" value="6"></div>
+          <div class="field"><label for="e-keep">Backups to keep</label><input id="e-keep" type="number" value="10"></div>
+        </div>
+        <div class="flabel">Post to Discord when</div>
+        <div class="fgrid">
+          <label class="check"><input type="checkbox" checked id="n1">It's up, with the join address</label>
+          <label class="check"><input type="checkbox" checked id="n2">It crashes</label>
+          <label class="check"><input type="checkbox" checked id="n3">Basecamp gives up restarting it</label>
+          <label class="check"><input type="checkbox" id="n4">It's stopped from Basecamp</label>
+          <label class="check"><input type="checkbox" checked id="n5">A scheduled backup fails</label>
+          <label class="check"><input type="checkbox" checked id="n6">An update starts, finishes or fails</label>
+        </div>
+      </section>
+
+      <section class="panel dangerzone" id="f-danger">
+        <header><h2>Delete this server</h2></header>
+        <p class="hint">Removes it from Basecamp. Game files, saves and backups stay on disk.</p>
+        <div class="btnrow"><button class="btn danger" data-confirm="delete"><svg class="i"><use href="#i-trash"/></svg>Delete server</button></div>
+      </section>
+
+      <div class="stickybar">
+        <div class="grow small muted">Not saved yet</div>
+        <a class="btn" href="#dashboard">Cancel</a>
+        <button class="btn primary" data-toast="Added Enshrouded">Add server</button>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>Changed:</b> one long form today becomes named sections with a jump list (chips on a phone). Rarely touched fields fold away. Delete moves to its own red section at the end, away from Save.</div>
+</section>
+
+<!-- ===================================================== NEW GAME -->
+<section class="view narrow" id="v-newgame" data-view hidden>
+  <div class="pagehead"><div class="grow"><h1>New game</h1><p class="muted">Basecamp installs it, starts it once to write its config, asks for what it needs, checks the firewall, then it's ready. You can leave and come back; the dashboard keeps your place.</p></div></div>
+  <nav class="stepper" aria-label="Setup steps">
+    <button type="button" data-step="1">Pick a game</button>
+    <button type="button" data-step="2">Install</button>
+    <button type="button" data-step="3">First start</button>
+    <button type="button" data-step="4">Values</button>
+    <button type="button" data-step="5">Firewall</button>
+    <button type="button" data-step="6">Ready</button>
+  </nav>
+
+  <div class="panel" data-stepbody="1">
+    <div class="games" role="group" aria-label="Game">
+      <button type="button" class="game" aria-pressed="false"><span class="mono">Pw</span><span><b>Palworld</b><span class="hint">app 2394010</span></span></button>
+      <button type="button" class="game" aria-pressed="false"><span class="mono">En</span><span><b>Enshrouded</b><span class="hint">app 2278520</span></span></button>
+      <button type="button" class="game" aria-pressed="false"><span class="mono">VR</span><span><b>V Rising</b><span class="hint">app 1829350</span></span></button>
+      <button type="button" class="game" aria-pressed="false"><span class="mono">DW</span><span><b>Dragonwilds</b><span class="hint">app 4019830</span></span></button>
+      <button type="button" class="game" aria-pressed="false"><span class="mono">Wr</span><span><b>Windrose</b><span class="hint">app 4129620</span></span></button>
+      <button type="button" class="game" aria-pressed="true"><span class="mono">Vh</span><span><b>Valheim</b><span class="hint">data folder template</span></span></button>
+    </div>
+    <div class="callout" data-st="warn"><svg class="i"><use href="#i-alert"/></svg><div class="grow"><div><strong>Not yet checked in this template:</strong> the ready line and the stop recipe. It will ask for a server password and a world name.</div></div></div>
+    <div class="fgrid">
+      <div class="field"><label for="ng-name">Server name</label><input id="ng-name" type="text" placeholder="Valheim"></div>
+      <div class="field"><label for="ng-dir">Install folder</label><input id="ng-dir" type="text" placeholder="steamapps\common\Valheim dedicated server"><span class="hint">Leave empty for SteamCMD's usual folder. It must be new or empty.</span></div>
+    </div>
+    <div class="btnrow"><button class="btn primary lg" data-goto-step="2">Install Valheim</button><a class="btn ghost" href="#dashboard">Cancel</a></div>
+    <div class="note"><b>Changed:</b> games are picked from tiles rather than a drop-down, so you can see what's there at a glance. The start button names what it will do.</div>
+  </div>
+
+  <div class="panel" data-stepbody="2" hidden>
+    <h2>Installing with SteamCMD</h2>
+    <div class="progress"><i style="width:38%"></i></div>
+    <p class="hint num">1.1 GB of 2.9 GB. Output is in the server's <a href="#server" data-open="pal">console</a>.</p>
+    <div class="btnrow"><button class="btn" data-confirm="cancel">Cancel install</button></div>
+  </div>
+  <div class="panel" data-stepbody="3" hidden>
+    <h2>Starting it once so it writes its config files</h2>
+    <p class="hint">Waiting for the ready line, then stopping it. Usually under a minute.</p>
+    <div class="lastline">[Server] Loading world "Dedicated"... done (4.2 s)</div>
+  </div>
+  <div class="panel" data-stepbody="4" hidden>
+    <h2>Values it needs</h2>
+    <p class="hint">They go into its config file the same way the config editor saves it, keeping a copy of the old file.</p>
+    <div class="field"><label for="ng-pw">Server password</label><input id="ng-pw" type="text" placeholder="At least 5 characters"><span class="hint">Friends type this to join. <code>start_server.bat -password</code></span></div>
+    <div class="field"><label for="ng-world">World name</label><input id="ng-world" type="text" value="Dedicated"><span class="hint"><code>start_server.bat -world</code></span></div>
+    <div class="btnrow"><button class="btn primary" data-goto-step="5">Save and go on</button><button class="btn ghost" data-toast="Setup left. Continue from the dashboard.">Leave setup</button></div>
+  </div>
+  <div class="panel" data-stepbody="5" hidden>
+    <h2>Firewall</h2>
+    <p class="hint">Friends can only join if Windows Firewall lets the game's ports in from Tailscale.</p>
+    <div class="tablewrap"><table><tbody>
+      <tr><td class="num">UDP 2456<div class="hint">game</div></td><td><span class="chip c-warn">Missing</span></td></tr>
+      <tr><td class="num">UDP 2457<div class="hint">query</div></td><td><span class="chip c-warn">Missing</span></td></tr>
+    </tbody></table></div>
+    <div class="field"><span class="flabel">Run this in an admin PowerShell on the host PC</span><div class="addr"><code>.\scripts\add-game-firewall-rule.ps1 -Name Valheim -Udp 2456,2457</code><button class="btn ghost sm" data-copy=".\scripts\add-game-firewall-rule.ps1 -Name Valheim -Udp 2456,2457"><svg class="i"><use href="#i-copy"/></svg>Copy</button></div></div>
+    <div class="btnrow"><button class="btn" data-toast="Still missing"><svg class="i"><use href="#i-refresh"/></svg>Check again</button><button class="btn primary" data-goto-step="6">Next</button></div>
+  </div>
+  <div class="panel" data-stepbody="6" hidden>
+    <h2>Valheim is ready to start</h2>
+    <div class="addr"><code>100.64.0.10:2456</code><button class="btn ghost sm" data-copy="100.64.0.10:2456"><svg class="i"><use href="#i-copy"/></svg>Copy</button></div>
+    <div class="btnrow"><button class="btn primary lg" data-toast="Start: Valheim"><svg class="i"><use href="#i-play"/></svg>Start Valheim</button><a class="btn" href="#server" data-open="pal">Done, don't start</a></div>
+  </div>
+  <div class="note"><b>Mock:</b> click the steps above to see each one. The real page moves on by itself.</div>
+</section>
+
+<!-- ===================================================== TEMPLATES -->
+<section class="view narrow" id="v-templates" data-view hidden>
+  <div class="pagehead"><div class="grow"><h1>Game templates</h1><p class="muted">What Basecamp knows about each game: its exe, ports, stop steps and the values it asks for. Built-in ones ship with Basecamp; yours live in the data folder.</p></div><button class="btn primary" data-jump="tpl-add"><svg class="i"><use href="#i-plus"/></svg>Add template</button></div>
+
+  <div class="panel">
+    <div class="list">
+      <div class="row"><span class="mono">Pw</span><div class="grow"><b>Palworld</b><div class="hint">PalServer-Win64-Shipping-Cmd.exe, UDP 8211, app 2394010</div></div><span class="chip">Built-in</span></div>
+      <div class="row"><span class="mono">En</span><div class="grow"><b>Enshrouded</b><div class="hint">enshrouded_server.exe, UDP 15637, app 2278520</div></div><span class="chip">Built-in</span></div>
+      <div class="row"><span class="mono">VR</span><div class="grow"><b>V Rising</b><div class="hint">VRisingServer.exe, UDP 9876 and 9877, app 1829350</div></div><span class="chip">Built-in</span></div>
+      <div class="row"><span class="mono">DW</span><div class="grow"><b>Dragonwilds</b><div class="hint">RSDragonwildsServer.exe, UDP 7777 and 8888, app 4019830</div></div><span class="chip c-upd">Yours, replaces built-in</span><button class="btn sm danger" data-confirm="deltpl">Delete</button></div>
+      <div class="row"><span class="mono">Wr</span><div class="grow"><b>Windrose</b><div class="hint">WindroseServer-Win64-Shipping.exe, UDP and TCP 7777, app 4129620</div></div><span class="chip">Built-in</span></div>
+      <div class="row"><span class="mono">Vh</span><div class="grow"><b>Valheim</b><div class="hint">valheim_server.exe, UDP 2456 and 2457, app 896660</div><div class="hint" style="color:var(--warn)">Not yet checked: ready line, stop recipe</div></div><span class="chip c-ok">Yours</span><button class="btn sm danger" data-confirm="deltpl">Delete</button></div>
+    </div>
+  </div>
+
+  <div class="panel" id="tpl-add">
+    <header><h2>Add a template</h2></header>
+    <label class="drop" for="tpl-file">
+      <svg class="i"><use href="#i-upload"/></svg>
+      <b style="color:var(--ink)">Choose a .json file</b>
+      <span class="small">or drop it here. On a phone, pick it from Files or Downloads.</span>
+      <input type="file" id="tpl-file" accept=".json,application/json" hidden>
+    </label>
+    <div class="field"><label for="tpl-paste">Or paste it</label><textarea id="tpl-paste" rows="8" spellcheck="false">{
+  "id": "valheim",
+  "name": "Valheim",
+  "steam_app_id": 896660,
+  "exe": "valheim_server.exe",
+  "ports": [{"port": 2456, "protocol": "udp", "label": "game"}]
+}</textarea></div>
+    <div class="callout" data-st="run"><svg class="i"><use href="#i-check"/></svg><div class="grow"><div><strong>Valheim (valheim) is valid.</strong> Saving it replaces your data-folder template with that id.</div></div></div>
+    <div class="btnrow"><button class="btn" data-toast="Valid">Check</button><button class="btn primary" data-toast="Saved valheim">Save template</button><a class="btn ghost" href="#templates">Template format</a></div>
+  </div>
+</section>
+
+<!-- ===================================================== SETTINGS -->
+<section class="view" id="v-prefs" data-view hidden>
+  <div class="pagehead"><div class="grow"><h1>Settings</h1></div></div>
+  <div class="formlayout">
+    <nav class="formindex" aria-label="Settings sections">
+      <a href="#prefs" data-jump="s-join">Join address</a>
+      <a href="#prefs" data-jump="s-friends">Friends</a>
+      <a href="#prefs" data-jump="s-discord">Discord</a>
+      <a href="#prefs" data-jump="s-backup">New server defaults</a>
+      <a href="#prefs" data-jump="s-steam">SteamCMD</a>
+      <a href="#prefs" data-jump="s-updates">Basecamp updates</a>
+      <a href="#prefs" data-jump="s-file">Settings file</a>
+      <a href="#prefs" data-jump="s-restart">Restart Basecamp</a>
+    </nav>
+    <div class="formsections">
+      <section class="panel" id="s-join">
+        <header><h2>Join address</h2></header>
+        <div class="field"><label for="s-host">Join host</label><input id="s-host" type="text" value="100.64.0.10"><span class="hint">The host PC's Tailscale address friends type in. Copy buttons give this plus each server's join port.</span></div>
+      </section>
+
+      <section class="panel" id="s-friends">
+        <header><h2>Friends</h2></header>
+        <p class="hint">Friends always see each server's state, player count and join address. Here you choose who may also start, stop and restart. Never config, update, delete, console or passwords.</p>
+        <div class="choice">
+          <label><input type="radio" name="fc" id="fc-off"><span><b>Only me</b><span class="hint">Friends can look, not touch.</span></span></label>
+          <label><input type="radio" name="fc" id="fc-logins"><span><b>These Tailscale logins</b><span class="hint">One per line, as in the Tailscale admin list.</span></span></label>
+          <label><input type="radio" name="fc" id="fc-any" checked><span><b>Anyone who can open the page</b><span class="hint">Everyone the host PC is shared with on Tailscale.</span></span></label>
+        </div>
+        <p class="hint">A stop or restart still warns players first. Each server takes one friend click per 60 s, and every click goes in Activity.</p>
+        <div class="btnrow"><button class="btn primary" data-toast="Saved">Save</button><a class="btn ghost" href="#friend">See the friend page</a></div>
+      </section>
+
+      <section class="panel" id="s-discord">
+        <header><h2>Discord</h2><span class="chip c-ok">Webhook set</span></header>
+        <div class="addr"><code>discord.com/api/webhooks/…/••••••</code><button class="btn ghost sm" data-toast="Test message sent">Send a test</button></div>
+        <div class="field"><label for="s-hook">Replace with</label><input id="s-hook" type="text" placeholder="https://discord.com/api/webhooks/…"></div>
+        <label class="check"><input type="checkbox" id="s-live" checked><span>Live status message<span class="hint" style="display:block">One message in the channel, edited as servers change. 214 edits since Basecamp started.</span></span></label>
+        <details><summary class="flabel">A different webhook per server (none set)</summary><p class="hint" style="margin-top:8px">Which events post is set in each server's settings.</p></details>
+        <p class="hint num">Sent 318, failed 0, waiting 0 since Basecamp started.</p>
+        <div class="btnrow"><button class="btn primary" data-toast="Saved">Save</button></div>
+      </section>
+
+      <section class="panel" id="s-backup">
+        <header><h2>New server defaults</h2></header>
+        <div class="fgrid">
+          <div class="field"><label for="s-every">Back up every (hours)</label><input id="s-every" type="number" value="6"></div>
+          <div class="field"><label for="s-keep">Backups to keep</label><input id="s-keep" type="number" value="10"></div>
+        </div>
+        <label class="check"><input type="checkbox" id="s-all"><span>Also give all 5 existing servers this schedule</span></label>
+        <div class="btnrow"><button class="btn primary" data-toast="Saved">Save</button></div>
+      </section>
+
+      <section class="panel" id="s-steam">
+        <header><h2>SteamCMD</h2><span class="chip c-ok">Found</span></header>
+        <div class="field"><label for="s-scmd">steamcmd.exe</label><input id="s-scmd" type="text" value="C:\SteamCMD\steamcmd.exe"></div>
+        <div class="btnrow"><button class="btn primary" data-toast="Saved">Save</button></div>
+      </section>
+
+      <section class="panel" id="s-updates">
+        <header><h2>Basecamp updates</h2><span class="chip c-upd">0.11.0 ready</span></header>
+        <p class="hint">This is 0.10.2. Last checked today 13:00, every 6 h.</p>
+        <div class="fgrid">
+          <div class="field"><label for="s-auto">Install automatically at</label><select id="s-auto"><option>Off, I'll install by hand</option><option selected>04:00</option><option>05:00</option></select></div>
+        </div>
+        <label class="check"><input type="checkbox" id="s-beta"><span>Beta channel: offer pre-releases too</span></label>
+        <div class="btnrow"><button class="btn" data-toast="Up to date"><svg class="i"><use href="#i-refresh"/></svg>Check now</button><button class="btn primary" data-toast="Saved">Save</button></div>
+      </section>
+
+      <section class="panel" id="s-file">
+        <header><h2>Settings file</h2></header>
+        <p class="hint">Admin logins and a few other settings live in <code>data\settings.toml</code>. Basecamp picks up a saved change within 5 s.</p>
+        <div class="callout" data-st="warn"><svg class="i"><use href="#i-alert"/></svg><div class="grow"><div><strong>Used after a restart:</strong> port 8150 to 8151.</div></div></div>
+        <div class="tablewrap"><table><tbody>
+          <tr><td>Admin logins</td><td>owner@example.com</td></tr>
+          <tr><td>Config copies kept</td><td class="num">20</td></tr>
+          <tr><td>Last read</td><td class="num">Today 14:05</td></tr>
+        </tbody></table></div>
+        <div class="btnrow"><button class="btn" data-toast="No changes"><svg class="i"><use href="#i-refresh"/></svg>Reload settings</button></div>
+      </section>
+
+      <section class="panel" id="s-restart">
+        <header><h2>Restart Basecamp</h2></header>
+        <p class="hint">Basecamp exits and its launcher starts it again within seconds. Game servers keep running. An install or update has to finish first.</p>
+        <div class="btnrow"><button class="btn danger" data-confirm="restartbc"><svg class="i"><use href="#i-refresh"/></svg>Restart Basecamp</button></div>
+      </section>
+    </div>
+  </div>
+  <div class="note"><b>Changed:</b> each card saves on its own, as today, but the page gets a jump list and "Friends" is promoted near the top. Discord copy talks about messages, not webhooks, wherever it can.</div>
+</section>
+
+<!-- ===================================================== ACTIVITY -->
+<section class="view narrow" id="v-activity" data-view hidden>
+  <div class="pagehead"><div class="grow"><h1>Activity <span class="newtag">New</span></h1><p class="muted">What happened, who did it and when. Replaces the audit log page, which keeps its full table under "Everything".</p></div></div>
+  <div class="filters" role="group" aria-label="Show">
+    <button aria-pressed="true">Everything</button><button aria-pressed="false">Crashes</button><button aria-pressed="false">Friends</button><button aria-pressed="false">Updates</button><button aria-pressed="false">Backups</button><button aria-pressed="false">Config and console</button>
+  </div>
+  <div class="feed">
+    <div class="day">Today</div>
+    <div class="ev" data-st="warn"><span class="ico"><svg class="i"><use href="#i-clock"/></svg></span><div><b>Enshrouded</b> restart started by the schedule. Players warned at 5 min.<div class="who muted">Schedule</div></div><time>14:08</time></div>
+    <div class="ev" data-st="bad"><span class="ico"><svg class="i"><use href="#i-alert"/></svg></span><div><b>V Rising</b> crashed for the third time. Basecamp stopped retrying.<div class="who muted">Basecamp, posted to Discord</div></div><time>14:02</time></div>
+    <div class="ev" data-st="upd"><span class="ico"><svg class="i"><use href="#i-download"/></svg></span><div><b>Dragonwilds</b> update started, build 19820144 to 19911020.<div class="who muted">Owner</div></div><time>13:58</time></div>
+    <div class="ev" data-st="run"><span class="ico"><svg class="i"><use href="#i-box"/></svg></span><div><b>Palworld</b> backup made, 412 MB.<div class="who muted">Schedule</div></div><time>12:00</time></div>
+    <div class="day">Yesterday</div>
+    <div class="ev" data-st="idle"><span class="ico"><svg class="i"><use href="#i-users"/></svg></span><div><b>Windrose</b> stopped.<div class="who muted">Alex, friend</div></div><time>23:40</time></div>
+    <div class="ev" data-st="idle"><span class="ico"><svg class="i"><use href="#i-users"/></svg></span><div><b>Palworld</b> restarted.<div class="who muted">Sam, friend</div></div><time>21:14</time></div>
+    <div class="ev" data-st="idle"><span class="ico"><svg class="i"><use href="#i-file"/></svg></span><div><b>Palworld</b> PalWorldSettings.ini saved. ExpRate 1.0 to 1.5.<div class="who muted">Owner</div></div><time>20:50</time></div>
+    <div class="ev" data-st="idle"><span class="ico"><svg class="i"><use href="#i-terminal"/></svg></span><div><b>Palworld</b> console: <code>broadcast Restarting for a settings change</code><div class="who muted">Owner</div></div><time>20:49</time></div>
+  </div>
+  <div class="note"><b>New:</b> a readable feed instead of a raw table, with friend actions and crashes easy to pick out. The red count in the menu is "things since you last looked". Open question: should it also show Discord delivery failures?</div>
+</section>
+
+<!-- ===================================================== WELCOME / FIRST RUN -->
+<section class="view" id="v-welcome" data-view hidden>
+  <div class="welcome">
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <span class="newtag" style="align-self:flex-start">New: first run</span>
+      <h1>Set up your first game server</h1>
+      <p class="muted" style="max-width:52ch">Basecamp runs your game servers on this PC, restarts them when they crash, backs up saves and lets friends on your tailnet see what's up. Three things and you're done.</p>
+      <div class="note"><b>Why:</b> today a fresh install shows "No servers yet. Add one from a template." and nothing else. This page shows what's left and links straight to each step. Once a server exists, the dashboard takes over.</div>
+    </div>
+    <ol class="steps">
+      <li class="ok"><b>SteamCMD found</b><span class="hint"><code>C:\SteamCMD\steamcmd.exe</code></span></li>
+      <li><b>Set the join address</b><span class="hint">Your host PC's Tailscale address, so friends get a full address to copy.</span><div class="btnrow"><input type="text" id="w-host" placeholder="e.g. 100.64.0.10" style="flex:1 1 160px"><button class="btn" data-toast="Saved">Save</button></div></li>
+      <li><b>Add your first game</b><span class="hint">Pick from 5 templates. Basecamp installs it and walks you through the rest.</span><div class="btnrow"><a class="btn primary" href="#newgame">New game</a><a class="btn ghost" href="#edit">I already have one installed</a></div></li>
+    </ol>
+  </div>
+</section>
+
+<!-- ===================================================== FRIEND VIEW -->
+<section class="view" id="v-friend" data-view hidden>
+  <div class="friend">
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <h1>Game servers</h1>
+      <p class="muted">9 friends playing right now</p>
+    </div>
+    <div class="note" style="flex-wrap:wrap"><span><b>Mock:</b> what friends see. Phone-first, one column. </span><label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="friend-controls" checked> Friends may start, stop and restart</label></div>
+
+    <article class="fcard" data-st="run">
+      <div class="band"><span class="dot live"></span>Running<span class="fact">up 2 d 4 h</span></div>
+      <div class="body">
+        <div class="titlerow"><span class="mono">Pw</span><h2>Palworld</h2><div class="players"><b>6</b><span>of 32 on</span></div></div>
+        <div class="ticket"><span class="hint">Join address</span><code>100.64.0.10:8211</code><button class="btn primary" data-copy="100.64.0.10:8211"><svg class="i"><use href="#i-copy"/></svg>Copy address</button></div>
+        <div class="controls"><button class="btn" data-confirm="frestart" data-name="Palworld">Restart</button><button class="btn" data-confirm="fstop" data-name="Palworld">Stop</button></div>
+      </div>
+    </article>
+
+    <article class="fcard" data-st="warn">
+      <div class="band"><span class="dot"></span><span>Restarting in <span class="num" data-countdown="252">4:12</span></span><span class="fact">back in a few min</span></div>
+      <div class="body">
+        <div class="titlerow"><span class="mono">En</span><h2>Enshrouded</h2><div class="players"><b>3</b><span>of 16 on</span></div></div>
+        <div class="ticket"><span class="hint">Join address</span><code>100.64.0.10:15637</code><button class="btn" data-copy="100.64.0.10:15637"><svg class="i"><use href="#i-copy"/></svg>Copy address</button></div>
+      </div>
+    </article>
+
+    <article class="fcard" data-st="idle">
+      <div class="band"><span class="dot hollow"></span>Stopped</div>
+      <div class="body">
+        <div class="titlerow"><span class="mono">Wr</span><h2>Windrose</h2></div>
+        <div class="controls"><button class="btn primary lg" data-toast="Starting Windrose. Ready in about a minute."><svg class="i"><use href="#i-play"/></svg>Start Windrose</button></div>
+        <p class="hint">The address shows here once it's up.</p>
+      </div>
+    </article>
+
+    <article class="fcard" data-st="bad">
+      <div class="band"><svg class="i"><use href="#i-alert"/></svg>Down<span class="fact">the owner has been told</span></div>
+      <div class="body">
+        <div class="titlerow"><span class="mono">VR</span><h2>V Rising</h2></div>
+        <div class="controls"><button class="btn primary lg" data-toast="Start: V Rising"><svg class="i"><use href="#i-play"/></svg>Try starting it</button></div>
+      </div>
+    </article>
+
+    <article class="fcard" data-st="upd">
+      <div class="band"><svg class="i"><use href="#i-refresh"/></svg>Updating<span class="fact">back soon</span></div>
+      <div class="body">
+        <div class="titlerow"><span class="mono">DW</span><h2>Dragonwilds</h2></div>
+        <div class="progress"><i style="width:62%"></i></div>
+      </div>
+    </article>
+
+    <details class="panel">
+      <summary class="flabel">How do I join? <span class="newtag">New</span></summary>
+      <ol class="small" style="margin:8px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:6px">
+        <li>Turn on Tailscale on the device you play on.</li>
+        <li>Copy the server's join address above.</li>
+        <li>In the game, pick "join by IP" (or "direct connect") and paste it.</li>
+      </ol>
+    </details>
+    <div class="note"><b>Changed:</b> the join address is the biggest thing on a running card, with a full-width Copy button. A crashed server reads "Down" to friends, not "Crashed", and a stopped one hides its address so nobody tries to join it.</div>
+  </div>
+</section>
+
+<!-- ===================================================== VIEWS INDEX -->
+<section class="view" id="v-views" data-view hidden>
+  <div class="pagehead"><div class="grow"><h1>All views in this mock</h1><p class="muted">Each links to its screen. "New" marks a view that doesn't exist today.</p></div></div>
+  <div class="vindex">
+    <a href="#dashboard"><b>Servers (dashboard)</b><span>Summary, "Needs you" list (new), one card per server with its state band.</span></a>
+    <a href="#server" data-open="pal"><b>Server page</b><span>Header with state and actions, Kill set apart; tabs for console, config files, backups, schedule, firewall, history.</span></a>
+    <a href="#server" data-open="vr"><b>Server page, crashed</b><span>V Rising after giving up restarting.</span></a>
+    <a href="#server" data-open="dw"><b>Server page, updating</b><span>Dragonwilds mid-SteamCMD.</span></a>
+    <a href="#server" data-open="ens"><b>Server page, countdown</b><span>Enshrouded with a stop warning running.</span></a>
+    <a href="#config"><b>Config editor</b><span>Fields or text, sticky Save bar with "Save and restart", earlier copies.</span></a>
+    <a href="#edit"><b>Add / edit server</b><span>Sectioned form, installed-folder pick-list and import, join port from the port list, red delete section.</span></a>
+    <a href="#newgame"><b>New game</b><span>Six-step setup with game tiles.</span></a>
+    <a href="#templates"><b>Templates</b><span>List with source tags, add by file or paste, check before save.</span></a>
+    <a href="#prefs"><b>Settings</b><span>Join address, friends, Discord, defaults, SteamCMD, updates, settings file, Restart Basecamp.</span></a>
+    <a href="#activity"><b>Activity <span class="newtag">New</span></b><span>Readable feed with filters. Replaces the audit log page.</span></a>
+    <a href="#welcome"><b>First run <span class="newtag">New</span></b><span>What a fresh install shows before any server exists.</span></a>
+    <a href="#friend"><b>Friend page</b><span>Phone-first cards, big join address, Start / Stop / Restart when allowed, "How do I join?" (new).</span></a>
+  </div>
+  <p class="hint">The self-update banner is the "Basecamp 0.11.0 is ready" row in "Needs you" on the dashboard. Tick "Connection lost" in the pink bar to see the reconnecting badge. The sun/moon button in the top bar switches theme: system, light, dark.</p>
+</section>
+
+  </main>
+</div>
+
+<nav class="tabbar admin-only" aria-label="Main">
+  <a href="#dashboard" data-nav="dashboard"><svg class="i"><use href="#i-servers"/></svg>Servers</a>
+  <a href="#activity" data-nav="activity"><svg class="i"><use href="#i-activity"/></svg>Activity<span class="count">2</span></a>
+  <a href="#templates" data-nav="templates"><svg class="i"><use href="#i-template"/></svg>Templates</a>
+  <a href="#prefs" data-nav="prefs"><svg class="i"><use href="#i-sliders"/></svg>Settings</a>
+</nav>
+
+<dialog id="confirm">
+  <form method="dialog" class="inner">
+    <h2 id="confirm-title">Stop Palworld?</h2>
+    <p id="confirm-body" class="muted">Players get a 5 minute warning first.</p>
+    <div class="btnrow">
+      <button class="btn" value="cancel">Cancel</button>
+      <button class="btn primary" id="confirm-ok" value="ok">Stop</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+"use strict";
+// Mock only: switch views, tabs, theme and a few demo states. No data, no network.
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private window */ } },
+};
+
+// ---- theme: system -> light -> dark
+const THEMES = ["system", "light", "dark"];
+const THEME_ICON = { system: "#i-auto", light: "#i-sun", dark: "#i-moon" };
+function applyTheme(t) {
+  if (t === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  $("#theme use").setAttribute("href", THEME_ICON[t]);
+  $("#theme").setAttribute("aria-label", t === "system" ? "Theme: follows the system" : `Theme: ${t}`);
+  $("#theme").title = $("#theme").getAttribute("aria-label");
+}
+let theme = THEMES.includes(store.get("bc-theme")) ? store.get("bc-theme") : "system";
+applyTheme(theme);
+$("#theme").addEventListener("click", () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % 3];
+  store.set("bc-theme", theme);
+  applyTheme(theme);
+  toast(theme === "system" ? "Theme follows the system" : `Theme: ${theme}`);
+});
+
+// ---- toast
+function toast(text) {
+  $$(".toast").forEach((t) => t.remove());
+  const t = document.createElement("div");
+  t.className = "toast"; t.setAttribute("role", "status"); t.textContent = text;
+  document.body.append(t);
+  setTimeout(() => t.remove(), 2200);
+}
+
+// ---- servers shown on the server page
+const SERVERS = {
+  pal: { build: "17643921", name: "Palworld", mono: "Pw", st: "run", label: "Running", players: "6", max: "of 32 on", addr: "100.64.0.10:8211" },
+  ens: { build: "18003377", name: "Enshrouded", mono: "En", st: "warn", label: "Running, restart pending", players: "3", max: "of 16 on", addr: "100.64.0.10:15637" },
+  vr: { build: "16710342", name: "V Rising", mono: "VR", st: "bad", label: "Crashed", players: "–", max: "", addr: "100.64.0.10:9876" },
+  dw: { build: "19820144", name: "Dragonwilds", mono: "DW", st: "upd", label: "Updating", players: "–", max: "", addr: "100.64.0.10:7777" },
+  wr: { build: "2214", name: "Windrose", mono: "Wr", st: "idle", label: "Stopped", players: "–", max: "", addr: "100.64.0.10:7787" },
+};
+let current = SERVERS.pal;
+function showServer(key) {
+  current = SERVERS[key] || SERVERS.pal;
+  const v = $("#v-server");
+  $$("[data-f=name]", v).forEach((n) => { n.textContent = current.name; });
+  $("[data-f=mono]", v).textContent = current.mono;
+  $("[data-f=state]", v).textContent = current.label;
+  $("[data-f=players]", v).textContent = current.players;
+  $("[data-f=max]", v).textContent = current.max;
+  $("[data-f=addr]", v).textContent = current.addr;
+  $("[data-f=build]", v).textContent = current.build;
+  const copies = $$("[data-copy]", $("[data-f=addr]", v).parentNode);
+  copies[0].dataset.copy = current.addr;
+  copies[1].dataset.copy = `${current.name}: ${current.addr}`;
+  const pill = $("[data-f=pill]", v);
+  pill.dataset.st = current.st;
+  const dot = $(".dot", pill);
+  dot.className = "dot" + (current.st === "run" ? " live" : current.st === "idle" ? " hollow" : "");
+  $$("[data-when]", v).forEach((n) => { n.hidden = !n.dataset.when.split(" ").includes(current.st); });
+  fillConsole();
+}
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("[data-open]");
+  if (a) showServer(a.dataset.open);
+});
+
+// ---- console lines
+const LINES = {
+  run: [
+    ["sys", "# Started by Basecamp, PID 20148"],
+    ["", "[2026.10.27-09.58.12] Running Palworld dedicated server on :8211"],
+    ["", "[2026.10.27-09.58.40] Setting breakpad minidump AppID = 2394010"],
+    ["", "[2026.10.29-13.41.07] [LOG] Kestrel joined the server. (Players: 5)"],
+    ["warn", "[2026.10.29-13.52.19] [WARN] Save took 2.4 s"],
+    ["in", "> save"],
+    ["", "[2026.10.29-13.52.21] Complete Save"],
+    ["", "[2026.10.29-14.03.55] [LOG] Moth joined the server. (Players: 6)"],
+    ["sys", "# Backup made: palworld-2026-10-29-1200.zip"],
+  ],
+  warn: [
+    ["sys", "# Restart by schedule, warning players 5 min ahead"],
+    ["in", "> broadcast Server restarts in 5 min"],
+    ["", "[Session] Broadcast sent to 3 players"],
+  ],
+  bad: [
+    ["sys", "# Started by Basecamp (try 3 of 3)"],
+    ["", "[Info] Loading save 'world1'"],
+    ["", "[Info] ServerBootstrapSystem: starting"],
+    ["warn", "[Error] Unhandled exception in ServerBootstrapSystem"],
+    ["warn", "[Error] NullReferenceException at ProjectM.Network.ServerBootstrap"],
+    ["sys", "# Exited with code -1073741819. Crashed 3 times in 10 min; not restarting again."],
+  ],
+  upd: [
+    ["sys", "# Backup made: dragonwilds-2026-10-29-1358.zip"],
+    ["sys", "# Stopped for update"],
+    ["steam", "Redirecting stderr to 'logs\\stderr.txt'"],
+    ["steam", "Update state (0x61) downloading, progress: 58.12 (1784823011 / 3070720000)"],
+    ["steam", "Update state (0x61) downloading, progress: 62.04 (1905083216 / 3070720000)"],
+  ],
+  idle: [
+    ["sys", "# Stopped by Alex (friend) at 23:40"],
+    ["", "[Server] Saving world... done"],
+    ["sys", "# Exited with code 0"],
+  ],
+};
+function fillConsole() {
+  const box = $("#console-lines");
+  box.replaceChildren(...(LINES[current.st] || LINES.run).map(([k, t]) => {
+    const d = document.createElement("div");
+    if (k) d.className = `l-${k}`;
+    d.textContent = t;
+    return d;
+  }));
+  box.scrollTop = box.scrollHeight;
+}
+function sendCommand(text) {
+  const box = $("#console-lines");
+  const d = document.createElement("div");
+  d.className = "l-in"; d.textContent = `> ${text}`;
+  box.append(d);
+  box.scrollTop = box.scrollHeight;
+}
+$("#console-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const i = $("#console-input");
+  if (i.value.trim()) sendCommand(i.value.trim());
+  i.value = "";
+});
+$$("[data-cmd]").forEach((b) => b.addEventListener("click", () => sendCommand(b.dataset.cmd)));
+
+// ---- tabs
+$$("[data-tabs]").forEach((wrap) => {
+  $$("[data-tab]", wrap).forEach((btn) => btn.addEventListener("click", () => {
+    $$("[data-tab]", wrap).forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
+    $$("[data-panel]", wrap).forEach((p) => { p.hidden = p.dataset.panel !== btn.dataset.tab; });
+    if (btn.dataset.tab === "console") $("#console-lines").scrollTop = 1e6;
+  }));
+});
+
+// ---- config editor: fields / text
+$$("[data-mode]").forEach((b) => b.addEventListener("click", () => {
+  $$("[data-mode]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  $("#cfg-fields").hidden = b.dataset.mode !== "fields";
+  $("#cfg-text").hidden = b.dataset.mode !== "text";
+}));
+$("#cfg-wrap").addEventListener("change", (e) => $("#cfg-area").setAttribute("wrap", e.target.checked ? "soft" : "off"));
+$("#cfg-filter").addEventListener("input", (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  $$("#cfg-fields .field").forEach((f) => { f.hidden = q && !$("label", f).textContent.toLowerCase().includes(q); });
+});
+
+// ---- new game steps
+function setStep(n) {
+  $$(".stepper [data-step]").forEach((b) => {
+    const s = Number(b.dataset.step);
+    b.classList.toggle("done", s < n);
+    if (s === n) b.setAttribute("aria-current", "step"); else b.removeAttribute("aria-current");
+  });
+  $$("[data-stepbody]").forEach((p) => { p.hidden = Number(p.dataset.stepbody) !== n; });
+}
+setStep(1);
+$$(".stepper [data-step]").forEach((b) => b.addEventListener("click", () => setStep(Number(b.dataset.step))));
+$$("[data-goto-step]").forEach((b) => b.addEventListener("click", () => setStep(Number(b.dataset.gotoStep))));
+$$("a[data-step]").forEach((a) => a.addEventListener("click", () => setStep(Number(a.dataset.step))));
+$$(".game").forEach((g) => g.addEventListener("click", () => {
+  $$(".game").forEach((x) => x.setAttribute("aria-pressed", String(x === g)));
+}));
+
+// ---- activity filters (visual only)
+$$(".filters button").forEach((b) => b.addEventListener("click", () => {
+  $$(".filters button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+}));
+
+// ---- jump links inside long pages
+$$("[data-jump]").forEach((a) => a.addEventListener("click", (e) => {
+  e.preventDefault();
+  const t = document.getElementById(a.dataset.jump);
+  if (t) t.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+}));
+
+// ---- copy
+$$("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
+  const text = b.dataset.copy;
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch (e) { ok = false; }
+  toast(b.dataset.toastText || (ok ? `Copied: ${text}` : text));
+}));
+$$("[data-toast]").forEach((b) => b.addEventListener("click", () => toast(b.dataset.toast)));
+
+// ---- confirm sheet: replaces the browser's confirm() boxes
+const CONFIRM = {
+  stop: (n) => [`Stop ${n}?`, "Players get a 5 minute warning first, then it saves and stops.", "Stop", false],
+  restart: (n) => [`Restart ${n}?`, "Players get a 5 minute warning first.", "Restart", false],
+  update: (n) => [`Update ${n}?`, "Basecamp backs up the save, warns players, stops it, runs SteamCMD and starts it again.", "Update", false],
+  now: (n) => [`Restart ${n} now?`, "Skips the rest of the warning. Anyone still on gets dropped.", "Restart now", false],
+  cancel: (n) => ["Stop SteamCMD?", `${n} may be left half updated and won't be started.`, "Stop SteamCMD", true],
+  kill: (n) => [`Kill ${n}?`, "Ends the process at once without saving. Anything since the last save is lost. Use it only when Stop doesn't work.", "Kill without saving", true],
+  delete: () => ["Delete Enshrouded?", "It's removed from Basecamp. Game files, saves and backups stay on disk.", "Delete server", true],
+  delbackup: () => ["Delete this backup?", "The zip is removed from the backups folder. This can't be undone.", "Delete backup", true],
+  deltpl: () => ["Delete this template?", "Servers made from it keep their settings. A built-in template of the same name comes back.", "Delete template", true],
+  install: () => ["Install Basecamp 0.11.0?", "The page goes away for about a minute. Game servers keep running. If 0.11.0 isn't healthy, Basecamp rolls back to 0.10.2.", "Install", false],
+  restartbc: () => ["Restart Basecamp?", "The page goes away for a few seconds. Game servers keep running.", "Restart Basecamp", true],
+  saverestart: (n) => [`Save and restart ${n}?`, "Players get a 5 minute warning first.", "Save and restart", false],
+  frestart: (n) => [`Restart ${n}?`, "Everyone on it gets a 5 minute warning, then it restarts. The owner sees who did it.", "Restart", false],
+  fstop: (n) => [`Stop ${n}?`, "Everyone on it gets a 5 minute warning, then it stops. The owner sees who did it.", "Stop", false],
+};
+const DONE = { stop: "Stopping", restart: "Restarting", update: "Update queued", now: "Restarting now", cancel: "Cancelling", kill: "Killed",
+  delete: "Deleted", delbackup: "Backup deleted", deltpl: "Template deleted", install: "Installing", restartbc: "Restarting Basecamp",
+  saverestart: "Saved, restarting", frestart: "Restarting", fstop: "Stopping" };
+const dlg = $("#confirm");
+let pending = null;
+$$("[data-confirm]").forEach((b) => b.addEventListener("click", () => {
+  const name = b.dataset.name || current.name;
+  const [title, body, ok, danger] = CONFIRM[b.dataset.confirm](name);
+  $("#confirm-title").textContent = title;
+  $("#confirm-body").textContent = body;
+  $("#confirm-ok").textContent = ok;
+  $("#confirm-ok").className = danger ? "btn danger solid" : "btn primary";
+  pending = `${DONE[b.dataset.confirm]}: ${name}`;
+  if (dlg.showModal) dlg.showModal(); else toast(pending);
+}));
+dlg.addEventListener("close", () => { if (dlg.returnValue === "ok" && pending) toast(pending); });
+
+// ---- countdowns
+setInterval(() => {
+  $$("[data-countdown]").forEach((n) => {
+    let left = Number(n.dataset.countdown) - 1;
+    if (left < 0) left = 300;
+    n.dataset.countdown = String(left);
+    n.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+  });
+}, 1000);
+
+// ---- mock bar
+$("#mock-notes").addEventListener("change", (e) => document.body.classList.toggle("no-notes", !e.target.checked));
+$("#mock-offline").addEventListener("change", (e) => { $("#offline").hidden = !e.target.checked; });
+$("#friend-controls").addEventListener("change", (e) => document.body.classList.toggle("friend-locked", !e.target.checked));
+$("#as-admin").addEventListener("click", () => { location.hash = "dashboard"; });
+$("#as-friend").addEventListener("click", () => { location.hash = "friend"; });
+
+// ---- routing
+function route() {
+  let name = location.hash.replace(/^#/, "") || "dashboard";
+  if (!document.getElementById(`v-${name}`)) name = "dashboard";
+  $$("[data-view]").forEach((v) => { v.hidden = v.id !== `v-${name}`; });
+  const friend = name === "friend";
+  document.body.dataset.role = friend ? "friend" : "admin";
+  $("#brand-name").textContent = friend ? "Game servers" : "Basecamp";
+  $("#as-admin").setAttribute("aria-pressed", String(!friend));
+  $("#as-friend").setAttribute("aria-pressed", String(friend));
+  const navName = name === "server" || name === "config" || name === "edit" || name === "welcome" ? "dashboard" : name;
+  $$("[data-nav]").forEach((a) => {
+    if (a.dataset.nav === navName) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
+  if (name === "server") fillConsole();
+  window.scrollTo(0, 0);
+}
+window.addEventListener("hashchange", route);
+showServer("pal");
+route();
+</script>
