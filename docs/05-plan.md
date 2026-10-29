@@ -141,15 +141,18 @@ The Later list in [01-requirements.md](01-requirements.md), ranked (first cut, 2
 **Batch 3: the fresher UI** (L)
 10. ~~After batches 1 and 2, so the new screens (the new-game flow, friend controls, player counts) are designed once rather than restyled twice.~~ **Done.** Piece 1: a clickable mock (`mockups/ui/`), revised over the owner's review rounds and approved. Piece 2: the real page built to match it (D-134 to D-139): one page for admin and friends, the friend view as the admin layout with parts hidden (friends may also Update and tap quick commands), the Activity feed with a red count of hard failures, template quick commands, the game's last update, bundled fonts, light and dark, phone and desktop layouts. Checked in the browser on the dev PC against fake servers, as admin and as a friend, at 375, 1280 and 1920 px, light and dark. Not yet seen: a real friend's device through `tailscale serve` (Q-02), the quick commands on the real games.
 
-**Batch 4: debugging from the dev PC** (S-M; can go before batch 3's later pieces)
+**Batch 4: debugging and mock follow-ups** (S-M each)
 11. Read-only debug endpoints, admin only (owner, 2026-10-29), so problems on the host PC can be looked at from the dev PC without remoting in. For example: Basecamp's own log and the launcher log (tail, since a time), a server's console log, health (version, uptime, the launcher, the SteamCMD queue, scheduler and poller state), settings with secrets left out, recent errors and Discord delivery failures. Never secrets (webhook URL, RCON/REST passwords), never paths outside Basecamp's own folders, every call in the audit log.
+12. **Cancel restart** during a stop-warning countdown (S-M), for the owner and friends, logged in Activity. In the mock but not built: the countdown can't be cancelled today, so a scheduled or friend restart can only be waited out or hurried with Stop now.
+13. **"Stopped since 23:40" and "gave up after 3 tries"** on the cards (S), as in the mock: record when each server's state changed, and keep the crash count the give-up rule already uses.
+14. **"See what friends see"** (S): a preview that shows the owner the friend view on their own device (it only takes rights away), so the friend view can be checked without a friend's device.
 
 **Only when a need shows up**
-12. Copying backups off the PC (M). Same-disk backups are fine for now (Q-08).
-13. Update commands for custom servers (S). When a non-Steam server is added.
-14. Steam login for games that need a real account (M; a password and Steam Guard to keep in the data folder). When a game needs it.
-15. Mod management (L, per game). When a game is modded through Basecamp.
-16. A relay for friends without Tailscale (L, and it changes the security model). Only if a friend can't use Tailscale (Q-03), see [03-friend-access.md](03-friend-access.md).
+15. Copying backups off the PC (M). Same-disk backups are fine for now (Q-08).
+16. Update commands for custom servers (S). When a non-Steam server is added.
+17. Steam login for games that need a real account (M; a password and Steam Guard to keep in the data folder). When a game needs it.
+18. Mod management (L, per game). When a game is modded through Basecamp.
+19. A relay for friends without Tailscale (L, and it changes the security model). Only if a friend can't use Tailscale (Q-03), see [03-friend-access.md](03-friend-access.md).
 
 ## Rough size
 

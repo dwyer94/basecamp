@@ -106,5 +106,7 @@ Ranked in [05-plan.md](05-plan.md), "After v1". Dropped: disk-space warnings and
 - Copying backups off the PC
 - Mod management (Workshop, Thunderstore)
 - A built-in relay for friends without Tailscale (see [03-friend-access.md](03-friend-access.md))
-- A fresher UI: the page is a plain MVP
+- Cancel a restart during its stop-warning countdown (owner and friends)
+- "Stopped since" and "gave up after N tries" on the server cards
+- A "see what friends see" preview for the owner
 - Read-only debug endpoints for the admin: Basecamp's and the launcher's logs, console logs, health and internal state, settings without secrets (so the host PC can be checked from the dev PC)
