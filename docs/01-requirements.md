@@ -102,7 +102,7 @@ Ranked in [05-plan.md](05-plan.md), "After v1". Dropped: disk-space warnings and
 - Copying backups off the PC
 - Mod management (Workshop, Thunderstore)
 - A built-in relay for friends without Tailscale (see [03-friend-access.md](03-friend-access.md))
-- Firewall indicator per server: whether each port has a Tailscale-only allow rule, is missing one, is blocked or is too broad (read-only; the page shows the `add-game-firewall-rule.ps1` command to copy)- Apply `settings.toml` changes such as `admin_logins` without a restart
+- Firewall indicator per server: whether each port has a Tailscale-only allow rule, is missing one, is blocked or is too broad (read-only; the page shows the `add-game-firewall-rule.ps1` command to copy)
 - Add a template from the page (paste or upload JSON, validated as in D-31, saved to `<data>\templates\`), so a new game needs no file copied onto the host PC
 - **New game from a template** in one flow: pick the template → install folder (default under one games folder) → SteamCMD first install → first start to write its config files → ask for the values the template marks as required (e.g. Dragonwilds' `OwnerId`) → show the firewall command → ready to start. Today these are separate steps: add the server, press Install, edit the config by hand
 - A fresher UI: the page is a plain MVP

@@ -52,7 +52,7 @@ uv venv --python 3.13 .venv
 `python -m basecamp` runs Basecamp with data in `.\data\` (or `BASECAMP_DATA_DIR`). It adopts servers left running, starts the start-on-boot ones, and serves the page on http://127.0.0.1:8150. From the PC itself you're the admin.
 
 - `tools\dev_template.py` adds a "Fake server (dev)" template so you can try the page without a real game.
-- The join host, SteamCMD path and backup defaults are on the page's **Settings** screen (saved to `.\data\settings.toml`). Admin logins and the rest are set in that file by hand:
+- The join host, SteamCMD path and backup defaults are on the page's **Settings** screen (saved to `.\data\settings.toml`). Admin logins and the rest are set in that file by hand; Basecamp picks up a saved change within a few seconds (or press **Reload settings**), except `host`, `port` and the console buffer sizes, which wait for **Restart Basecamp**:
 
 ```toml
 [basecamp]

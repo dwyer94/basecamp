@@ -9,21 +9,32 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import os
 import re
 import threading
+import time
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 # migrations/ ships next to the basecamp/ package, in the repo and in release zips (docs/07).
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 # Built-in game templates (R-13), shipped the same way; <data>/templates/ can add or override.
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 DEFAULT_STEAMCMD = r"%USERPROFILE%\Desktop\SteamCmd\steamcmd.exe"
-# What the Settings page may change (D-52). The rest stays a settings.toml edit + restart.
+# What the Settings page may change (D-52). The rest is a settings.toml edit, picked up
+# without a restart except for RESTART_SETTINGS (D-127).
 PAGE_SETTINGS = ("join_host", "steamcmd_path", "default_backup_every_h", "default_backup_keep",
                  "update_beta", "update_auto_hour", "discord_live_status")
+# Read once at start (the web server's address, the DB's migrations, the console buffers
+# and log rotation already set up): a change waits for Restart Basecamp. Every other
+# setting is read each time it's used, so a reload applies it at once.
+RESTART_SETTINGS = ("host", "port", "migrations_dir", "console_lines", "console_log_bytes",
+                    "console_log_backups")
 _save_lock = threading.Lock()
 
 
@@ -171,18 +182,49 @@ class Settings:
             for key, value in values.items():
                 object.__setattr__(self, key, value)
 
+    def apply_file(self, old: Settings, new: Settings) -> dict[str, list[str]]:
+        """Apply what changed between two readings of settings.toml (D-127).
+
+        Only keys whose value in the file changed are touched, so values set another way
+        (the Settings page, tests) stay. Returns ``{"applied": [...], "restart": [...]}``:
+        the keys now in effect, and the changed RESTART_SETTINGS, which keep their old
+        value until Basecamp restarts. A key taken out of the file goes back to its default.
+        """
+        applied, restart = [], []
+        with _save_lock:  # not halfway through save_page_settings
+            for f in dataclasses.fields(self):
+                value = getattr(new, f.name)
+                if f.name == "data_dir" or getattr(old, f.name) == value:
+                    continue
+                if f.name in RESTART_SETTINGS:
+                    restart.append(f.name)
+                elif getattr(self, f.name) != value:
+                    object.__setattr__(self, f.name, value)
+                    applied.append(f.name)
+        return {"applied": applied, "restart": restart}
+
+    @classmethod
+    def read_file(cls, data_dir: Path) -> Settings:
+        """settings.toml on its own (no overrides), with each value's type checked.
+        ValueError if it isn't valid TOML or has an unknown key or a wrongly typed value."""
+        try:
+            return cls._build(data_dir, _file_values(data_dir), check_types=True)
+        except TypeError as e:  # e.g. a list where a path or a number goes
+            raise ValueError(f"settings.toml: {e}") from None
+
     @classmethod
     def load(cls, data_dir: Path | str | None = None, **overrides: object) -> Settings:
         """Build settings from the data folder's settings.toml, then explicit overrides."""
         if data_dir is None:
             data_dir = os.environ.get("BASECAMP_DATA_DIR") or Path.cwd() / "data"
         data_dir = Path(data_dir).resolve()
-        values: dict[str, object] = {}
-        toml_path = data_dir / "settings.toml"
-        if toml_path.is_file():
-            with toml_path.open("rb") as f:
-                values.update(tomllib.load(f).get("basecamp", {}))
+        values = _file_values(data_dir)
         values.update(overrides)
+        return cls._build(data_dir, values)
+
+    @classmethod
+    def _build(cls, data_dir: Path, values: dict[str, object], *,
+               check_types: bool = False) -> Settings:
         known = {f.name for f in dataclasses.fields(cls)} - {"data_dir"}
         unknown = set(values) - known
         if unknown:
@@ -197,7 +239,118 @@ class Settings:
             values["admin_logins"] = tuple(str(x).strip() for x in logins)  # type: ignore[union-attr]
         if "notify_retry_s" in values:
             values["notify_retry_s"] = tuple(float(x) for x in values["notify_retry_s"])  # type: ignore[union-attr]
+        if check_types:
+            _check_types(cls, values)
         return cls(data_dir=data_dir, **values)  # type: ignore[arg-type]
+
+
+class SettingsFile:
+    """Picks up edits to settings.toml without a restart (D-127): on **Reload settings**,
+    and when the file's modified time or size changes, looked at no more than every
+    ``every_s`` (the web app asks on each request). A file that doesn't load keeps the
+    settings as they were and shows why."""
+
+    def __init__(self, settings: Settings,
+                 on_reload: Callable[[str, dict[str, list[str]]], None] | None = None,
+                 every_s: float = 3.0) -> None:
+        self._settings = settings
+        self._on_reload = on_reload
+        self._every_s = every_s
+        self._lock = threading.Lock()
+        self._next = 0.0
+        self._seen = self._signature()
+        self.error = ""
+        self.loaded_at = time.time()
+        try:  # the file as last read: a reload applies only what changed since
+            self._file = Settings.read_file(settings.data_dir)
+        except (OSError, ValueError) as e:
+            self._file = dataclasses.replace(settings)
+            self.error = str(e)
+
+    @property
+    def path(self) -> Path:
+        return self._settings.data_dir / "settings.toml"
+
+    def _signature(self) -> tuple[int, int] | None:
+        try:
+            st = self.path.stat()
+        except OSError:
+            return None
+        return st.st_mtime_ns, st.st_size
+
+    def due(self) -> bool:
+        return time.monotonic() >= self._next
+
+    def check(self) -> dict[str, list[str]] | None:
+        """Reload if the file changed since it was last read; None if it didn't."""
+        with self._lock:
+            if not self.due():
+                return None
+            self._next = time.monotonic() + self._every_s
+            if self._signature() == self._seen:
+                return None
+        return self.reload("settings.toml")
+
+    def reload(self, who: str) -> dict[str, list[str]]:
+        """Read it now. ``who`` is for the audit log ("settings.toml" for a change seen)."""
+        with self._lock:
+            self._seen = self._signature()
+            try:
+                new = Settings.read_file(self._settings.data_dir)
+                result = self._settings.apply_file(self._file, new)
+                self._file = new
+            except (OSError, ValueError) as e:
+                self.error = str(e)
+                log.warning("settings.toml not applied: %s", e)
+                result = {"applied": [], "restart": [], "error": [self.error]}
+            else:
+                self.error = ""
+                self.loaded_at = time.time()
+                if result["applied"] or result["restart"]:
+                    log.info("settings.toml reloaded: applied %s; after a restart %s",
+                             result["applied"] or "nothing", result["restart"] or "nothing")
+        if self._on_reload is not None:
+            self._on_reload(who, result)
+        return result
+
+    def view(self) -> dict:
+        pending = []
+        for key in RESTART_SETTINGS:
+            now, after = getattr(self._settings, key), getattr(self._file, key)
+            if after != now:
+                pending.append({"key": key, "now": str(now), "after": str(after)})
+        return {"error": self.error, "loaded_at": self.loaded_at, "restart_pending": pending,
+                "restart_keys": list(RESTART_SETTINGS), "every_s": self._every_s}
+
+
+def _file_values(data_dir: Path) -> dict[str, object]:
+    """The ``[basecamp]`` table of ``<data>\\settings.toml`` ({} if there's no file)."""
+    toml_path = data_dir / "settings.toml"
+    if not toml_path.is_file():
+        return {}
+    try:
+        with toml_path.open("rb") as f:
+            return dict(tomllib.load(f).get("basecamp", {}))
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"settings.toml isn't valid TOML: {e}") from None
+
+
+def _check_types(cls: type, values: dict[str, object]) -> None:
+    """A reloaded value must have its setting's type (an int will do for a float), so a
+    typo like ``port = "8150x"`` is refused instead of breaking things later."""
+    defaults = {f.name: f.default for f in dataclasses.fields(cls)}
+    for key, value in values.items():
+        want = defaults.get(key)
+        if isinstance(want, bool) or isinstance(value, bool):
+            ok = isinstance(value, bool) and isinstance(want, bool)
+        elif isinstance(want, float):
+            ok = isinstance(value, int | float)
+            if ok:
+                values[key] = float(value)  # type: ignore[arg-type]
+        else:  # lists and paths are already tuples and Paths here
+            ok = isinstance(value, type(want))
+        if not ok:
+            raise ValueError(f"{key} should be {type(want).__name__}, not {value!r}")
 
 
 _HEADER = re.compile(r"^\s*\[\s*([^\]]+?)\s*\]\s*(#.*)?$")

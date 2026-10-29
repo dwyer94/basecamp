@@ -39,7 +39,7 @@ from basecamp.livestatus import LiveStatus
 from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig, ServerKind, ServerState
 from basecamp.notify import Notifier
 from basecamp.selfupdate import SelfUpdater, UpdateError
-from basecamp.settings import PAGE_SETTINGS, Settings
+from basecamp.settings import PAGE_SETTINGS, Settings, SettingsFile
 from basecamp.steam import Kind, SteamError, SteamRunner
 from basecamp.supervisor import InvalidState, PortInUse, Supervisor, SupervisorError
 
@@ -157,7 +157,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                steam: SteamRunner | None = None,
                config_files: ConfigFiles | None = None,
                updater: SelfUpdater | None = None,
-               live: LiveStatus | None = None) -> FastAPI:
+               live: LiveStatus | None = None,
+               settings_check_s: float = 3.0) -> FastAPI:
     """The services are made by main.run; tests may leave them out (no crash restarts)."""
     hub = _Hub()
     cpu = views.CpuSampler()
@@ -167,6 +168,26 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     config_files = config_files or ConfigFiles(settings)
     updater = updater or SelfUpdater(settings, store, notifier)
     live = live or LiveStatus(settings, store, sup)
+    def settings_reloaded(who: str, result: dict[str, list[str]]) -> None:
+        """Audit a settings.toml reload (D-127): key names only, never values."""
+        if result.get("error"):
+            detail = f"not applied: {result['error'][0]}"
+        elif result["applied"] or result["restart"]:
+            detail = "; ".join(part for part in (
+                result["applied"] and "applied " + ", ".join(result["applied"]),
+                result["restart"] and "after a restart " + ", ".join(result["restart"]))
+                if part)
+        elif who == "settings.toml":
+            return  # saved by the Settings page, or touched without a change
+        else:
+            detail = "no changes"
+        store.add_audit(who, "settings.reload", None, detail)
+        log.info("audit: %s settings.reload %s", who, detail)
+        if result["applied"]:
+            hub.poke()  # join addresses, admin or friend
+            live.poke()
+
+    settings_file = SettingsFile(settings, settings_reloaded, settings_check_s)
     sup.add_listener(hub.poke)
     sup.add_change_listener(hub.poke)
     steam.add_listener(hub.poke)
@@ -188,6 +209,10 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             return JSONResponse({"detail": "Unknown host name"}, status_code=400)
         if request.method in _UNSAFE and not auth.check_origin(request.headers):
             return JSONResponse({"detail": "Cross-site request refused"}, status_code=403)
+        # settings.toml edited by hand (D-127): admin_logins apply at once. Reload settings
+        # reads it itself, so its answer says what changed.
+        if settings_file.due() and request.url.path != "/api/settings/reload":
+            await run_in_threadpool(settings_file.check)
         peer = request.client.host if request.client else None
         request.state.who = auth.identify(peer, request.headers, settings)
         return await call_next(request)
@@ -607,7 +632,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                 "backups_dir": str(settings.backups_dir),
                 "settings_file": str(settings.data_dir / "settings.toml"),
                 "notify": notify_info(), "update": updater.view(),
-                "live_status": live.view()}
+                "live_status": live.view(), "file": settings_file.view()}
 
     @app.get("/api/settings")
     def read_settings(w: Admin) -> dict:
@@ -642,6 +667,12 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             hub.poke()  # join addresses on every page
             live.poke()  # and in the live status message
         return {**settings_info(), "changed": sorted(changed), "servers_updated": updated}
+
+    @app.post("/api/settings/reload")
+    def reload_settings(w: Admin) -> dict:
+        """Read settings.toml now (D-127). A file that doesn't load changes nothing."""
+        result = settings_file.reload(w.label)
+        return {**settings_info(), "reloaded": result}
 
     # -- Discord (R-60..R-62) ---------------------------------------------------------
 
@@ -859,6 +890,10 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         try:
             while True:
                 event.clear()
+                now = ws_who(ws)  # admin_logins may have changed (D-127)
+                if now is None or now.is_admin != w.is_admin:
+                    await ws.close(code=4401)  # the page reconnects as what it is now
+                    return
                 servers = await run_in_threadpool(server_list, w)
                 await ws.send_json({"type": "servers", "servers": servers})
                 with contextlib.suppress(TimeoutError):
@@ -925,7 +960,16 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                 except HTTPException as e:
                     await ws.send_json({"type": "error", "message": e.detail})
 
-        tasks = [asyncio.create_task(sender()), asyncio.create_task(receiver())]
+        async def still_admin() -> None:
+            while True:  # admin_logins may lose this login (D-127)
+                await asyncio.sleep(2)
+                now = ws_who(ws)
+                if now is None or not now.is_admin:
+                    await ws.close(code=4403)
+                    return
+
+        tasks = [asyncio.create_task(sender()), asyncio.create_task(receiver()),
+                 asyncio.create_task(still_admin())]
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -947,4 +991,5 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     app.state.steam = steam
     app.state.configs = config_files
     app.state.live = live
+    app.state.settings_file = settings_file
     return app

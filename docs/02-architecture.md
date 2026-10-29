@@ -38,7 +38,7 @@ Either way: **admin** = your Tailscale login (Plan A) or a valid admin session (
 **Built (Plan A, D-27):** `basecamp/auth.py`.
 
 - The login header is trusted only from a loopback peer.
-- A login in `admin_logins` (data-folder `settings.toml`) is admin; any other login is a friend.
+- A login in `admin_logins` (data-folder `settings.toml`) is admin; any other login is a friend. An edit to the file applies on the next request (it's looked at every 3 s, D-127), and an open status or console WebSocket whose login gained or lost admin is closed so the page reloads as what it is now.
 - A request with no Tailscale or forwarding headers and a loopback `Host` is the PC itself, the local admin.
 - Anything else, such as Serve traffic from a tagged device, is a friend (D-28).
 - Cross-site requests and unknown `Host` names are refused (D-29).
@@ -207,7 +207,7 @@ Built in Phases 2 to 5: everything here except `/api/events`.
 | GET/POST | `/api/servers/{id}/backups` (list, back up now) · POST `/backups/{b}/restore` · DELETE `/backups/{b}` · GET `/backups/{b}/download` (the zip, streamed, D-64) | admin (restore: 409 unless stopped) |
 | GET/PUT | `/api/notify` (main webhook, masked) · PUT `/api/servers/{id}/webhook` · POST `/api/notify/test` | admin |
 | GET | `/api/templates` · POST `/api/drafts` (pre-filled form from a template or an install's appmanifest; no install folder = SteamCMD's default for the template, D-125) · GET `/api/steam/library` (folders in SteamCMD's `steamapps\common`) | admin |
-| GET/PUT | `/api/settings` (join host, SteamCMD path, backup defaults, `apply_backup_defaults`, `discord_live_status`; the masked Discord info and the live status message's state; read-only admin logins) | admin |
+| GET/PUT | `/api/settings` (join host, SteamCMD path, backup defaults, `apply_backup_defaults`, `discord_live_status`; the masked Discord info and the live status message's state; read-only admin logins; `file`: the last settings.toml error and the changes waiting for a restart) · POST `/api/settings/reload` (read settings.toml now, D-127) | admin |
 | POST | `/api/restart` (Restart Basecamp through the launcher, 202; 409 without the launcher or while an install or update is queued or running, D-126) | admin |
 | GET | `/api/events` · `/api/audit` | admin |
 | GET | `/healthz` | localhost |

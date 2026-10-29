@@ -72,6 +72,7 @@ function keepSocket(path, { onMessage, onOpen, onState }) {
     socket.onmessage = (ev) => onMessage(JSON.parse(ev.data));
     socket.onclose = (ev) => {
       onState && onState(false);
+      if (ev.code === 4401) { location.reload(); return; }  // admin or not changed (D-127)
       if (closed || ev.code === 4403 || ev.code === 4404) return;
       setTimeout(connect, delay);
       delay = Math.min(delay * 2, 15000);

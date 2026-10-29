@@ -1279,14 +1279,40 @@ async function settingsPage(root) {
       ...serverRows),
 
     el("h2", {}, "Set in settings.toml"),
-    el("div", { class: "card" },
-      el("p", { class: "muted", style: "margin-top:0" }, "Change these in ", el("code", {}, res.settings_file), " and restart Basecamp."),
-      el("table", {}, el("tbody", {},
-        el("tr", {}, el("td", {}, "Admin logins"), el("td", {}, res.admin_logins.length ? res.admin_logins.join(", ") : "none (only this PC)")),
-        el("tr", {}, el("td", {}, "Config copies kept"), el("td", {}, String(res.config_copies_keep)))))),
+    tomlCard(res, root),
 
     el("h2", {}, "Basecamp"),
     restartCard(res.update));
+}
+
+// settings.toml edited by hand (D-127): picked up within seconds, or on Reload settings.
+function tomlCard(res, root) {
+  const f = res.file;
+  const reload = async () => {
+    try {
+      const out = await api("POST", "/api/settings/reload");
+      const r = out.reloaded;
+      me = await api("GET", "/api/me");
+      toast(r.error ? "Not applied: the file has a problem"
+        : r.applied.length || r.restart.length
+          ? [r.applied.length ? `Applied ${r.applied.join(", ")}` : "", r.restart.length ? `after a restart: ${r.restart.join(", ")}` : ""].filter(Boolean).join("; ")
+          : "No changes");
+      if (!me.is_admin) { location.reload(); return; }
+      settingsPage(root);
+    } catch (e) { alert(e.message); }
+  };
+  return el("div", { class: "card" },
+    f.error ? notice(`settings.toml wasn't applied, so the settings are as before: ${f.error}`, "error") : null,
+    f.restart_pending.length ? notice(el("span", {}, "Changed in the file, used after ",
+      el("strong", {}, "Restart Basecamp"), ": ",
+      f.restart_pending.map((p) => `${p.key} ${p.now} → ${p.after}`).join(", "), ".")) : null,
+    el("p", { class: "muted", style: "margin-top:0" }, "Edit these in ", el("code", {}, res.settings_file),
+      `. Basecamp picks up a saved change within ${f.every_s} s (or press Reload settings), admin logins included. Only ${f.restart_keys.join(", ")} need a restart.`),
+    el("table", {}, el("tbody", {},
+      el("tr", {}, el("td", {}, "Admin logins"), el("td", {}, res.admin_logins.length ? res.admin_logins.join(", ") : "none (only this PC)")),
+      el("tr", {}, el("td", {}, "Config copies kept"), el("td", {}, String(res.config_copies_keep))),
+      el("tr", {}, el("td", {}, "Last read"), el("td", {}, new Date(f.loaded_at * 1000).toLocaleString())))),
+    el("div", { class: "buttons" }, el("button", { class: "small", onclick: reload }, "Reload settings")));
 }
 
 // Restart Basecamp (D-126): only under the launcher, which starts it again.

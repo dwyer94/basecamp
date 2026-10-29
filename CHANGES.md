@@ -14,6 +14,12 @@ GitHub release's notes, which the admin dashboard shows next to its Install butt
 - **Restart Basecamp** button on the Settings page: Basecamp exits and the launcher starts
   it again within seconds; game servers keep running. The page waits and reloads. It's
   refused while an install or update is queued or running, and under `python -m basecamp`.
+- **`settings.toml` edits apply without a restart**, `admin_logins` included: Basecamp
+  notices a saved change within a few seconds, and the Settings page has **Reload
+  settings**. `host`, `port` and the console buffer sizes still wait for a restart, and the
+  page says which changed. A file that doesn't load (bad TOML, a typo'd key, a wrong type)
+  leaves the settings as they were and shows the error. Reloads go in the audit log with
+  the names of the keys that changed, never their values.
 - `install.ps1 -WhatIf` no longer fails with "Release check failed: No such file" when
   it would download a release: a dry run skips the download, so it now says the real run
   checks the signature once the file is there.
