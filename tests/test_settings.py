@@ -149,3 +149,15 @@ def test_open_status_socket_closes_when_the_login_loses_admin(tmp_path):
     finally:
         stop_everything(sup, store)
         store.close()
+
+
+def test_a_restart_key_put_back_is_not_reported(tmp_path):
+    data = tmp_path / "data"
+    write(data, "[basecamp]\nport = 8150\n")
+    s = Settings.load(data)
+    watch = SettingsFile(s, every_s=0)
+    write(data, "[basecamp]\nport = 8151\n")
+    assert watch.check()["restart"] == ["port"]
+    write(data, "[basecamp]\n")  # back to the default, which is what runs
+    assert watch.check() == {"applied": [], "restart": []}
+    assert watch.view()["restart_pending"] == []

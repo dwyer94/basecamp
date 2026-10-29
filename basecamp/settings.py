@@ -196,9 +196,11 @@ class Settings:
                 value = getattr(new, f.name)
                 if f.name == "data_dir" or getattr(old, f.name) == value:
                     continue
+                if getattr(self, f.name) == value:  # back to what's running, or set already
+                    continue
                 if f.name in RESTART_SETTINGS:
                     restart.append(f.name)
-                elif getattr(self, f.name) != value:
+                else:
                     object.__setattr__(self, f.name, value)
                     applied.append(f.name)
         return {"applied": applied, "restart": restart}
