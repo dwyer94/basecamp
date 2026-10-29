@@ -54,6 +54,34 @@ GitHub release's notes, which the admin dashboard shows next to its Install butt
   Schedule**). They work like the buttons: stop warning, graceful stop, SteamCMD queue,
   Discord messages. While players are on, a server can go ahead anyway, skip that day, or
   wait until they've left (up to 2 hours); an unknown player count counts as nobody on.
+- **A fresher page.** One page for you and your friends: a sidebar on a desktop and bottom
+  tabs on a phone, light and dark (following the system, with a toggle). Server cards show
+  the state in a coloured band with the one fact that matters (uptime, countdown, crash,
+  update progress), the player count, when the game was last updated, and only the buttons
+  that fit. The dashboard has a summary and a **Needs you** list (crashes Basecamp gave up
+  on, failed updates, Basecamp's own update, unfinished setups). The server page has tabs
+  (Console, Config files, Backups, Schedule, Firewall, History) beside a details column;
+  schedules moved to their own tab. The config editor's Save bar stays on screen, with
+  **Save and restart** for a running server. Every risky button asks in a sheet on the page
+  instead of a browser box. Fonts ship with Basecamp; the page loads nothing from the
+  internet.
+- **Activity** replaces the audit log page: a feed by day with filters. It now also shows
+  Basecamp's own events: crashes, giving up restarting, update and install results,
+  scheduled backups, failed scheduled restarts, and Discord messages that didn't send. Hard
+  failures get a red count in the menu until you dismiss them, or until that server runs
+  normally again (Discord failures clear only on dismiss).
+- **Friends see more, and may Update.** Friends get your page with your parts hidden: the
+  cards (CPU and RAM, last updated, update available), the server page with a read-only
+  console (earlier lines too, SteamCMD output and folder paths left out), the schedule,
+  the last backup's time, firewall status and Activity without your events. With friend
+  controls on they can also **Update** (same warning and save backup as yours) and tap the
+  quick commands a template marks for friends. A crashed server reads "Down" for them.
+- **Quick commands** in the console: one tap per command from the game's template (new
+  optional template field `quick_commands`; Palworld: Save, Players, Broadcast; V Rising:
+  Announce, Restart warning; both not yet tried on the real games).
+- **Last updated** on each card and the server page: when the game itself was last
+  updated, from Steam's app manifest (so updates outside Basecamp count), else Basecamp's
+  own last update.
 - The page's scripts are now checked for a newer copy on every load, so a phone never mixes
   an old and a new one after an update.
 - `install.ps1 -WhatIf` no longer fails with "Release check failed: No such file" when

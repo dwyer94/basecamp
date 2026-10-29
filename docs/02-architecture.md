@@ -75,7 +75,8 @@ basecamp/
   schedule.py        daily scheduled restarts and updates (D-133)
   api/app.py         FastAPI app: REST routes, status and console WebSockets, pages
   api/views.py       admin view vs friend view of a server (D-30)
-  web/               index.html, friend.html, app.js, common.js, style.css (no build step)
+  activity.py        the Activity feed: failures, clearing, the friend allow-list (D-134)
+  web/               index.html, common.js, app.js, pages.js, style.css, fonts/ (no build step)
 migrations/          numbered SQL files, add-only
 templates/           built-in game templates, one JSON per game (docs/08-templates.md)
 tools/fake_server.py fake game server for tests: prints, reads stdin, binds a UDP port, can "crash"
@@ -199,37 +200,42 @@ Built in Phases 2 to 5: everything here except `/api/events`.
 | Method | Path | Who |
 |---|---|---|
 | GET | `/api/me` | everyone (who you are) |
-| GET | `/api/servers` · `/api/servers/{id}` | friend (trimmed fields, D-30) / admin (full) |
+| GET | `/api/servers` · `/api/servers/{id}` | friend (allow-lists: the card, and the server page's details, D-30, D-135) / admin (full; `/{id}` adds the quick commands and the last backup) |
 | POST | `/api/servers` · PUT/DELETE `/api/servers/{id}` | admin |
 | POST | `/api/servers/{id}/start` · `/stop` · `/restart` · `/kill` · `/update` · `/install` | admin (stop/restart/kill answer 202, D-32; update/install answer 202 with the run id and queue; start/stop/restart answer 409 while an install or update runs, D-41, or a stop warning counts down, D-62). `/stop?now=true` skips the warning, and during a countdown skips the rest of it |
-| POST | `/api/friend/servers/{id}/start` · `/stop` · `/restart` (stop and restart always warn; one friend click per server per minute, 429) | friends with the friend permission, and admins (D-131) |
+| POST | `/api/friend/servers/{id}/start` · `/stop` · `/restart` · `/update` (stop and restart always warn, update backs up the save; one friend click per server per minute, 429) · `/quick/{n}` (a template quick command marked `friend: true`, picked by number; one per server per 5 s) | friends with the friend permission, and admins (D-131, D-135, D-137) |
 | GET/POST | `/api/setups` (list; begin `{template_id, name, install_dir}`) · GET `/api/setups/{id}` · POST `.../retry` · `.../values` (`{values: {"0": ...}}`) · `.../next` · `.../finish[?start=true]` (D-130) | admin |
 | POST | `/api/servers/{id}/steam/cancel` · `/steam/check` (build check, 202) · GET `/api/servers/{id}/steam/runs/{run}/log` · GET `/api/steam` (SteamCMD path and queue) | admin |
 | POST | `/api/servers/{id}/command` (`{text, channel}`: `stdin`, `rcon`, `rest`, or empty for the default) · GET `/api/servers/{id}/console?after=` | admin |
 | PUT | `/api/servers/{id}/remote` (`rcon_password`, `rest_password`; the answer and the server view say only which are set, D-97) | admin |
-| WS | `/ws/servers/{id}/console?after=` | admin (replay + live, send `{"text": ..., "channel": ...}`) |
-| WS | `/ws/status` | everyone (status changes; friends get trimmed fields) |
+| WS | `/ws/servers/{id}/console?after=` | admin (replay + live, send `{"text": ..., "channel": ...}`); friends read-only, earlier lines included, SteamCMD output left out, paths and launch arguments blanked (D-135) |
+| WS | `/ws/status` | everyone (status changes, RAM free; friends get the card allow-list; admins also get the open failure count) |
 | GET | `/api/servers/{id}/configs` (the list, with any guard refusal per entry) · GET/PUT `/api/servers/{id}/configs/{n}` (read: text, encoding, hash, copies; save: `{text, base_sha256, force}`, 400 bad JSON, 403 guard, 409 changed on disk) | admin |
 | GET | `/api/servers/{id}/configs/{n}/copies/{name}` · POST `.../copies/{name}/restore` | admin |
 | GET/POST | `/api/servers/{id}/backups` (list, back up now) · POST `/backups/{b}/restore` · DELETE `/backups/{b}` · GET `/backups/{b}/download` (the zip, streamed, D-64) | admin (restore: 409 unless stopped) |
 | GET/PUT | `/api/notify` (main webhook, masked) · PUT `/api/servers/{id}/webhook` · POST `/api/notify/test` | admin |
 | GET | `/api/templates` · POST `/api/drafts` (pre-filled form from a template or an install's appmanifest; no install folder = SteamCMD's default for the template, D-125) · GET `/api/steam/library` (folders in SteamCMD's `steamapps\common`) · POST `/api/templates` (`{text, replace, dry_run}`: add a template to the data folder, 400 with the reason if invalid, 409 to confirm an override or replace, D-129) · DELETE `/api/templates/{id}` (data folder only) | admin |
 | GET/PUT | `/api/settings` (join host, SteamCMD path, backup defaults, `apply_backup_defaults`, `discord_live_status`, `friend_control` and `friend_control_logins` (D-131); the masked Discord info and the live status message's state; read-only admin logins; `file`: the last settings.toml error and the changes waiting for a restart) · POST `/api/settings/reload` (read settings.toml now, D-127) | admin |
-| GET | `/api/firewall` · POST `/api/firewall/check` (each server's ports against Windows Firewall's inbound rules, read-only, cached 60 s; check = read again, D-128) | admin |
+| GET | `/api/firewall` · POST `/api/firewall/check` (each server's ports against Windows Firewall's inbound rules, read-only, cached 60 s; check = read again, D-128) | admin; GET also friends, port status only (D-135) |
+| GET | `/api/activity?server_id=&limit=&before=&failures=` (the feed, newest first; friends get server events only, filtered here) · POST `/api/activity/{id}/dismiss` · POST `/api/activity/dismiss` (all) (D-134) | everyone / admin |
 | POST | `/api/restart` (Restart Basecamp through the launcher, 202; 409 without the launcher or while an install or update is queued or running, D-126) | admin |
 | GET | `/api/events` · `/api/audit` | admin |
 | GET | `/healthz` | localhost |
 
 ## UI
 
-Two pages, both phone-first (one column, big buttons, works at 375 px wide):
+One page for everyone (batch 3, D-135, D-139), built from the approved mock (`mockups/ui/`). A sidebar on a wide screen; under 900 px a top bar and a bottom tab bar. Friends get the same page with the owner's parts hidden; their API answers come from allow-lists, so hiding is never the only guard.
 
-- **Dashboard** (admin): a card per server: name, status pill, uptime, CPU/RAM, join address with **Copy** and **Copy for Discord**, buttons Start / Stop / Restart / Update. Tap a card for the server page: **Console**, **Config files**, **Firewall** (per port: open (Tailscale), too broad, blocked, missing with the command to add the rule, or unknown; **Check again**), **Backups** (back up now, restore, delete), **History**. The card has a **Firewall** badge with the worst port's status (D-128). A pending crash restart shows its time, with **Cancel restart**. A config file opens in an editor page: Save (JSON checked), Reload, wrap view, fields view for Palworld's `OptionSettings` line, **Restart now** after a save while running, earlier copies with View and Restore. A **Settings** page holds the join host, backup defaults, SteamCMD path and the Discord webhook (per-server webhooks under Advanced) with the live status message switch. A stop warning counting down shows on the card with the time left and **Stop now**; an **update available** (or "update: unknown") tag sits next to the status pill, and the server page's SteamCMD section has **Check for update**. Backups have **Download**.
-- **Friend view**: the same cards with only name, status, uptime, player count, join address + Copy; with the friend permission (D-131), Start, Stop and Restart.
-- **New game** (D-130): pick a template; the page follows the steps (install, first start, values, firewall, ready) and can be left and opened again from the dashboard.
-- Confirm dialogs on Stop, Update and Restore. Live updates over the status WebSocket, no refreshing.
-- Built with plain HTML/CSS/JS, no library and no CDN (D-34).
-- Both pages link a web app manifest (`/static/manifest.webmanifest`) and icons, so "Add to home screen" opens Basecamp full screen like an app (R-72, D-66).
+- **Servers** (dashboard): a summary (servers up, players online, RAM free), **Needs you** (admin: crashes Basecamp gave up on, failed updates, the self-update, unfinished new-game setups, SteamCMD not found), and a card per server: a coloured band with the state word and its key fact (uptime, countdown, crash, SteamCMD progress), the player count, last updated, the join address with **Copy**, chips (update available, schedule, firewall), and only the buttons that fit the state.
+- **Server page**: header with state, callouts (countdown, crash, update, a failed SteamCMD run) and actions (Kill set apart behind "Not responding?"); tabs **Console** (with the template's **Quick** commands), **Config files**, **Backups**, **Schedule**, **Firewall**, **History**; a details column (join address, Copy for Discord, uptime, CPU/RAM, build, last updated and where it came from, Steam's build, next restart, last backup, firewall, PID, install folder). Friends get Console (read-only), Schedule (read-only), Firewall (status only) and History.
+- **Config editor**: Fields or Text (Palworld's `OptionSettings` line as fields), a Save bar that stays at the bottom with **Save and restart** for a running server, earlier copies beside it.
+- **Add / edit server**: sections with a jump list (chips on a phone), the installed-folder pick-list and template first, the join port picked in the port table, Delete in its own red section.
+- **New game** (D-130): game tiles and a six-step bar; the page follows the setup and can be left and opened again from the dashboard.
+- **Templates**, **Settings** (a jump list; two columns of cards on a wide screen) and **Activity** (D-134: a feed by day with filters, the red failure count, Dismiss and Dismiss all). A fresh install shows a three-step first-run page instead of an empty dashboard.
+- Every risky button asks first in an in-page sheet (destructive ones get a red button), never the browser's `confirm()`. Live updates over the status WebSocket; an amber **Reconnecting…** badge while it's down.
+- Light and dark follow the system, with a toggle (system, light, dark) remembered in the browser.
+- Built with plain HTML/CSS/JS, no library and no CDN (D-34); the three fonts are bundled (`web/fonts/`, D-138).
+- The page links a web app manifest (`/static/manifest.webmanifest`) and icons, so "Add to home screen" opens Basecamp full screen like an app (R-72, D-66).
 
 ## Testing on the dev PC
 

@@ -21,7 +21,8 @@ Basecamp is a small Windows app that runs on an always-on Windows PC (the "host 
 - **Save backups**: zip each server's save folder on a schedule and before every update; keep the last N; download one from the page.
 - **Discord webhook**: posts when a server comes up, goes down, crashes or updates, with the join address. Optionally keeps one live status message, edited in place.
 - **Updates itself** from GitHub Releases: banner when a new version is out, one tap to install, automatic rollback if it fails.
-- **Two views**: the admin view (you, full control) and a **friend view** (what's running, join address, status, how many players are on). If you allow it, friends can also start, stop and restart servers there, and nothing else. Both can be added to a phone's home screen.
+- **One page, two views**: you get full control; friends get the same page with your parts hidden (what's running, join address, how many players are on, when the game was last updated, a read-only console, and Activity). If you allow it, friends can also start, stop, restart and update servers and tap the quick commands you mark for them, and nothing else. It works on a phone (bottom tabs) and a desktop (sidebar), in light and dark, and can be added to a phone's home screen.
+- **Activity**: a feed of what happened and who did it, with a red count of hard failures (crashes Basecamp gave up on, failed updates and backups, Discord messages that didn't send) until you dismiss them or the server runs normally again.
 
 ## Docs
 

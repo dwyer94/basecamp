@@ -73,10 +73,10 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 
 ## Friend view
 
-- **R-70** Read-only page: each server's name, status, join address with copy button, uptime, and player count where the game supports it (R-73).
-- **R-71** No start/stop (unless R-74), no console, no config, no paths, no RCON passwords.
+- **R-70** Read-only page: each server's name, status, join address with copy button, uptime, and player count where the game supports it (R-73). Since batch 3 (D-135) it's the admin's page with the owner's parts hidden: also CPU/RAM, when the game was last updated, update available, the schedule, the last backup's time, firewall status per port, a read-only console with its earlier lines, and Activity without the owner's events.
+- **R-71** No start/stop (unless R-74), no typing console commands, no config, no paths, no backup list, no RCON passwords.
 - **R-73** **Player count** (batch 2, D-132): for each running server whose game supports it, ask how many players are on (Palworld's REST API, an RCON command and pattern, or Steam's server query on a query port), about once a minute; "unknown" when it can't tell. On the admin and friend views; friends get the number only, never names.
-- **R-74** **Friend permission** (batch 2, D-131): a setting, off by default: a list of friend logins, or anyone who reaches the page. Those friends get Start, Stop and Restart on the friend view and nothing else (no config, delete, update, console or passwords). Each click is audited with the login (or "unknown"); stops keep the warning (R-25); a server takes one friend click a minute. The login list works only if a friend's request carries their Tailscale login (Q-02, not yet checked); "anyone" works either way.
+- **R-74** **Friend permission** (batch 2, D-131): a setting, off by default: a list of friend logins, or anyone who reaches the page. Those friends get Start, Stop and Restart on the friend view, Update since batch 3 (D-135), and the template's quick commands marked for friends (D-137); nothing else (no config, delete, typing console commands, backups or passwords). Each click is audited with the login (or "unknown"); stops keep the warning (R-25) and an update backs up the save first; a server takes one friend click a minute. The login list works only if a friend's request carries their Tailscale login (Q-02, not yet checked); "anyone" works either way.
 - **R-72** **Add to home screen** (Phase 6.5): both pages have a web app manifest and icons, so a phone opens Basecamp like an app. No offline mode (no service worker).
 
 ## Security
@@ -84,7 +84,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-80** Admin actions need you to be the admin (Tailscale identity or password; see [02-architecture.md](02-architecture.md)).
 - **R-81** Not reachable from the internet. Reachable only from the tailnet (and loopback on the prod PC).
 - **R-82** Secrets (RCON passwords, webhook URL, admin password hash) stay in `C:\BasecampData\`, never in the repo, never sent to the friend view.
-- **R-83** Every admin action is written to an audit log (who, what, when).
+- **R-83** Every admin action is written to an audit log (who, what, when). Since batch 3 the log also holds Basecamp's own events (crashes, update results, scheduled backups, Discord failures) and is shown as the Activity feed (D-134).
 
 ## Updating Basecamp itself
 

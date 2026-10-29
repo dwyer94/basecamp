@@ -1,6 +1,6 @@
 # Basecamp UI mock (batch 3, first piece)
 
-A clickable static mock of the fresher UI, for the owner to review before the real overhaul ([docs/05-plan.md](../../docs/05-plan.md), batch 3). Nothing under `basecamp/` changed.
+A clickable static mock of the fresher UI, for the owner to review before the real overhaul ([docs/05-plan.md](../../docs/05-plan.md), batch 3). Approved; the real page is built from it (D-134 to D-139 in [docs/06-decisions.md](../../docs/06-decisions.md)). Where the build differs from the mock, "Built" at the end says so. The mock itself is kept as it was reviewed.
 
 - Open `index.html` in a browser. Plain HTML/CSS/JS, no build step, placeholder data only.
 - The pink bar at the top and the pink dashed boxes are mock-only. They switch between the admin and friend views, show the "connection lost" state, and explain what changed. Untick "Notes" to hide the boxes.
@@ -47,7 +47,7 @@ Rounds 1 and 2 of the owner's feedback are applied (see "Decisions" below).
 - **Phone layout for the admin too.** Under 900 px the sidebar becomes a bottom tab bar (Servers, Activity, Templates, Settings) and New game moves to the top bar. Cards stack in one column, action buttons stretch to full width, and the server page shows the details panel above the tabs.
 - **Friends see the admin UI, minus the owner's parts.** One level for every friend, no roles. It's the same pages with things hidden, so it stays phone-friendly the same way the admin view is:
   - **Can do** (when friend controls are on): Start, Stop, Restart and Update, each with the same warning (and, for Update, the save backup) as the owner; the quick commands marked for friends (Palworld: Save and Players, not Broadcast).
-  - **Can see:** dashboard cards (state, players, address, uptime, CPU/RAM, last updated, update available), the server page with a read-only console, the details panel without the install folder, Schedule (read-only), Firewall status (read-only, no Check again), Backups (list only), History without config saves, and Activity without the owner's events (settings changes, config saves, templates, Basecamp updates, logins, Discord). Events a friend did show their Tailscale login.
+  - **Can see:** dashboard cards (state, players, address, uptime, CPU/RAM, last updated, update available), the server page with a read-only console (earlier lines included), the details panel without the install folder (with "last backup"), Schedule (read-only), Firewall status (read-only, no Check again), History without config saves, and Activity without the owner's events (settings changes, config saves, templates, Basecamp updates, logins, Discord). Events a friend did show their Tailscale login. No backup list (decided after round 2, below).
   - **Never see:** Needs you, the Basecamp self-update, the Config files tab, install and exe paths, Templates, Add/Edit, New game, Settings, Kill, Restart now, Cancel restart, Cancel update, typing console commands, Back up now, Restore, Download and Delete.
   - **Friend controls off:** the same pages with no action buttons and no quick commands.
 - **Schedules get their own tab** on the server page, with the next run spelled out ("Next: tomorrow 05:00").
@@ -97,7 +97,25 @@ Rounds 1 and 2 of the owner's feedback are applied (see "Decisions" below).
 3. Friend quick commands: Players and Save, flagged `friend: true` in the template.
 4. Red badge: clears on dismiss, or when that server runs normally again; failures with no server clear only on dismiss.
 
-## Open questions
+## Decisions after round 2
 
-1. **Backups for friends.** The list shows file names and sizes. Is that fine, or should friends see only "last backup" in the details panel?
-2. **Console history for friends.** Should friends see console lines from before they opened the page (the scrollback), or only new lines? The scrollback can show commands the owner typed, such as a broadcast.
+1. **Backups for friends:** friends don't see the backup list. They see only "last backup" in the details panel. The Backups tab is the owner's.
+2. **Console history for friends:** friends see the console's earlier lines, not only new ones. (The build also leaves SteamCMD's output out and blanks the server's folders and launch arguments, which can hold a password; D-135.)
+
+## Built (batch 3, piece 2)
+
+The real page follows the mock. Where it differs, and why:
+
+- **Monograms** are the first letters of two words, or the first two letters of one ("Pa" for Palworld, not "Pw"): the mock's were hand-picked.
+- **Dates and times** use the browser's own format (for example "Oct 27, 2026, 07:03 PM" on an English-US browser).
+- **Stopped cards** have no "since yesterday 23:40": Basecamp doesn't record when a server stopped. The band's fact is empty, or says an update is queued.
+- **Crashed cards** say "not restarting" or "restarting at 14:05", not "gave up after 3 tries": the crash count isn't kept per server.
+- **A countdown card** has "Restart now" (or Stop now / Update now) but no **Cancel restart**: a stop warning can't be cancelled yet, only skipped or ended with Kill. Cancel restart is there for a pending crash restart, as before.
+- **Updating cards** don't show "Backup 13:58" or "Build A to B" chips; the band shows SteamCMD's progress and the hint says the save is backed up first.
+- **The friend firewall tab** shows each port's status with a plain sentence ("The owner has been told") instead of the rule name: friends get the status only.
+- **PID** in the details panel is the owner's only (the mock showed it to friends); exit codes too.
+- **Stopping steps** in the Edit form are editable rows (action, command, wait) rather than a read-only list with Edit buttons; **Notes** and **Config files** are in the form too (Basics and Running), since the mock left them out.
+- **Settings → Friends** has no "See what friends see" link: the page can't show the friend view from the owner's browser. To look, open it from a friend's device, or on the dev PC through a proxy that adds a friend's `Tailscale-User-Login`.
+- **"Updated outside Basecamp"** Activity rows aren't written: noticing that needs Basecamp to watch the manifests over time. The card and server page do show the manifest's date, which includes such updates.
+- **Fonts** are the upstream variable files, unmodified, about 480 KB rather than ~150 KB of Latin subsets (D-138).
+- The mock-only parts (pink bar, notes, role switch, views index) aren't in the page.
