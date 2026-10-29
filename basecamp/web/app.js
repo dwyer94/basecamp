@@ -27,6 +27,7 @@ const PHASES = { queued: "Queued", backup: "Backing up the save", warning: "Warn
 const WARN_VERB = { stop: "Stopping", restart: "Restarting", update: "Updating" };
 const NOW_VERB = { stop: "Stop", restart: "Restart", update: "Update" };
 const nowVerb = (s) => NOW_VERB[s.stop_warning && s.stop_warning.kind] || "Stop";
+const cancelLabel = (s) => `Cancel ${(s.stop_warning && s.stop_warning.kind) || "stop"}`;
 
 function jobActive(s) {
   return Boolean(s.job && s.job.position === 0 && !["queued", "warning"].includes(s.job.phase));
@@ -163,23 +164,24 @@ function sheetFor(s, action) {
 }
 
 const DONE = { start: "Starting", stop: "Stopping", restart: "Restarting", update: "Update queued",
-  install: "Install queued", now: "Going ahead now", cancel: "Cancelling", kill: "Killed", cancelrestart: "Restart cancelled" };
+  install: "Install queued", now: "Going ahead now", cancel: "Cancelling", kill: "Killed", cancelrestart: "Restart cancelled",
+  cancelwarn: "Cancelled; it keeps running" };
 
 async function act(s, action) {
   if (action === "start" && isAdmin() && s.steam && s.steam.failed && !s.job) {
     const go = await confirmSheet({ title: `Start ${s.name} anyway?`,
       body: `The last ${s.steam.last.kind} failed, so its files may be half updated.`, ok: "Start anyway" });
     if (!go) return;
-  } else if (!["start", "cancelrestart"].includes(action)) {
+  } else if (!["start", "cancelrestart", "cancelwarn"].includes(action)) {
     const sheet = sheetFor(s, action);
     if (sheet && !(await confirmSheet(sheet))) return;
   }
   try {
     let result;
     if (!isAdmin()) {
-      result = await api("POST", `/api/friend/servers/${s.id}/${action}`);
+      result = await api("POST", `/api/friend/servers/${s.id}/${action === "cancelwarn" ? "countdown/cancel" : action}`);
     } else {
-      const path = { cancel: "steam/cancel", now: "stop?now=true", cancelrestart: "stop" }[action] || action;
+      const path = { cancel: "steam/cancel", now: "stop?now=true", cancelrestart: "stop", cancelwarn: "countdown/cancel" }[action] || action;
       result = await api("POST", `/api/servers/${s.id}/${path}`);
     }
     if (result && result.warnings && result.warnings.length) toast(result.warnings.join(" "));
@@ -207,6 +209,7 @@ function cardActions(s) {
   const out = [];
   if (st.key === "warn") {
     out.push(actBtn(s, "now", `${nowVerb(s)} now`, { primary: true, ctl: false, cls: "admin-only" }));
+    out.push(actBtn(s, "cancelwarn", cancelLabel(s)));
     out.push(el("a", { class: "btn friend-only", href: `#server/${s.id}` }, "Open"));
   } else if (st.key === "upd") {
     if (s.job) out.push(actBtn(s, "cancel", `Cancel ${s.job.kind === "install" ? "install" : "update"}`, { ctl: false, cls: "admin-only" }));
@@ -686,7 +689,8 @@ function renderHead(head, s, st) {
     callouts.push(el("div", { class: "callout", "data-st": "warn" }, icon("clock"),
       el("div", { class: "grow" }, el("div", {}, el("strong", {}, `${verb} in `, el("span", { class: "num", "data-stop-at": String(s.stop_warning.stop_at) }, fmtCountdown(s.stop_warning.stop_at))),
         ". Players are being warned.")),
-      actBtn(s, "now", `${nowVerb(s)} now`, { ctl: false, cls: "sm admin-only" })));
+      actBtn(s, "now", `${nowVerb(s)} now`, { ctl: false, cls: "sm admin-only" }),
+      actBtn(s, "cancelwarn", cancelLabel(s), { cls: "sm" })));
   }
   if (st.key === "bad") {
     callouts.push(el("div", { class: "callout", "data-st": "bad" }, icon("alert"),
@@ -723,7 +727,8 @@ function renderHead(head, s, st) {
   if (st.key === "bad" && s.restart_at) actions.push(actBtn(s, "cancelrestart", "Cancel restart", { ctl: false, cls: "admin-only" }));
   if (st.key === "run") actions.push(actBtn(s, "restart", "Restart", { iconName: "refresh" }), actBtn(s, "stop", "Stop", { iconName: "stop" }));
   if (["run", "idle"].includes(st.key) && canUpdate(s) && !s.job) actions.push(actBtn(s, "update", "Update", { iconName: "download" }));
-  if (s.job) actions.push(actBtn(s, "cancel", `Cancel ${s.job.kind === "install" ? "install" : "update"}`, { ctl: false, cls: "admin-only" }));
+  // During an update's countdown the callout's Cancel update does it (and says who).
+  if (s.job && st.key !== "warn") actions.push(actBtn(s, "cancel", `Cancel ${s.job.kind === "install" ? "install" : "update"}`, { ctl: false, cls: "admin-only" }));
   if (isAdmin() && s.steam && s.steam.installed && !s.job) {
     actions.push(el("button", { class: "btn ghost", type: "button", disabled: s.steam.checking || !s.steam.steamcmd_found,
       onclick: async () => { try { await api("POST", `/api/servers/${s.id}/steam/check`); toast(`Asking Steam about ${s.name}`); } catch (e) { toast(e.message, "bad"); } } },
@@ -950,7 +955,9 @@ const ACTIONS = {
   "stop.now": ["stop", "idle", "stopped without waiting for the warning", "Stopped now"],
   restart: ["refresh", "idle", "restarted", "Restarted"], "friend.restart": ["users", "idle", "restarted", "Restarted"],
   kill: ["bolt", "bad", "killed", "Killed"],
-  update: ["download", "upd", "update started", "Update started"], "friend.update": ["users", "upd", "update started", "Update started"],
+  "countdown.cancel": ["stop", "run", "countdown cancelled; it kept running", "Countdown cancelled"],
+  "friend.cancel": ["users", "run", "countdown cancelled; it kept running", "Countdown cancelled"],
+  update:["download", "upd", "update started", "Update started"], "friend.update": ["users", "upd", "update started", "Update started"],
   install: ["download", "upd", "install started", "Install started"],
   "steam.update.ok": ["download", "run", "updated", "Updated"], "steam.install.ok": ["download", "run", "installed", "Installed"],
   "steam.update.failed": ["download", "bad", "update failed", "Update failed"], "steam.install.failed": ["download", "bad", "install failed", "Install failed"],

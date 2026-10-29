@@ -12,9 +12,9 @@ from pydantic import ValidationError
 
 from basecamp.api.app import create_app
 from basecamp.models import ServerState, StopAction, StopWarning
-from basecamp.supervisor import Supervisor
+from basecamp.supervisor import Supervisor, SupervisorError
 from tests.conftest import console_text, fake_config, stop_everything, wait_for
-from tests.test_api import ADMIN, AS_FRIEND, BASE
+from tests.test_api import ADMIN, AS_FRIEND, BASE, FRIEND
 
 WARN = "say Server stops in {minutes} min ({seconds} s) {not a field}"
 
@@ -174,3 +174,130 @@ def test_api_stop_counts_down_and_stop_now_skips(store, settings):
     finally:
         stop_everything(sup, store)
 
+
+
+# -- cancel during the countdown (batch 4, item 12) -----------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["stop", "restart"])
+def test_cancel_calls_off_a_stop_or_restart_and_it_keeps_running(store, sup, kind):
+    server = warned(store, minutes=[1])
+    start_running(sup, server.id)
+    pid = sup.status(server.id).pid
+    t, result = in_thread(getattr(sup, kind), server.id, warn=True)
+    wait_for(lambda: sup.counting_down(server.id))
+    assert sup.cancel_countdown(server.id) == kind
+    t.join(20)
+    assert not t.is_alive()
+    if kind == "stop":
+        assert result[0].ended_by == "cancelled" and not result[0].killed
+    else:
+        assert result == [None]
+    assert sup.state(server.id) is ServerState.RUNNING and sup.status(server.id).pid == pid
+    assert not sup.counting_down(server.id)
+    assert f"{kind.capitalize()} cancelled; the server keeps running" in console_text(
+        sup, server.id)
+    with pytest.raises(SupervisorError, match="Too late"):  # nothing left to cancel
+        sup.cancel_countdown(server.id)
+
+
+def test_cancel_is_refused_once_the_stop_has_begun(store, sup):
+    server = warned(store, minutes=[1])
+    start_running(sup, server.id)
+    t, result = in_thread(sup.stop, server.id, warn=True)
+    wait_for(lambda: sup.counting_down(server.id))
+    assert sup.stop_now(server.id)
+    with pytest.raises(SupervisorError, match="already going ahead"):
+        sup.cancel_countdown(server.id)  # Stop now won
+    t.join(20)
+    assert result[0].graceful and sup.state(server.id) is ServerState.STOPPED
+
+
+def test_cancel_racing_the_end_of_the_countdown_has_one_winner(store, sup):
+    """Cancel at the moment the countdown runs out: either it is honoured (still Running)
+    or refused (and the stop went ahead), never both or neither."""
+    for attempt in range(3):
+        server = warned(store, f"race{attempt}", minutes=[0.02])  # 1.2 s
+        start_running(sup, server.id)
+        t, result = in_thread(sup.stop, server.id, warn=True)
+        wait_for(lambda sid=server.id: sup.counting_down(sid))
+        stop_at = sup.status(server.id).warning["stop_at"]
+        time.sleep(max(0.0, stop_at - time.time() - 0.01))
+        try:
+            sup.cancel_countdown(server.id)
+            won = True
+        except SupervisorError:
+            won = False
+        t.join(20)
+        if won:
+            assert result[0].ended_by == "cancelled"
+            assert sup.state(server.id) is ServerState.RUNNING
+            sup.stop(server.id)
+        else:
+            assert result[0].graceful and sup.state(server.id) is ServerState.STOPPED
+
+
+
+def test_api_cancel_by_the_owner_and_by_friends(store, settings, webhook):
+    from basecamp import notify
+    from tests.test_api import SERVE
+
+    web = dataclasses.replace(settings, admin_logins=(ADMIN,), friend_control="off",
+                              friend_control_gap_s=60)
+    notify.set_webhook(web, webhook.url)
+    sup = Supervisor(store, web)
+    app = create_app(store, sup, web)
+    server = warned(store, minutes=[1])
+    sid = server.id
+    cancel = f"/api/servers/{sid}/countdown/cancel"
+    friend_cancel = f"/api/friend/servers/{sid}/countdown/cancel"
+
+    def countdown(c, path=f"/api/servers/{sid}/restart"):  # type: ignore[no-untyped-def]
+        assert c.post(path).status_code == 202
+        wait_for(lambda: sup.counting_down(sid))
+
+    def after_cancel():  # type: ignore[no-untyped-def]
+        with sup.hold(sid):  # the restart thread has seen it
+            pass
+        assert sup.state(sid) is ServerState.RUNNING
+
+    try:
+        with TestClient(app, base_url=BASE, client=("127.0.0.1", 50123)) as c:
+            assert c.post(f"/api/servers/{sid}/start").status_code == 200
+            wait_for(lambda: sup.state(sid) is ServerState.RUNNING, 20)
+            res = c.post(cancel)
+            assert res.status_code == 409 and "Too late" in res.json()["detail"]
+
+            countdown(c)
+            assert c.post(cancel, headers=AS_FRIEND).status_code == 403  # admin route
+            assert c.post(friend_cancel, headers=AS_FRIEND).status_code == 403  # controls off
+            assert c.post(cancel, headers={"origin": "http://evil.example"}).status_code == 403
+            res = c.post(cancel)
+            assert res.status_code == 200 and res.json() == {"cancelled": "restart"}
+            after_cancel()
+            wait_for(lambda: any("restart of **warned** was cancelled" in t
+                                 for t in webhook.texts()), 10)
+
+            assert c.put("/api/settings", json={"friend_control": "anyone"}).status_code == 200
+            countdown(c, f"/api/servers/{sid}/stop")  # the owner's stop; a friend may cancel
+            res = c.post(friend_cancel, headers=AS_FRIEND)
+            assert res.status_code == 200 and res.json() == {"cancelled": "stop"}
+            after_cancel()
+            countdown(c)
+            res = c.post(friend_cancel, headers=AS_FRIEND)  # one per gap, its own clock
+            assert res.status_code == 429
+            assert c.post(cancel).status_code == 200  # the owner isn't held
+            after_cancel()
+            res = c.post(friend_cancel, headers=AS_FRIEND)
+            assert res.status_code == 409  # nothing counting down: refused before the gap
+
+            rows = [(e["who"], e["action"], e["detail"]) for e in c.get("/api/audit").json()]
+            assert ("localhost", "countdown.cancel", "restart") in rows
+            assert (FRIEND, "friend.cancel", "stop") in rows
+            feed = c.get("/api/activity", headers=AS_FRIEND).json()["items"]
+            seen = [(i["who"], i["action"]) for i in feed if "cancel" in i["action"]]
+            assert seen == [("owner", "countdown.cancel"), (FRIEND, "friend.cancel"),
+                            ("owner", "countdown.cancel")]
+            assert c.get("/api/activity", headers=SERVE).status_code == 200
+    finally:
+        stop_everything(sup, store)

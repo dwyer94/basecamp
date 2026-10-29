@@ -47,7 +47,13 @@ from basecamp.selfupdate import SelfUpdater, UpdateError
 from basecamp.settings import PAGE_SETTINGS, Settings, SettingsFile
 from basecamp.setup import SetupError, Setups
 from basecamp.steam import Kind, SteamError, SteamRunner, last_updated
-from basecamp.supervisor import InvalidState, PortInUse, Supervisor, SupervisorError
+from basecamp.supervisor import (
+    InvalidState,
+    NotCountingDown,
+    PortInUse,
+    Supervisor,
+    SupervisorError,
+)
 
 log = logging.getLogger(__name__)
 
@@ -493,8 +499,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
 
     def not_counting_down(server_id: int) -> None:
         if sup.counting_down(server_id):
-            raise HTTPException(409, "It's already counting down to a stop; use Stop now or "
-                                     "Kill")
+            raise HTTPException(409, "It's already counting down to a stop; use Stop now, "
+                                     "Cancel or Kill")
 
     @app.post("/api/servers/{server_id}/stop", status_code=202)
     def stop(server_id: int, w: Admin, now: bool = False) -> dict:
@@ -532,6 +538,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
 
     friend_clicks: dict[int, float] = {}  # server id -> when a friend last clicked
     quick_clicks: dict[int, float] = {}  # server id -> a friend's last quick command
+    cancel_clicks: dict[int, float] = {}  # server id -> a friend's last countdown cancel
     friend_lock = threading.Lock()
 
     def friend_gap(clicks: dict[int, float], server_id: int, gap: float) -> None:
@@ -592,6 +599,40 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         else:
             in_background("restart", server_id, lambda: sup.restart(server_id, warn=True))
         return {"accepted": True, "warning_s": warning_s}
+
+    # -- cancel a stop warning's countdown (batch 4, item 12) -----------------------------
+
+    def cancel_countdown(server_id: int, who: str, action: str) -> dict:
+        """Call off the stop, restart or update a stop warning counts down to: the server
+        keeps running. Refused (409) once the stop steps have begun."""
+        server = get_server(server_id)
+        try:
+            kind = sup.cancel_countdown(server_id)
+        except NotCountingDown as e:
+            raise HTTPException(409, str(e)) from None
+        store.add_audit(who, action, server_id, kind)
+        log.info("audit: %s %s server=%s %s", who, action, server_id, kind)
+        event = NotifyEvent.UPDATE if kind == "update" else NotifyEvent.STOPPED
+        notifier.server_event(server, event, f":no_entry_sign: The {kind} of **{server.name}**"
+                                             " was cancelled; it keeps running")
+        return {"cancelled": kind}
+
+    @app.post("/api/servers/{server_id}/countdown/cancel")
+    def admin_cancel_countdown(server_id: int, w: Admin) -> dict:
+        return cancel_countdown(server_id, w.label, "countdown.cancel")
+
+    @app.post("/api/friend/servers/{server_id}/countdown/cancel")
+    def friend_cancel_countdown(server_id: int, w: Who) -> dict:
+        """Friends may cancel any countdown (one trusted level, D-135), with their own
+        ``friend_control_gap_s`` clock, so a friend can call off a restart they just
+        started."""
+        if not auth.can_control(w, settings):
+            raise HTTPException(403, "Not allowed")
+        get_server(server_id)
+        if not sup.counting_down(server_id):
+            raise HTTPException(409, "Too late to cancel: it isn't counting down")
+        friend_gap(cancel_clicks, server_id, settings.friend_control_gap_s)
+        return cancel_countdown(server_id, w.login or "unknown", "friend.cancel")
 
     @app.post("/api/friend/servers/{server_id}/start", status_code=202)
     def friend_start(server_id: int, w: Who) -> dict:

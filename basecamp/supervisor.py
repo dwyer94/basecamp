@@ -24,7 +24,8 @@ Seams for later phases:
 A stop, restart or update that Basecamp starts can warn players first (R-25, D-61): the
 server's ``stop_warning`` command goes out at each of its minutes before the stop, while the
 action holds the server's lock and the server stays Running. ``stop_now`` skips the rest of
-the countdown; ``kill`` ends it and the action with it. Crash restarts never warn.
+the countdown; ``cancel_countdown`` calls the action off and the server keeps running;
+``kill`` ends it and the action with it. Crash restarts never warn.
 """
 
 from __future__ import annotations
@@ -75,6 +76,10 @@ class InvalidState(SupervisorError):
     pass
 
 
+class NotCountingDown(SupervisorError):
+    """Cancel came too late (the stop steps have begun) or there was no countdown."""
+
+
 class PortInUse(SupervisorError):
     def __init__(self, ports: list[str]):
         super().__init__(f"Port already in use: {', '.join(ports)}")
@@ -118,8 +123,9 @@ class _Countdown:
 
     kind: str  # stop, restart, update
     stop_at: float  # epoch seconds
-    skip: threading.Event = field(default_factory=threading.Event)  # Stop now, or Kill
+    skip: threading.Event = field(default_factory=threading.Event)  # Stop now, Cancel, Kill
     killed: bool = False
+    cancelled: bool = False  # called off: the server keeps running
 
     def as_dict(self) -> dict:
         return {"kind": self.kind, "stop_at": self.stop_at}
@@ -131,6 +137,8 @@ _SAVE_SETTLE_MAX_S = 30.0  # (but no longer than this)
 _CONSOLE_EVENTS = {StopAction.CTRL_BREAK: ("Ctrl+Break", "break"),
                    StopAction.CTRL_C: ("Ctrl+C", "c")}
 _WARN_VERB = {"stop": "Stopping", "restart": "Restarting", "update": "Updating"}
+# How a stop warning ended (Supervisor._warn).
+_GO, _KILLED, _CANCELLED, _ABORTED = "go", "killed", "cancelled", "aborted"
 
 
 class _Run:
@@ -266,17 +274,20 @@ class Supervisor:
         server = self._store.get_server(server_id)
         slot = self._slot(server_id)
         with slot.lock:
-            if warn and not self._warn(server, slot, "stop"):
+            outcome = self._warn(server, slot, "stop") if warn else _GO
+            if outcome == _CANCELLED:
+                return StopResult(graceful=False, killed=False, ended_by="cancelled")
+            if outcome != _GO:
                 return StopResult(graceful=False, killed=True, ended_by="kill")
             return self._stop_locked(server, slot)
 
     def restart(self, server_id: int, *, warn: bool = False) -> StartResult | None:
-        """Stop, then start. None if it was killed during the stop warning: a kill means
-        down, so it isn't started again."""
+        """Stop, then start. None if it was killed or cancelled during the stop warning: a
+        kill means down, so it isn't started again; a cancel leaves it running."""
         server = self._store.get_server(server_id)
         slot = self._slot(server_id)
         with slot.lock:
-            if warn and not self._warn(server, slot, "restart"):
+            if warn and self._warn(server, slot, "restart") != _GO:
                 return None
             self._stop_locked(server, slot)
             return self._start_locked(server, slot)
@@ -292,6 +303,23 @@ class Supervisor:
             return False
         countdown.skip.set()
         return True
+
+    def cancel_countdown(self, server_id: int) -> str:
+        """Call off the stop, restart or update a stop warning is counting down to; the
+        server keeps running. Returns its kind. Raises NotCountingDown once the stop steps
+        have begun (or Stop now or Kill was pressed): decided under the supervisor lock that
+        also ends the countdown, so a cancel and the stop starting can't both win."""
+        slot = self._slot(server_id)
+        with self._mu:
+            countdown = slot.countdown
+            if countdown is None:
+                raise NotCountingDown("Too late to cancel: it isn't counting down (the stop "
+                                      "has begun, or is over)")
+            if countdown.skip.is_set():
+                raise NotCountingDown("Too late to cancel: the stop is already going ahead")
+            countdown.cancelled = True
+            countdown.skip.set()
+        return countdown.kind
 
     def kill(self, server_id: int) -> StopResult:
         """Kill at once, no recipe. Doesn't wait for the server's lock, so it also ends a
@@ -700,17 +728,18 @@ class Supervisor:
         return True
 
     def _warn(self, server: Server, slot: _Slot, kind: str,
-              abort: threading.Event | None = None) -> bool:
+              abort: threading.Event | None = None) -> str:
         """The stop warning (R-25, D-61), with the server's lock held: send the warning at
         each of its minutes before the stop, then wait for the stop time. Only for a
         Running server that has a warning. A warning that can't be sent ends the countdown
-        and the stop goes ahead, as with a stop step that can't be done. False if the
-        action should not go ahead: killed meanwhile, or ``abort`` set (update cancelled)."""
+        and the stop goes ahead, as with a stop step that can't be done. Returns ``_GO``, or
+        why the action should not go ahead: ``_KILLED``, ``_CANCELLED`` (``cancel_countdown``)
+        or ``_ABORTED`` (``abort`` set: the update was cancelled)."""
         warning = server.stop_warning
         run = slot.run
         if (warning is None or not warning.minutes or run is None
                 or slot.state is not ServerState.RUNNING):
-            return True
+            return _GO
         countdown = _Countdown(kind, time.time() + warning.lead_s)
         with self._mu:
             slot.countdown = countdown
@@ -737,17 +766,22 @@ class Supervisor:
             else:
                 wait_until(countdown.stop_at)
         finally:
-            with self._mu:
+            with self._mu:  # from here on a cancel is refused (cancel_countdown)
                 slot.countdown = None
+                cancelled = countdown.cancelled
             self._changed(server.id)
         if countdown.killed:
-            return False
+            return _KILLED
+        if cancelled:
+            self._note(slot, run, f"{kind.capitalize()} cancelled; the server keeps running")
+            log.info("%s: %s cancelled during the warning", server.name, kind)
+            return _CANCELLED
         if abort is not None and abort.is_set():
             self._note(slot, run, f"{kind.capitalize()} cancelled; the server keeps running")
-            return False
+            return _ABORTED
         if countdown.skip.is_set():
             self._note(slot, run, "Stop now: the rest of the warning is skipped")
-        return True
+        return _GO
 
     def _kill_run(self, server_id: int, run: _Run) -> None:
         run.killed = True
@@ -991,8 +1025,10 @@ class UpdateHold:
 
     def warn(self, abort: threading.Event | None = None) -> bool:
         """The stop warning before the update (R-25). False if the update should not go
-        on: ``abort`` was set (cancelled; the server is left running)."""
-        self._sup._warn(self._server, self._slot, "update", abort)
+        on: ``abort`` was set, or the countdown was cancelled (the server is left running)."""
+        outcome = self._sup._warn(self._server, self._slot, "update", abort)
+        if outcome in (_CANCELLED, _ABORTED):
+            return False
         return not (abort is not None and abort.is_set())
 
     def stop(self) -> StopResult:

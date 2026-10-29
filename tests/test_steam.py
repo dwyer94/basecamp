@@ -457,6 +457,25 @@ def test_check_over_the_api(store, steam_settings, tmp_path):
         sup.detach()
 
 
+def test_cancelling_an_update_countdown_leaves_it_running(store, ssup, runner, tmp_path):
+    """Cancel during the update's stop warning (batch 4, item 12): the run ends cancelled
+    with nothing changed, and the server keeps running."""
+    warning = StopWarning(action=StopAction.STDIN, command="say update in {minutes}",
+                          minutes=[1])
+    server = steam_server(store, tmp_path, stop_warning=warning, ready_after_s=1)
+    ssup.start(server.id)
+    wait_running(ssup, server.id)
+    pid = ssup.status(server.id).pid
+    runner.enqueue(server.id, Kind.UPDATE, "pal@example.com")
+    wait_for(lambda: ssup.counting_down(server.id), timeout=20)
+    assert ssup.cancel_countdown(server.id) == "update"
+    assert runner.wait_idle(30)
+    run = store.last_steam_run(server.id)
+    assert run.result == "cancelled" and "during the warning" in run.message
+    assert ssup.state(server.id) is ServerState.RUNNING and ssup.status(server.id).pid == pid
+    assert runner.job(server.id) is None
+
+
 def test_update_warns_players_and_cancel_during_the_warning(store, ssup, runner, tmp_path):
     warning = StopWarning(action=StopAction.STDIN, command="say update in {minutes}",
                           minutes=[1])

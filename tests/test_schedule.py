@@ -163,3 +163,26 @@ def test_scheduled_update_only_when_the_badge_says_so(store, ssup, runner, steam
     run = store.last_steam_run(server.id)
     assert run.kind == Kind.UPDATE.value and run.who == "schedule" and run.result == "ok"
     assert any(a[1] == "schedule.update" for a in audits)
+
+
+def test_a_cancelled_scheduled_restart_counts_as_done_that_day(store, ssup, runner,
+                                                               steam_settings):
+    """Cancel during its countdown (batch 4, item 12): it keeps running, and the schedule
+    doesn't try again until tomorrow."""
+    from basecamp.models import StopAction, StopWarning
+
+    clock = Clock("04:00")
+    sched = scheduler(store, ssup, runner, steam_settings, clock)
+    warning = StopWarning(action=StopAction.STDIN, command="say {minutes}", minutes=[1])
+    server = start(ssup, store, restart_at="04:00", stop_warning=warning, ready_after_s=1)
+    assert sched.tick() == [(server.id, "restart", "restart")]
+    wait_for(lambda: ssup.counting_down(server.id), 20)
+    assert ssup.cancel_countdown(server.id) == "restart"
+    wait_for(lambda: "Restart cancelled" in console_text(ssup, server.id))
+    with ssup.hold(server.id):  # the restart thread is done
+        pass
+    assert ssup.state(server.id) is ServerState.RUNNING
+    clock.set("04:05")
+    assert sched.tick() == []  # done for today
+    clock.set("04:00", day=1)
+    assert sched.tick() == [(server.id, "restart", "restart")]

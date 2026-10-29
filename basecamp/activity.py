@@ -37,8 +37,9 @@ _CLEARED_BY = {
 # What a friend sees of the feed: server events only, never the owner's (settings, config,
 # templates, Basecamp updates, logins, Discord, backups restored or downloaded).
 FRIEND_ACTIONS = (
-    "start", "stop", "stop.now", "restart", "kill",
+    "start", "stop", "stop.now", "restart", "kill", "countdown.cancel",
     "friend.start", "friend.stop", "friend.restart", "friend.update", "friend.command",
+    "friend.cancel",
     "console", "update", "install", "steam.cancel",
     "steam.update.ok", "steam.update.failed", "steam.update.cancelled",
     "steam.install.ok", "steam.install.failed", "steam.install.cancelled",
