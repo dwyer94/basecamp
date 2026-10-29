@@ -200,7 +200,52 @@ function buildBadge(s) {
 }
 
 function cardHead(s, nameNode) {
-  return el("div", { class: "card-head" }, nameNode, el("span", { class: "tags" }, buildBadge(s), statePill(s.state)));
+  return el("div", { class: "card-head" }, nameNode, el("span", { class: "tags" }, buildBadge(s), firewallBadge(s), statePill(s.state)));
+}
+
+// -- firewall indicator (D-128) -------------------------------------------------------
+
+let firewallInfo = null;   // GET /api/firewall: per server, cached by Basecamp for a minute
+const FW_TEXT = { open: "open (Tailscale)", too_broad: "too broad", blocked: "blocked", missing: "missing", unknown: "unknown" };
+
+async function loadFirewall(force = false) {
+  try { firewallInfo = await api(force ? "POST" : "GET", force ? "/api/firewall/check" : "/api/firewall"); }
+  catch (e) { firewallInfo = { error: e.message, servers: {}, notes: [] }; }
+  return firewallInfo;
+}
+
+function firewallBadge(s) {
+  const f = firewallInfo && firewallInfo.servers[String(s.id)];
+  if (!f || !f.ports.length) return null;
+  return el("span", { class: `tag fw-${f.status}`, title: "Windows Firewall, for Tailscale traffic. Not a reachability test." },
+    `Firewall: ${FW_TEXT[f.status]}`);
+}
+
+function firewallSection(id, box, root) {
+  const f = firewallInfo && firewallInfo.servers[String(id)];
+  const again = async (btn) => {
+    btn.disabled = true; btn.textContent = "Checking…";
+    await loadFirewall(true);
+    firewallSection(id, box, root);
+    if (page && page.update) page.update();
+  };
+  const check = el("button", { class: "small", onclick: (e) => again(e.target) }, "Check again");
+  if (!firewallInfo) { box.replaceChildren(el("p", { class: "muted" }, "Reading the firewall rules…")); return; }
+  if (!f) { box.replaceChildren(notice(firewallInfo.error || "Not checked yet.", "error"), el("div", { class: "buttons" }, check)); return; }
+  box.replaceChildren(...[  // replaceChildren would print a null as "null"
+    f.ports.length ? el("table", {}, el("tbody", {}, f.ports.map((p) => el("tr", {},
+      el("td", {}, `${p.protocol.toUpperCase()} ${p.port}`, p.label ? el("div", { class: "hint" }, p.label) : null),
+      el("td", {}, el("span", { class: `tag fw-${p.status}` }, FW_TEXT[p.status])),
+      el("td", {}, el("span", { class: "hint" }, p.detail))))))
+      : el("p", { class: "muted" }, "No ports listed (add them under Edit)."),
+    f.note ? notice(f.note) : null,
+    ...f.commands.map((c) => el("div", { class: "fw-command" },
+      el("div", { class: "hint" }, "To add the missing rule, run this in an admin PowerShell in Basecamp's program folder on this PC:"),
+      el("code", {}, c), el("button", { class: "small", onclick: () => copyText(c, "Copied the command") }, "Copy"))),
+    ...(firewallInfo.notes || []).map((n) => el("div", { class: "hint" }, n)),
+    el("div", { class: "hint" }, "This only reads Windows Firewall's rules. Friends can still be stopped by Tailscale's access rules, the address the game listens on, or Steam's own networking, so it isn't a reachability test.",
+      firewallInfo.checked_at ? ` Checked ${new Date(firewallInfo.checked_at * 1000).toLocaleTimeString()}.` : ""),
+    el("div", { class: "buttons" }, check)].filter(Boolean));
 }
 
 function metaLine(s) {
@@ -319,6 +364,8 @@ function dashboard(root) {
   const list = el("div");
   const banner = el("div");
   updateBanner(banner);
+  const refreshFirewall = () => loadFirewall().then(() => update());
+  const timer = setInterval(refreshFirewall, 60 * 1000);
   root.replaceChildren(
     banner,
     el("div", { class: "buttons", style: "margin-bottom:12px" },
@@ -339,7 +386,8 @@ function dashboard(root) {
     }
   };
   update();
-  return { update };
+  refreshFirewall();
+  return { update, close: () => clearInterval(timer) };
 }
 
 // -- server page ------------------------------------------------------------------------
@@ -357,6 +405,7 @@ function serverPage(root, id) {
   const backupBox = el("div");
   const configBox = el("div");
   const steamBox = el("div");
+  const firewallBox = el("div");
   let backupBusy = false;
   let lastSeq = 0;
   let follow = true;
@@ -474,12 +523,15 @@ function serverPage(root, id) {
     el("div", { class: "command" }, channel, input, el("button", { class: "primary", onclick: send }, "Send")),
     consoleState,
     steamBox,
+    el("h2", {}, "Firewall"), firewallBox,
     el("h2", {}, "Config files"), configBox,
     el("h2", {}, "Backups"), backupBox,
     el("h2", {}, "History"), history);
 
   let lastState = null;
   loadConfigs();
+  firewallSection(id, firewallBox, root);
+  loadFirewall().then(() => { firewallSection(id, firewallBox, root); update(); });
   const update = () => {
     const s = servers.find((x) => x.id === id);
     if (!s) {

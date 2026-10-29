@@ -484,3 +484,33 @@ def test_default_install_folder_and_library(client, web_settings, tmp_path):
     assert lib["folders"][0]["used_by"] == "Enshrouded"
     friend = client.get("/api/steam/library", headers=AS_FRIEND)
     assert friend.status_code == 403
+
+
+def test_firewall_endpoint_is_admin_only_cached_and_per_port(store, web_settings):
+    from basecamp import firewall
+    from basecamp.firewall import Policy, Profile, Rule
+
+    reads = []
+
+    def reader():
+        reads.append(1)
+        return Policy([Rule(name="Fake", allow=True, program="", protocol=17,
+                            ports="40000", remote="100.64.0.0/255.192.0.0")],
+                      2, {1: Profile(), 2: Profile(), 4: Profile()}, 2)
+
+    sup = Supervisor(store, web_settings)
+    app = create_app(store, sup, web_settings, fw=firewall.Firewall(reader=reader))
+    with TestClient(app, base_url=BASE, client=("127.0.0.1", 50123)) as c:
+        open_one = add_fake(c, "open", port=40000)
+        missing = add_fake(c, "missing")
+        assert c.get("/api/firewall", headers=AS_FRIEND).status_code == 403
+        res = c.get("/api/firewall").json()
+        assert res["servers"][str(open_one["id"])]["status"] == "open"
+        gone = res["servers"][str(missing["id"])]
+        assert gone["status"] == "missing" and gone["ports"][0]["status"] == "missing"
+        assert "script runtime" in gone["note"]  # the fake server is python.exe
+        c.get("/api/firewall")
+        assert len(reads) == 1  # cached
+        assert c.post("/api/firewall/check").status_code == 200 and len(reads) == 2
+        assert c.post("/api/firewall/check", headers=AS_FRIEND).status_code == 403
+    stop_everything(sup, store)

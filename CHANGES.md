@@ -20,6 +20,12 @@ GitHub release's notes, which the admin dashboard shows next to its Install butt
   page says which changed. A file that doesn't load (bad TOML, a typo'd key, a wrong type)
   leaves the settings as they were and shows the error. Reloads go in the audit log with
   the names of the keys that changed, never their values.
+- **Firewall indicator** on each server's page and a badge on its card: for every port,
+  whether Windows Firewall lets Tailscale traffic in (open), lets more than Tailscale in
+  (too broad), blocks it, or has no rule (missing, with the `add-game-firewall-rule.ps1`
+  command to copy). It only reads the rules, about once a minute or on **Check again**,
+  and it isn't a reachability test: Tailscale's access rules, the address the game listens
+  on or Steam networking can still stop friends.
 - `install.ps1 -WhatIf` no longer fails with "Release check failed: No such file" when
   it would download a release: a dry run skips the download, so it now says the real run
   checks the signature once the file is there.

@@ -68,7 +68,8 @@ basecamp/
   notify.py          Discord webhook: secrets.toml, queue, retry (D-37, D-38)
   livestatus.py      the live status message in Discord, edited in place (D-63)
   auth.py            who is asking: admin or friend (D-28, D-29)
-  templates.py       game templates (built-in + data folder), appmanifest import
+  templates.py       game templates (built-in + data folder), appmanifest import, steamapps\common list
+  firewall.py        firewall indicator: reads the inbound rules, matches them per port (read-only)
   api/app.py         FastAPI app: REST routes, status and console WebSockets, pages
   api/views.py       admin view vs friend view of a server (D-30)
   web/               index.html, friend.html, app.js, common.js, style.css (no build step)
@@ -208,6 +209,7 @@ Built in Phases 2 to 5: everything here except `/api/events`.
 | GET/PUT | `/api/notify` (main webhook, masked) · PUT `/api/servers/{id}/webhook` · POST `/api/notify/test` | admin |
 | GET | `/api/templates` · POST `/api/drafts` (pre-filled form from a template or an install's appmanifest; no install folder = SteamCMD's default for the template, D-125) · GET `/api/steam/library` (folders in SteamCMD's `steamapps\common`) | admin |
 | GET/PUT | `/api/settings` (join host, SteamCMD path, backup defaults, `apply_backup_defaults`, `discord_live_status`; the masked Discord info and the live status message's state; read-only admin logins; `file`: the last settings.toml error and the changes waiting for a restart) · POST `/api/settings/reload` (read settings.toml now, D-127) | admin |
+| GET | `/api/firewall` · POST `/api/firewall/check` (each server's ports against Windows Firewall's inbound rules, read-only, cached 60 s; check = read again, D-128) | admin |
 | POST | `/api/restart` (Restart Basecamp through the launcher, 202; 409 without the launcher or while an install or update is queued or running, D-126) | admin |
 | GET | `/api/events` · `/api/audit` | admin |
 | GET | `/healthz` | localhost |
@@ -216,7 +218,7 @@ Built in Phases 2 to 5: everything here except `/api/events`.
 
 Two pages, both phone-first (one column, big buttons, works at 375 px wide):
 
-- **Dashboard** (admin): a card per server: name, status pill, uptime, CPU/RAM, join address with **Copy** and **Copy for Discord**, buttons Start / Stop / Restart / Update. Tap a card for the server page: **Console**, **Config files**, **Backups** (back up now, restore, delete), **History**. A pending crash restart shows its time, with **Cancel restart**. A config file opens in an editor page: Save (JSON checked), Reload, wrap view, fields view for Palworld's `OptionSettings` line, **Restart now** after a save while running, earlier copies with View and Restore. A **Settings** page holds the join host, backup defaults, SteamCMD path and the Discord webhook (per-server webhooks under Advanced) with the live status message switch. A stop warning counting down shows on the card with the time left and **Stop now**; an **update available** (or "update: unknown") tag sits next to the status pill, and the server page's SteamCMD section has **Check for update**. Backups have **Download**.
+- **Dashboard** (admin): a card per server: name, status pill, uptime, CPU/RAM, join address with **Copy** and **Copy for Discord**, buttons Start / Stop / Restart / Update. Tap a card for the server page: **Console**, **Config files**, **Firewall** (per port: open (Tailscale), too broad, blocked, missing with the command to add the rule, or unknown; **Check again**), **Backups** (back up now, restore, delete), **History**. The card has a **Firewall** badge with the worst port's status (D-128). A pending crash restart shows its time, with **Cancel restart**. A config file opens in an editor page: Save (JSON checked), Reload, wrap view, fields view for Palworld's `OptionSettings` line, **Restart now** after a save while running, earlier copies with View and Restore. A **Settings** page holds the join host, backup defaults, SteamCMD path and the Discord webhook (per-server webhooks under Advanced) with the live status message switch. A stop warning counting down shows on the card with the time left and **Stop now**; an **update available** (or "update: unknown") tag sits next to the status pill, and the server page's SteamCMD section has **Check for update**. Backups have **Download**.
 - **Friend view**: the same cards with only name, status, join address + Copy.
 - Confirm dialogs on Stop, Update and Restore. Live updates over the status WebSocket, no refreshing.
 - Built with plain HTML/CSS/JS, no library and no CDN (D-34).

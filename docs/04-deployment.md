@@ -81,6 +81,8 @@ The every-5-minutes trigger on `Basecamp start` **is** the watchdog; there's no 
 
 `-Exe -Port -Protocol [-Name] [-Replace]`: one inbound allow in group **Basecamp**, for that program only, that protocol and port(s) only (`-Port 15636,15637`, at most 10, no ranges), remote **`100.64.0.0/10`** only, all profiles. Run it once per protocol. Refused: a path that isn't a full path to an existing `.exe`; a shell or script runtime (python, java, node, powershell, cmd, ...) or anything under the Windows folder; Basecamp's own Python; ports below 1024; a rule with the same name that allows something else (unless `-Replace`). The same rule again changes nothing (D-85). Other software on the host PC may alert when firewall rules change; that's expected after this.
 
+**Which games still need one:** each server's page has a **Firewall** section (and the dashboard card a badge) saying, per port, whether a rule lets Tailscale traffic in: open (Tailscale), too broad, blocked, missing or unknown, with this command filled in for the missing ports (D-128). It only reads the rules. Tailscale's own `Tailscale-In` rule allows every port to the PC's Tailscale address on the Domain and Private profiles, so with the Tailscale adapter on Private every port shows open; on Public each game needs its own rule.
+
 ## After installing: verify
 
 `scripts\verify.ps1` only reads and exits with the number of FAILs (D-86). Run it in an **admin** PowerShell: the task runs Basecamp in its own logon session, and a normal PowerShell can't read those processes, so its checks on them come out as WARN there (D-112).

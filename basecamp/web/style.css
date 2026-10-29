@@ -143,3 +143,11 @@ pre.notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; ov
 .notice.countdown strong { font-variant-numeric: tabular-nums; }
 .notice.countdown button { margin-left: auto; }
 .row.warn > select { flex: none; width: 96px; }
+/* Batch 1: firewall indicator (D-128). */
+.tag.fw-open { border-color: var(--ok); color: var(--ok); }
+.tag.fw-too_broad { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.tag.fw-missing, .tag.fw-blocked { border-color: var(--danger); color: var(--danger); font-weight: 600; }
+.fw-command { margin: 10px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.fw-command > .hint { flex-basis: 100%; }
+.fw-command code { flex: 1; min-width: 0; font-size: 13px; background: var(--bg); padding: 6px 8px;
+  border-radius: 6px; border: 1px solid var(--line); }

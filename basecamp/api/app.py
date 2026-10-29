@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from basecamp import __version__, auth, configs, notify, templates
+from basecamp import __version__, auth, configs, firewall, notify, templates
 from basecamp.api import views
 from basecamp.backups import BackupError, Backups, save_folder
 from basecamp.configs import ConfigFiles
@@ -158,7 +158,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                config_files: ConfigFiles | None = None,
                updater: SelfUpdater | None = None,
                live: LiveStatus | None = None,
-               settings_check_s: float = 3.0) -> FastAPI:
+               settings_check_s: float = 3.0,
+               fw: firewall.Firewall | None = None) -> FastAPI:
     """The services are made by main.run; tests may leave them out (no crash restarts)."""
     hub = _Hub()
     cpu = views.CpuSampler()
@@ -188,6 +189,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             live.poke()
 
     settings_file = SettingsFile(settings, settings_reloaded, settings_check_s)
+    fw = fw or firewall.Firewall()
     sup.add_listener(hub.poke)
     sup.add_change_listener(hub.poke)
     steam.add_listener(hub.poke)
@@ -819,6 +821,38 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             messages.append("Not yet checked against a real install: "
                             + ", ".join(chosen.template.unverified) + ".")
         return {"draft": draft, "messages": messages, "unverified": chosen.template.unverified}
+
+    # -- firewall indicator (D-128) -------------------------------------------------------
+
+    def firewall_view(force: bool) -> dict:
+        policy, error, at, took = fw.get(force)
+        out = {}
+        for server in store.list_servers():
+            status = sup.status(server.id)
+            running = firewall.running_exe(status.pid) if status.pid else ""
+            target = firewall.target_for(server.exe_path, server.real_exe_name,
+                                         server.install_dir, running)
+            def rule_exe(server=server, running=running) -> str:  # type: ignore[no-untyped-def]
+                if running:
+                    return running
+                if server.real_exe_name.strip():
+                    return firewall.find_exe(server.real_exe_name, server.install_dir)
+                return server.exe_path
+
+            ports = [(p.port, p.protocol.value, p.label) for p in server.ports]
+            out[str(server.id)] = firewall.server_status(policy, error, ports, target, rule_exe)
+        return {"servers": out, "checked_at": at, "took_s": round(took, 2), "error": error,
+                "notes": firewall.profile_notes(policy), "cache_s": fw.cache_s}
+
+    @app.get("/api/firewall")
+    def firewall_status(w: Admin) -> dict:
+        """Each server's ports against Windows Firewall's inbound rules, read-only and
+        cached (D-128). Not part of the status WebSocket: the rules take ~0.5 s to read."""
+        return firewall_view(False)
+
+    @app.post("/api/firewall/check")
+    def firewall_check(w: Admin) -> dict:
+        return firewall_view(True)
 
     # -- Basecamp's own updates (R-90..R-94) -------------------------------------------
 
