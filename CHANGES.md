@@ -3,6 +3,12 @@
 Release notes. `scripts\release.ps1 <version>` publishes the section for that version as the
 GitHub release's notes, which the admin dashboard shows next to its Install button.
 
+## Unreleased
+
+- `install.ps1 -WhatIf` no longer fails with "Release check failed: No such file" when
+  it would download a release: a dry run skips the download, so it now says the real run
+  checks the signature once the file is there.
+
 ## 0.2.1
 
 Fixes for the first install on the host PC. Install it by running `scripts\install.ps1`

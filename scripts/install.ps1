@@ -370,7 +370,9 @@ if ($current -and -not $upgrade) {
             Invoke-WebRequest -Uri $sigAsset[0].browser_download_url -OutFile $sig -UseBasicParsing
         }
     }
-    if ($DryRun -and (Get-PythonVersion $Py)) {
+    if ($DryRun -and -not ((Test-Path -LiteralPath $zip) -and (Test-Path -LiteralPath $sig))) {
+        Say 'A real run checks the signature and manifest once the download is there.'
+    } elseif ($DryRun -and (Get-PythonVersion $Py)) {
         $r = Invoke-Helper @('--check', '--zip', $zip, '--sig', $sig, '--key', $PublicKey)
         Say "Signature and manifest check out: Basecamp $($r['version'])."
     }
