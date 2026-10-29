@@ -319,6 +319,8 @@ td .hint { margin-top: 2px; }
 .kv dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 0; }
 .kv dd .hint { font-weight: 400; }
 .addr-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.srvside .addr code { font-size: 0.82rem; }
+.srvside .addr { padding-left: 10px; }
 
 /* two-column page: main + side column (config editor, templates, activity) */
 .twocol { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
@@ -393,26 +395,16 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .steps li.ok::before { content: "✓"; background: var(--run); color: var(--surface); }
 .steps li .btnrow { margin-top: 6px; }
 
-/* ---------- friend view ---------- */
-body[data-role="friend"] .side, body[data-role="friend"] .tabbar, body[data-role="friend"] .admin-only { display: none !important; }
-body[data-role="friend"] .shell { grid-template-columns: minmax(0, 1fr); }
-.friend { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; width: 100%; }
-.fcards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
-.friend h1 { font-size: 1.7rem; }
-.fcard { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; }
-.fcard .band { padding: 12px 18px; font-size: 1rem; }
-.fcard .body { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 14px; }
-.fcard .titlerow { display: flex; align-items: center; gap: 12px; }
-.fcard .titlerow .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.fcard .titlerow h2 { font-size: 1.4rem; }
-.fcard .players b { font-size: 1.9rem; }
-.ticket { border: 1.5px dashed var(--line); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
-.ticket code { font-size: 1.15rem; font-weight: 500; letter-spacing: 0.01em; overflow-wrap: anywhere; }
-.ticket .btn { justify-content: center; }
-.fcard .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.fcard .controls .btn { justify-content: center; }
-.fcard .controls .btn.primary { grid-column: 1 / -1; }
-body.friend-locked .controls { display: none; }
+/* ---------- roles: friends get the admin layout with parts hidden ---------- */
+body:not([data-role="friend"]) .friend-only { display: none !important; }
+body[data-role="friend"] .admin-only { display: none !important; }
+/* friend controls off: no action buttons, no quick commands */
+body[data-role="friend"].friend-locked .ctl { display: none !important; }
+body[data-role="friend"] .tabbar { grid-template-columns: repeat(2, 1fr); }
+.rolebadge { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 99px; padding: 4px 10px; }
+.readonly { font: 0.82rem/1.4 var(--f-body); color: var(--console-dim); padding: 10px 14px 12px; display: flex; gap: 8px; align-items: center; }
+.readonly svg.i { width: 15px; height: 15px; }
+.ev .dismiss { margin-left: 6px; }
 
 /* ---------- views index ---------- */
 .vindex { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 12px; }
@@ -456,12 +448,10 @@ dialog .btnrow { justify-content: flex-end; }
   .twocol .stick { position: sticky; top: 76px; }
   .twocol.left .filters { flex-direction: column; align-items: stretch; }
   .twocol.left .filters button { border-radius: 9px; justify-content: space-between; }
-  /* friend page: cards side by side */
-  .friend { max-width: 1240px; }
-  .fcards { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
-  .ticket .btn { align-self: flex-start; }
-  .fcard .controls { display: flex; flex-wrap: wrap; }
-  .fcard .body { flex: 1; }
+  /* friends have no "Needs you": the summary runs across the top */
+  body[data-role="friend"] .dash-top { grid-template-columns: minmax(0, 1fr); }
+  body[data-role="friend"] .summary { flex-direction: row; align-items: baseline; gap: 6px 26px; }
+  body[data-role="friend"] .summary .stats { flex-direction: row; gap: 22px; }
 }
 @media (min-width: 1500px) {
   .dash-top { grid-template-columns: 300px minmax(0, 1fr); }
@@ -543,6 +533,7 @@ dialog .btnrow { justify-content: flex-end; }
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
     <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/></symbol>
   </defs>
 </svg>
@@ -553,6 +544,7 @@ dialog .btnrow { justify-content: flex-end; }
     <button type="button" id="as-admin" aria-pressed="true">Admin</button>
     <button type="button" id="as-friend" aria-pressed="false">Friend</button>
   </span>
+  <label id="ctl-wrap" class="friend-only"><input type="checkbox" id="friend-controls" checked> Friend controls on</label>
   <a href="#views">All views</a>
   <label><input type="checkbox" id="mock-notes" checked> Notes</label>
   <label><input type="checkbox" id="mock-offline"> Connection lost</label>
@@ -565,16 +557,18 @@ dialog .btnrow { justify-content: flex-end; }
   <a class="btn primary sm newgame-top admin-only" href="#newgame"><svg class="i"><use href="#i-plus"/></svg>New game</a>
   <button class="iconbtn" id="theme" type="button" aria-label="Theme: follows the system"><svg class="i"><use href="#i-auto"/></svg></button>
   <span class="who admin-only"><span class="avatar">OW</span><span class="name">Owner</span></span>
+  <span class="who friend-only"><span class="rolebadge">Friend</span><span class="avatar">SA</span><span class="name">Sam</span></span>
 </header>
 
 <div class="shell">
   <nav class="side" aria-label="Main">
-    <a class="btn primary" href="#newgame"><svg class="i"><use href="#i-plus"/></svg>New game</a>
+    <a class="btn primary admin-only" href="#newgame"><svg class="i"><use href="#i-plus"/></svg>New game</a>
     <a class="navlink" href="#dashboard" data-nav="dashboard"><svg class="i"><use href="#i-servers"/></svg>Servers</a>
-    <a class="navlink" href="#activity" data-nav="activity"><svg class="i"><use href="#i-activity"/></svg>Activity<span class="count">2</span></a>
-    <a class="navlink" href="#templates" data-nav="templates"><svg class="i"><use href="#i-template"/></svg>Templates</a>
-    <a class="navlink" href="#prefs" data-nav="prefs"><svg class="i"><use href="#i-sliders"/></svg>Settings</a>
-    <div class="foot">Basecamp 0.10.2<br>Up 6 days on the host PC</div>
+    <a class="navlink" href="#activity" data-nav="activity"><svg class="i"><use href="#i-activity"/></svg>Activity<span class="count admin-only" data-failcount>2</span></a>
+    <a class="navlink admin-only" href="#templates" data-nav="templates"><svg class="i"><use href="#i-template"/></svg>Templates</a>
+    <a class="navlink admin-only" href="#prefs" data-nav="prefs"><svg class="i"><use href="#i-sliders"/></svg>Settings</a>
+    <div class="foot admin-only">Basecamp 0.10.2<br>Up 6 days on the host PC</div>
+    <div class="foot friend-only">Signed in as sam@example.com, friend</div>
   </nav>
 
   <main id="main">
@@ -586,12 +580,12 @@ dialog .btnrow { justify-content: flex-end; }
     <h1>3 of 5 servers up</h1>
     <div class="stats">
       <div class="stat"><b>9</b><span>players online</span></div>
-      <div class="stat"><b>2</b><span>need you</span></div>
+      <div class="stat admin-only"><b>2</b><span>need you</span></div>
       <div class="stat"><b>21.4 GB</b><span>RAM free of 32</span></div>
     </div>
   </div>
 
-  <section class="attention" aria-label="Needs you">
+  <section class="attention admin-only" aria-label="Needs you">
     <header><h2>Needs you</h2><span class="newtag">New</span></header>
     <div class="att" data-st="bad">
       <span class="ico"><svg class="i"><use href="#i-alert"/></svg></span>
@@ -617,7 +611,7 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
 
   <div class="pagehead">
     <div class="grow"><h2>Servers</h2></div>
-    <div class="btnrow"><a class="btn sm" href="#edit"><svg class="i"><use href="#i-plus"/></svg>Add existing server</a></div>
+    <div class="btnrow admin-only"><a class="btn sm" href="#edit"><svg class="i"><use href="#i-plus"/></svg>Add existing server</a></div>
   </div>
 
   <div class="grid">
@@ -633,7 +627,7 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
         <div class="addr"><code>100.64.0.10:8211</code><button class="btn ghost sm" data-copy="100.64.0.10:8211" aria-label="Copy join address"><svg class="i"><use href="#i-copy"/></svg>Copy</button></div>
         <div class="chips"><span class="chip c-upd"><svg class="i"><use href="#i-download"/></svg>Update available</span><span class="chip"><svg class="i"><use href="#i-clock"/></svg>Restarts 05:00</span><span class="chip c-ok"><svg class="i"><use href="#i-shield"/></svg>Firewall open</span></div>
       </div>
-      <div class="srv-actions"><button class="btn" data-confirm="restart" data-name="Palworld">Restart</button><button class="btn" data-confirm="stop" data-name="Palworld">Stop</button><button class="btn" data-confirm="update" data-name="Palworld">Update</button></div>
+      <div class="srv-actions"><button class="btn ctl" data-confirm="restart" data-name="Palworld">Restart</button><button class="btn ctl" data-confirm="stop" data-name="Palworld">Stop</button><button class="btn ctl" data-confirm="update" data-name="Palworld">Update</button></div>
     </article>
 
     <!-- Enshrouded: restart countdown -->
@@ -648,12 +642,12 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
         <div class="addr"><code>100.64.0.10:15637</code><button class="btn ghost sm" data-copy="100.64.0.10:15637" aria-label="Copy join address"><svg class="i"><use href="#i-copy"/></svg>Copy</button></div>
         <div class="chips"><span class="chip c-ok"><svg class="i"><use href="#i-shield"/></svg>Firewall open</span></div>
       </div>
-      <div class="srv-actions"><button class="btn primary" data-confirm="now" data-name="Enshrouded">Restart now</button><button class="btn" data-toast="Restart cancelled: Enshrouded">Cancel restart</button></div>
+      <div class="srv-actions"><button class="btn primary admin-only" data-confirm="now" data-name="Enshrouded">Restart now</button><button class="btn admin-only" data-toast="Restart cancelled: Enshrouded">Cancel restart</button><a class="btn friend-only" href="#server" data-open="ens">Open</a></div>
     </article>
 
     <!-- V Rising: crashed -->
     <article class="srv" data-st="bad">
-      <a class="band" href="#server" data-open="vr"><svg class="i"><use href="#i-alert"/></svg>Crashed<span class="fact">gave up after 3 tries</span></a>
+      <a class="band" href="#server" data-open="vr"><svg class="i"><use href="#i-alert"/></svg><span class="admin-only">Crashed</span><span class="friend-only">Down</span><span class="fact">gave up after 3 tries</span></a>
       <div class="srv-body">
         <div class="srv-title">
           <span class="mono">VR</span>
@@ -663,7 +657,7 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
         <div class="lastline">[Error] Unhandled exception in ServerBootstrapSystem</div>
         <div class="chips"><span class="chip c-ok"><svg class="i"><use href="#i-shield"/></svg>Firewall open</span></div>
       </div>
-      <div class="srv-actions"><button class="btn primary" data-toast="Start: V Rising">Start</button><a class="btn" href="#server" data-open="vr">Open console</a></div>
+      <div class="srv-actions"><button class="btn primary ctl" data-toast="Start: V Rising">Start</button><a class="btn" href="#server" data-open="vr">Open console</a></div>
     </article>
 
     <!-- Dragonwilds: updating -->
@@ -678,7 +672,7 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
         <div class="progress" role="progressbar" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="Update progress"><i style="width:62%"></i></div>
         <div class="chips"><span class="chip"><svg class="i"><use href="#i-check"/></svg>Backup 13:58</span><span class="chip">Build 19820144 to 19911020</span></div>
       </div>
-      <div class="srv-actions"><button class="btn" data-confirm="cancel" data-name="Dragonwilds">Cancel update</button></div>
+      <div class="srv-actions"><button class="btn admin-only" data-confirm="cancel" data-name="Dragonwilds">Cancel update</button><a class="btn friend-only" href="#server" data-open="dw">Open</a></div>
     </article>
 
     <!-- Windrose: stopped, firewall missing -->
@@ -693,10 +687,11 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
         <div class="addr"><code>100.64.0.10:7787</code><button class="btn ghost sm" data-copy="100.64.0.10:7787" aria-label="Copy join address"><svg class="i"><use href="#i-copy"/></svg>Copy</button></div>
         <div class="chips"><span class="chip c-warn"><svg class="i"><use href="#i-shield"/></svg>Firewall rule missing</span></div>
       </div>
-      <div class="srv-actions"><button class="btn primary" data-toast="Start: Windrose">Start</button><button class="btn" data-confirm="update" data-name="Windrose">Update</button></div>
+      <div class="srv-actions"><button class="btn primary ctl" data-toast="Start: Windrose">Start</button><button class="btn ctl" data-confirm="update" data-name="Windrose">Update</button></div>
     </article>
   </div>
   <div class="note"><b>Card layout:</b> the coloured band carries the state word and the one fact that matters for it (uptime, countdown, crash count, progress). The player count is the biggest number on the card. Only the actions that make sense for the state are shown, so there are no greyed-out buttons. Kill lives on the server page, behind a confirm. "Copy for Discord" moves to the server page. <b>New:</b> "Updated 2 days ago" is when the game itself was last updated (hover for the date), read from Steam's app manifest so updates done outside Basecamp count too.</div>
+  <div class="note friend-only"><b>Friend view:</b> the same cards without "Needs you" or "Add existing server". Friends keep Start, Stop, Restart and Update; Restart now, Cancel restart and Cancel update are the owner's. A crashed server reads "Down".</div>
 </section>
 
 <!-- ===================================================== SERVER PAGE -->
@@ -707,14 +702,14 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
       <span class="mono" data-f="mono">Pw</span>
       <div style="flex:1 1 220px;min-width:0;display:flex;flex-direction:column;gap:6px">
         <h1 data-f="name">Palworld</h1>
-        <div><span class="pill" data-f="pill" data-st="run"><span class="dot live"></span><span data-f="state">Running</span></span></div>
+        <div><span class="pill" data-f="pill" data-st="run"><span class="dot live"></span><span data-f="state">Running</span></span><span class="rolebadge friend-only" style="margin-left:8px">Friend view</span></div>
       </div>
       <div class="players" data-when="run warn"><b data-f="players">6</b><span data-f="max">of 32 on</span></div>
     </div>
     <div class="callout" data-st="warn" data-when="warn">
       <svg class="i"><use href="#i-clock"/></svg>
       <div class="grow"><div><strong>Restarting in <span class="num" data-countdown="252">4:12</span></strong>. Players got a warning at 5 min and get another at 1 min.</div></div>
-      <button class="btn sm" data-confirm="now">Restart now</button>
+      <button class="btn sm admin-only" data-confirm="now">Restart now</button>
     </div>
     <div class="callout" data-st="bad" data-when="bad">
       <svg class="i"><use href="#i-alert"/></svg>
@@ -726,26 +721,27 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
     </div>
 
     <div class="actionbar">
-      <button class="btn primary" data-when="idle bad" data-toast="Start"><svg class="i"><use href="#i-play"/></svg>Start</button>
-      <button class="btn" data-when="run" data-confirm="restart"><svg class="i"><use href="#i-refresh"/></svg>Restart</button>
-      <button class="btn" data-when="run" data-confirm="stop"><svg class="i"><use href="#i-stop"/></svg>Stop</button>
-      <button class="btn" data-when="run idle" data-confirm="update"><svg class="i"><use href="#i-download"/></svg>Update</button>
-      <button class="btn" data-when="upd" data-confirm="cancel">Cancel update</button>
-      <a class="btn ghost" href="#edit"><svg class="i"><use href="#i-sliders"/></svg>Edit settings</a>
+      <button class="btn primary ctl" data-when="idle bad" data-toast="Start"><svg class="i"><use href="#i-play"/></svg>Start</button>
+      <button class="btn ctl" data-when="run" data-confirm="restart"><svg class="i"><use href="#i-refresh"/></svg>Restart</button>
+      <button class="btn ctl" data-when="run" data-confirm="stop"><svg class="i"><use href="#i-stop"/></svg>Stop</button>
+      <button class="btn ctl" data-when="run idle" data-confirm="update"><svg class="i"><use href="#i-download"/></svg>Update</button>
+      <button class="btn admin-only" data-when="upd" data-confirm="cancel">Cancel update</button>
+      <a class="btn ghost admin-only" href="#edit"><svg class="i"><use href="#i-sliders"/></svg>Edit settings</a>
       <span class="sep"></span>
-      <div class="force" data-when="run warn upd">
+      <div class="force admin-only" data-when="run warn upd">
         <span class="hint">Not responding?</span>
         <button class="btn danger sm" data-confirm="kill"><svg class="i"><use href="#i-bolt"/></svg>Kill</button>
       </div>
     </div>
-    <div class="note"><b>Mock:</b> open another server from the dashboard to see this page in its state (crashed, updating, countdown, stopped). Kill sits apart at the end of the row with a plain question in front of it and a red outline; it always asks first.</div>
+    <div class="note admin-only"><b>Mock:</b> open another server from the dashboard to see this page in its state (crashed, updating, countdown, stopped). Kill sits apart at the end of the row with a plain question in front of it and a red outline; it always asks first. Switch to <b>Friend</b> in the pink bar to see this same page as a friend.</div>
+    <div class="note friend-only"><b>Friend view of the same page:</b> Start, Stop, Restart and Update stay (with the same warning and save backup). Gone: Kill, Restart now, Cancel update, Edit settings, the Config files tab, typing console commands, Back up now, Restore, Download and Delete on backups, editing the schedule, Check again on the firewall, and the install folder. Untick "Friend controls on" in the pink bar to see it read-only.</div>
   </div>
 
   <div class="srvgrid">
   <div data-tabs>
     <div class="tabs" role="tablist">
       <button role="tab" data-tab="console" aria-selected="true"><svg class="i"><use href="#i-terminal"/></svg>Console</button>
-      <button role="tab" data-tab="files" aria-selected="false"><svg class="i"><use href="#i-file"/></svg>Config files</button>
+      <button role="tab" class="admin-only" data-tab="files" aria-selected="false"><svg class="i"><use href="#i-file"/></svg>Config files</button>
       <button role="tab" data-tab="backups" aria-selected="false"><svg class="i"><use href="#i-box"/></svg>Backups</button>
       <button role="tab" data-tab="schedule" aria-selected="false"><svg class="i"><use href="#i-cal"/></svg>Schedule</button>
       <button role="tab" data-tab="firewall" aria-selected="false"><svg class="i"><use href="#i-shield"/></svg>Firewall</button>
@@ -755,14 +751,15 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
     <div data-panel="console" style="padding-top:16px;display:flex;flex-direction:column;gap:10px">
       <div class="console">
         <div class="lines" id="console-lines"></div>
-        <div class="quickbar" id="quickbar"><span class="lbl">Quick</span></div>
-        <form id="console-form">
+        <div class="quickbar ctl" id="quickbar"><span class="lbl">Quick</span></div>
+        <div class="readonly friend-only"><svg class="i"><use href="#i-eye"/></svg>Read-only console. Only the owner can type commands.</div>
+        <form id="console-form" class="admin-only">
           <select id="console-channel" aria-label="Send by"><option>RCON</option><option>REST</option><option>console</option></select>
           <input id="console-input" autocomplete="off" spellcheck="false" placeholder="Command, e.g. broadcast Hello">
           <button class="btn primary" type="submit">Send</button>
         </form>
       </div>
-      <div class="note"><b>New, from the template:</b> the Quick row above the input is one tap per command, listed in the game's template under <code>quick_commands</code> (label, command, and an optional <code>{message}</code> to ask for). "Broadcast…" puts the command in the box for you to finish. It shows only while the server is running and the template has commands; open Enshrouded to see a game without any.</div>
+      <div class="note"><b>New, from the template:</b> the Quick row above the input is one tap per command, listed in the game's template under <code>quick_commands</code> (label, command, an optional <code>{message}</code> to ask for, and <code>friend: true</code> for the ones friends may tap too). "Broadcast…" puts the command in the box for you to finish. It shows only while the server is running and the template has commands; open Enshrouded to see a game without any. As a friend, Palworld shows only Save and Players.</div>
     </div>
 
     <div data-panel="files" hidden style="padding-top:16px">
@@ -776,14 +773,14 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
 
     <div data-panel="backups" hidden style="padding-top:16px">
       <div class="panel">
-        <header><h3>Every 6 h while running, keeping the newest 10</h3><button class="btn primary sm" data-toast="Backup made: palworld-2026-10-29-1412.zip">Back up now</button></header>
-        <p class="hint">From <code>Pal\Saved\SaveGames</code>. Stopping the server unlocks Restore.</p>
+        <header><h3>Every 6 h while running, keeping the newest 10</h3><button class="btn primary sm admin-only" data-toast="Backup made: palworld-2026-10-29-1412.zip">Back up now</button></header>
+        <p class="hint admin-only">From <code>Pal\Saved\SaveGames</code>. Stopping the server unlocks Restore.</p>
         <div class="tablewrap"><table>
-          <thead><tr><th>Made</th><th>Size</th><th>Why</th><th></th></tr></thead>
+          <thead><tr><th>Made</th><th>Size</th><th>Why</th><th class="admin-only"></th></tr></thead>
           <tbody>
-            <tr><td class="num">Today 12:00</td><td class="num">412 MB</td><td>Schedule</td><td><div class="btnrow" style="justify-content:flex-end"><button class="btn sm" disabled title="Stop the server first">Restore</button><button class="btn sm ghost"><svg class="i"><use href="#i-download"/></svg>Download</button><button class="btn sm ghost danger" aria-label="Delete backup" data-confirm="delbackup"><svg class="i"><use href="#i-trash"/></svg></button></div></td></tr>
-            <tr><td class="num">Today 06:00</td><td class="num">409 MB</td><td>Schedule</td><td><div class="btnrow" style="justify-content:flex-end"><button class="btn sm" disabled>Restore</button><button class="btn sm ghost"><svg class="i"><use href="#i-download"/></svg>Download</button><button class="btn sm ghost danger" aria-label="Delete backup" data-confirm="delbackup"><svg class="i"><use href="#i-trash"/></svg></button></div></td></tr>
-            <tr><td class="num">Yesterday 04:31</td><td class="num">405 MB</td><td>Before update</td><td><div class="btnrow" style="justify-content:flex-end"><button class="btn sm" disabled>Restore</button><button class="btn sm ghost"><svg class="i"><use href="#i-download"/></svg>Download</button><button class="btn sm ghost danger" aria-label="Delete backup" data-confirm="delbackup"><svg class="i"><use href="#i-trash"/></svg></button></div></td></tr>
+            <tr><td class="num">Today 12:00</td><td class="num">412 MB</td><td>Schedule</td><td class="admin-only"><div class="btnrow" style="justify-content:flex-end"><button class="btn sm" disabled title="Stop the server first">Restore</button><button class="btn sm ghost"><svg class="i"><use href="#i-download"/></svg>Download</button><button class="btn sm ghost danger" aria-label="Delete backup" data-confirm="delbackup"><svg class="i"><use href="#i-trash"/></svg></button></div></td></tr>
+            <tr><td class="num">Today 06:00</td><td class="num">409 MB</td><td>Schedule</td><td class="admin-only"><div class="btnrow" style="justify-content:flex-end"><button class="btn sm" disabled>Restore</button><button class="btn sm ghost"><svg class="i"><use href="#i-download"/></svg>Download</button><button class="btn sm ghost danger" aria-label="Delete backup" data-confirm="delbackup"><svg class="i"><use href="#i-trash"/></svg></button></div></td></tr>
+            <tr><td class="num">Yesterday 04:31</td><td class="num">405 MB</td><td>Before update</td><td class="admin-only"><div class="btnrow" style="justify-content:flex-end"><button class="btn sm" disabled>Restore</button><button class="btn sm ghost"><svg class="i"><use href="#i-download"/></svg>Download</button><button class="btn sm ghost danger" aria-label="Delete backup" data-confirm="delbackup"><svg class="i"><use href="#i-trash"/></svg></button></div></td></tr>
           </tbody>
         </table></div>
       </div>
@@ -809,19 +806,20 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
           <label><input type="radio" name="sch-players" id="sch-p-skip"><span><b>Skip that day</b></span></label>
           <label><input type="radio" name="sch-players" id="sch-p-delay" checked><span><b>Wait until nobody's on</b><span class="hint">Checks every 5 min. After 2 h it goes ahead anyway.</span></span></label>
         </div>
-        <div class="btnrow"><button class="btn primary" data-toast="Schedule saved">Save schedule</button></div>
+        <div class="btnrow admin-only"><button class="btn primary" data-toast="Schedule saved">Save schedule</button></div>
+        <p class="hint friend-only">Only the owner can change the schedule.</p>
       </div>
       <div class="note"><b>Moved:</b> schedules live in the Edit form today. Here they get their own tab with the next run spelled out.</div>
     </div>
 
     <div data-panel="firewall" hidden style="padding-top:16px">
       <div class="panel">
-        <header><h3>Windows Firewall, for Tailscale traffic</h3><button class="btn sm" data-toast="Checked just now"><svg class="i"><use href="#i-refresh"/></svg>Check again</button></header>
+        <header><h3>Windows Firewall, for Tailscale traffic</h3><button class="btn sm admin-only" data-toast="Checked just now"><svg class="i"><use href="#i-refresh"/></svg>Check again</button></header>
         <div class="tablewrap"><table>
           <thead><tr><th>Port</th><th>Status</th><th>Rule</th></tr></thead>
           <tbody>
             <tr><td class="num">UDP 8211<div class="hint">game</div></td><td><span class="chip c-ok">Open to Tailscale</span></td><td class="hint">Basecamp Palworld UDP 8211, from 100.64.0.0/10</td></tr>
-            <tr><td class="num">UDP 27015<div class="hint">query</div></td><td><span class="chip c-warn">Too broad</span></td><td class="hint">Allows any address. Narrow it to Tailscale.</td></tr>
+            <tr><td class="num">UDP 27015<div class="hint">query</div></td><td><span class="chip c-warn">Too broad</span></td><td class="hint"><span class="admin-only">Allows any address. Narrow it to Tailscale.</span><span class="friend-only">Allows any address. The owner has been told.</span></td></tr>
           </tbody>
         </table></div>
         <p class="hint">This only reads the firewall's rules. Tailscale's access rules or the game's listen address can still keep friends out, so it isn't a reachability test. Checked 14:06.</p>
@@ -832,8 +830,8 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
       <div class="panel">
         <div class="list">
           <div class="row"><div class="grow"><b>Backup made</b> by the schedule<div class="hint">palworld-2026-10-29-1200.zip</div></div><span class="hint num">Today 12:00</span></div>
-          <div class="row"><div class="grow"><b>Restarted</b> by Sam (friend)</div><span class="hint num">Yesterday 21:14</span></div>
-          <div class="row"><div class="grow"><b>Config saved</b> by Owner<div class="hint">PalWorldSettings.ini: ExpRate 1.0 to 1.5</div></div><span class="hint num">Yesterday 20:50</span></div>
+          <div class="row"><div class="grow"><b>Restarted</b> by Sam (friend, sam@example.com)</div><span class="hint num">Yesterday 21:14</span></div>
+          <div class="row admin-only"><div class="grow"><b>Config saved</b> by Owner<div class="hint">PalWorldSettings.ini: ExpRate 1.0 to 1.5</div></div><span class="hint num">Yesterday 20:50</span></div>
           <div class="row"><div class="grow"><b>Console</b> by Owner<div class="hint">broadcast Restarting for a settings change</div></div><span class="hint num">Yesterday 20:49</span></div>
         </div>
       </div>
@@ -856,6 +854,7 @@ Fix: firewall check missed rules scoped to 100.64.0.0/10.</pre></details>
         <dt>Last backup</dt><dd data-f="backup">Today 12:00</dd>
         <dt>Firewall</dt><dd><span class="chip" data-f="fw">1 port too broad</span></dd>
         <dt>PID</dt><dd data-f="pid">20148</dd>
+        <dt class="admin-only">Install folder</dt><dd class="admin-only" style="overflow-wrap:anywhere;font-weight:500"><code data-f="dir">C:\Users\&lt;you&gt;\SteamCMD\steamapps\common\PalServer</code></dd>
       </dl>
     </div>
     <div class="note"><b>Wide screens:</b> the console and tabs take the main column; the address and facts sit beside them. On a phone this panel comes first, above the tabs.</div>
@@ -1199,7 +1198,7 @@ OptionSettings=(Difficulty=None,DayTimeSpeedRate=1.000000,NightTimeSpeedRate=1.0
           <label><input type="radio" name="fc" id="fc-any" checked><span><b>Anyone who can open the page</b><span class="hint">Everyone the host PC is shared with on Tailscale.</span></span></label>
         </div>
         <p class="hint">A stop or restart still warns players first. Each server takes one friend click per 60 s, and every click goes in Activity.</p>
-        <div class="btnrow"><button class="btn primary" data-toast="Saved">Save</button><a class="btn ghost" href="#friend">See the friend page</a></div>
+        <div class="btnrow"><button class="btn primary" data-toast="Saved">Save</button><a class="btn ghost" href="#dashboard" data-as="friend">See what friends see</a></div>
       </section>
 
       <section class="panel" id="s-discord">
@@ -1266,32 +1265,38 @@ OptionSettings=(Difficulty=None,DayTimeSpeedRate=1.000000,NightTimeSpeedRate=1.0
   <div class="twocol left">
     <div class="filters stick" role="group" aria-label="Show">
       <button aria-pressed="true" data-filter="all">Everything</button>
-      <button aria-pressed="false" data-filter="fail">Failures <span class="count">2</span></button>
+      <button aria-pressed="false" data-filter="fail">Failures <span class="count admin-only" data-failcount>2</span></button>
       <button aria-pressed="false" data-filter="crash">Crashes</button>
       <button aria-pressed="false" data-filter="friend">Friends</button>
       <button aria-pressed="false" data-filter="update">Updates</button>
       <button aria-pressed="false" data-filter="backup">Backups</button>
-      <button aria-pressed="false" data-filter="discord">Discord</button>
-      <button aria-pressed="false" data-filter="config">Config and console</button>
+      <button aria-pressed="false" data-filter="discord" class="admin-only">Discord</button>
+      <button aria-pressed="false" data-filter="config"><span class="admin-only">Config and console</span><span class="friend-only">Console</span></button>
     </div>
     <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
+      <div class="callout admin-only" data-st="bad" id="fail-bar"><svg class="i"><use href="#i-alert"/></svg><div class="grow"><div><strong><span data-failcount>2</span> failures</strong> still count towards the red badge.</div></div><button class="btn sm" id="dismiss-all">Dismiss all</button></div>
       <div class="feed">
         <div class="day">Today</div>
         <div class="ev" data-st="warn" data-k="schedule"><span class="ico"><svg class="i"><use href="#i-clock"/></svg></span><div><b>Enshrouded</b> restart started by the schedule. Players warned at 5 min.<div class="who muted">Schedule</div></div><time>14:08</time></div>
-        <div class="ev" data-st="bad" data-k="fail discord"><span class="ico"><svg class="i"><use href="#i-chat"/></svg></span><div><b>Discord</b> message didn't send: "V Rising crashed". Discord answered 404, so the webhook may have been deleted.<span class="fail">Failure</span><div class="who muted">Basecamp, gave up after 3 tries</div></div><time>14:02</time></div>
-        <div class="ev" data-st="bad" data-k="fail crash"><span class="ico"><svg class="i"><use href="#i-alert"/></svg></span><div><b>V Rising</b> crashed for the third time in 10 min. Basecamp stopped retrying.<span class="fail">Failure</span><div class="who muted">Basecamp</div></div><time>14:02</time></div>
-        <div class="ev" data-st="upd" data-k="update"><span class="ico"><svg class="i"><use href="#i-download"/></svg></span><div><b>Dragonwilds</b> update started, build 19820144 to 19911020.<div class="who muted">Owner</div></div><time>13:58</time></div>
+        <div class="ev admin-only" data-st="bad" data-k="fail discord"><span class="ico"><svg class="i"><use href="#i-chat"/></svg></span><div><b>Discord</b> message didn't send: "V Rising crashed". Discord answered 404, so the webhook may have been deleted.<span class="fail">Failure</span><div class="who muted">Basecamp, gave up after 3 tries. Counts until you dismiss it.</div><button class="btn sm ghost dismiss" data-dismiss>Dismiss</button></div><time>14:02</time></div>
+        <div class="ev" data-st="bad" data-k="fail crash"><span class="ico"><svg class="i"><use href="#i-alert"/></svg></span><div><b>V Rising</b> crashed for the third time in 10 min. Basecamp stopped retrying.<span class="fail">Failure</span><div class="who muted">Basecamp<span class="admin-only">. Counts until V Rising runs normally again, or you dismiss it.</span></div><button class="btn sm ghost dismiss admin-only" data-dismiss>Dismiss</button></div><time>14:02</time></div>
+        <div class="ev" data-st="upd" data-k="update"><span class="ico"><svg class="i"><use href="#i-download"/></svg></span><div><b>Dragonwilds</b> update started, build 19820144 to 19911020. Save backed up first.<div class="who muted">Sam (sam@example.com), friend</div></div><time>13:58</time></div>
+        <div class="ev admin-only" data-st="idle" data-k="config"><span class="ico"><svg class="i"><use href="#i-sliders"/></svg></span><div><b>Settings</b> saved: friend controls set to "Anyone who can open the page".<div class="who muted">Owner</div></div><time>13:10</time></div>
+        <div class="ev admin-only" data-st="upd" data-k="update"><span class="ico"><svg class="i"><use href="#i-download"/></svg></span><div><b>Basecamp</b> 0.11.0 is available.<div class="who muted">Basecamp</div></div><time>13:00</time></div>
         <div class="ev" data-st="run" data-k="backup"><span class="ico"><svg class="i"><use href="#i-box"/></svg></span><div><b>Palworld</b> backup made, 412 MB.<div class="who muted">Schedule</div></div><time>12:00</time></div>
         <div class="day">Yesterday</div>
-        <div class="ev" data-st="idle" data-k="friend"><span class="ico"><svg class="i"><use href="#i-users"/></svg></span><div><b>Windrose</b> stopped.<div class="who muted">Alex, friend</div></div><time>23:40</time></div>
+        <div class="ev" data-st="idle" data-k="friend"><span class="ico"><svg class="i"><use href="#i-users"/></svg></span><div><b>Windrose</b> stopped.<div class="who muted">Alex (alex@example.com), friend</div></div><time>23:40</time></div>
         <div class="ev" data-st="idle" data-k="update"><span class="ico"><svg class="i"><use href="#i-download"/></svg></span><div><b>Windrose</b> was updated outside Basecamp, to build 2214.<div class="who muted">Seen in Steam's app manifest</div></div><time>21:15</time></div>
-        <div class="ev" data-st="idle" data-k="friend"><span class="ico"><svg class="i"><use href="#i-users"/></svg></span><div><b>Palworld</b> restarted.<div class="who muted">Sam, friend</div></div><time>21:14</time></div>
-        <div class="ev" data-st="idle" data-k="config"><span class="ico"><svg class="i"><use href="#i-file"/></svg></span><div><b>Palworld</b> PalWorldSettings.ini saved. ExpRate 1.0 to 1.5.<div class="who muted">Owner</div></div><time>20:50</time></div>
+        <div class="ev" data-st="idle" data-k="friend"><span class="ico"><svg class="i"><use href="#i-users"/></svg></span><div><b>Palworld</b> restarted.<div class="who muted">Sam (sam@example.com), friend</div></div><time>21:14</time></div>
+        <div class="ev admin-only" data-st="idle" data-k="config"><span class="ico"><svg class="i"><use href="#i-file"/></svg></span><div><b>Palworld</b> PalWorldSettings.ini saved. ExpRate 1.0 to 1.5.<div class="who muted">Owner</div></div><time>20:50</time></div>
         <div class="ev" data-st="idle" data-k="config"><span class="ico"><svg class="i"><use href="#i-terminal"/></svg></span><div><b>Palworld</b> console: <code>broadcast Restarting for a settings change</code><div class="who muted">Owner</div></div><time>20:49</time></div>
-        <div class="ev" data-st="run" data-k="discord"><span class="ico"><svg class="i"><use href="#i-chat"/></svg></span><div><b>Discord</b> sent the test message.<div class="who muted">Owner</div></div><time>18:12</time></div>
+        <div class="ev admin-only" data-st="idle" data-k="config"><span class="ico"><svg class="i"><use href="#i-template"/></svg></span><div><b>Template</b> valheim added.<div class="who muted">Owner</div></div><time>19:30</time></div>
+        <div class="ev admin-only" data-st="idle" data-k="config"><span class="ico"><svg class="i"><use href="#i-users"/></svg></span><div><b>Signed in</b> from a new device.<div class="who muted">Owner (owner@example.com)</div></div><time>18:20</time></div>
+        <div class="ev admin-only" data-st="run" data-k="discord"><span class="ico"><svg class="i"><use href="#i-chat"/></svg></span><div><b>Discord</b> sent the test message.<div class="who muted">Owner</div></div><time>18:12</time></div>
       </div>
       <p class="hint" id="feed-empty" hidden>Nothing of that kind in the last 7 days.</p>
-      <div class="note"><b>Red count:</b> hard failures only, never "new since you looked": crashes, giving up restarting, failed updates and installs, failed scheduled runs, failed Discord messages and failed backups. Each one gets a red "Failure" tag here and the Failures filter lists them. Open question: when does a failure stop counting (after 24 h, once the server runs again, or when you dismiss it)?</div>
+      <div class="note friend-only"><b>Friend view:</b> the same feed without the owner's events: settings changes, config saves, templates, Basecamp updates, logins and Discord. Each event a friend did shows their Tailscale login. No red badge and no Dismiss.</div>
+      <div class="note admin-only"><b>Red count:</b> hard failures only, never "new since you looked": crashes, giving up restarting, failed updates and installs, failed scheduled runs, failed Discord messages and failed backups. Each one gets a red "Failure" tag here and the Failures filter lists them. A failure stops counting when you dismiss it, or when that server runs normally again (a good start after a crash, a good update after a failed one). Failures with no server, such as a Discord message, clear only on Dismiss. Try Dismiss in the mock.</div>
     </div>
   </div>
 </section>
@@ -1313,65 +1318,6 @@ OptionSettings=(Difficulty=None,DayTimeSpeedRate=1.000000,NightTimeSpeedRate=1.0
   </div>
 </section>
 
-<!-- ===================================================== FRIEND VIEW -->
-<section class="view" id="v-friend" data-view hidden>
-  <div class="friend">
-    <div style="display:flex;flex-direction:column;gap:4px">
-      <h1>Game servers</h1>
-      <p class="muted">9 friends playing right now</p>
-    </div>
-    <div class="note" style="flex-wrap:wrap"><span><b>Mock:</b> what friends see. One column on a phone, cards side by side on a wide screen. </span><label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="friend-controls" checked> Friends may start, stop and restart</label></div>
-
-    <div class="fcards">
-    <article class="fcard" data-st="run">
-      <div class="band"><span class="dot live"></span>Running<span class="fact">up 2 d 4 h</span></div>
-      <div class="body">
-        <div class="titlerow"><span class="mono">Pw</span><div class="grow"><h2>Palworld</h2><span class="updated" title="Game last updated 27 Oct 2026, 05:12"><svg class="i"><use href="#i-download"/></svg>Updated 2 days ago</span></div><div class="players"><b>6</b><span>of 32 on</span></div></div>
-        <div class="ticket"><span class="hint">Join address</span><code>100.64.0.10:8211</code><button class="btn primary" data-copy="100.64.0.10:8211"><svg class="i"><use href="#i-copy"/></svg>Copy address</button></div>
-        <div class="controls"><button class="btn" data-confirm="frestart" data-name="Palworld">Restart</button><button class="btn" data-confirm="fstop" data-name="Palworld">Stop</button></div>
-      </div>
-    </article>
-
-    <article class="fcard" data-st="warn">
-      <div class="band"><span class="dot"></span><span>Restarting in <span class="num" data-countdown="252">4:12</span></span><span class="fact">back in a few min</span></div>
-      <div class="body">
-        <div class="titlerow"><span class="mono">En</span><div class="grow"><h2>Enshrouded</h2><span class="updated" title="Game last updated 21 Oct 2026, 04:30"><svg class="i"><use href="#i-download"/></svg>Updated 8 days ago</span></div><div class="players"><b>3</b><span>of 16 on</span></div></div>
-        <div class="ticket"><span class="hint">Join address</span><code>100.64.0.10:15637</code><button class="btn" data-copy="100.64.0.10:15637"><svg class="i"><use href="#i-copy"/></svg>Copy address</button></div>
-      </div>
-    </article>
-
-    <article class="fcard" data-st="idle">
-      <div class="band"><span class="dot hollow"></span>Stopped<span class="fact">since yesterday 23:40</span></div>
-      <div class="body">
-        <div class="titlerow"><span class="mono">Wr</span><div class="grow"><h2>Windrose</h2><span class="updated" title="Game last updated 28 Oct 2026, 21:15"><svg class="i"><use href="#i-download"/></svg>Updated yesterday</span></div></div>
-        <div class="ticket"><span class="hint">Join address, once it's started</span><code>100.64.0.10:7787</code><button class="btn" data-copy="100.64.0.10:7787"><svg class="i"><use href="#i-copy"/></svg>Copy address</button></div>
-        <div class="controls"><button class="btn primary lg" data-toast="Starting Windrose. Ready in about a minute."><svg class="i"><use href="#i-play"/></svg>Start Windrose</button></div>
-      </div>
-    </article>
-
-    <article class="fcard" data-st="bad">
-      <div class="band"><svg class="i"><use href="#i-alert"/></svg>Down<span class="fact">the owner has been told</span></div>
-      <div class="body">
-        <div class="titlerow"><span class="mono">VR</span><div class="grow"><h2>V Rising</h2><span class="updated" title="Game last updated 3 Oct 2026, 04:30"><svg class="i"><use href="#i-download"/></svg>Updated 26 days ago</span></div></div>
-        <div class="ticket"><span class="hint">Join address</span><code>100.64.0.10:9876</code><button class="btn" data-copy="100.64.0.10:9876"><svg class="i"><use href="#i-copy"/></svg>Copy address</button></div>
-        <div class="controls"><button class="btn primary lg" data-toast="Start: V Rising"><svg class="i"><use href="#i-play"/></svg>Try starting it</button></div>
-      </div>
-    </article>
-
-    <article class="fcard" data-st="upd">
-      <div class="band"><svg class="i"><use href="#i-refresh"/></svg>Updating<span class="fact">back soon</span></div>
-      <div class="body">
-        <div class="titlerow"><span class="mono">DW</span><div class="grow"><h2>Dragonwilds</h2><span class="updated" title="Game last updated 24 Oct 2026, 04:31"><svg class="i"><use href="#i-download"/></svg>Updating now, last 5 days ago</span></div></div>
-        <div class="progress"><i style="width:62%"></i></div>
-        <div class="ticket"><span class="hint">Join address</span><code>100.64.0.10:7777</code><button class="btn" data-copy="100.64.0.10:7777"><svg class="i"><use href="#i-copy"/></svg>Copy address</button></div>
-      </div>
-    </article>
-    </div>
-
-    <div class="note"><b>Changed:</b> the join address is the biggest thing on a running card, with a Copy button (full width on a phone). A crashed server reads "Down" to friends. Every server keeps its address, stopped ones too, so friends can copy it before starting it. "Updated 2 days ago" is the game's last update, as on the admin cards.</div>
-  </div>
-</section>
-
 <!-- ===================================================== VIEWS INDEX -->
 <section class="view" id="v-views" data-view hidden>
   <div class="pagehead"><div class="grow"><h1>All views in this mock</h1><p class="muted">Each links to its screen. "New" marks a view that doesn't exist today.</p></div></div>
@@ -1388,7 +1334,8 @@ OptionSettings=(Difficulty=None,DayTimeSpeedRate=1.000000,NightTimeSpeedRate=1.0
     <a href="#prefs"><b>Settings</b><span>Join address, friends, Discord, defaults, SteamCMD, updates, settings file, Restart Basecamp.</span></a>
     <a href="#activity"><b>Activity <span class="newtag">New</span></b><span>Readable feed with filters. Replaces the audit log page.</span></a>
     <a href="#welcome"><b>First run <span class="newtag">New</span></b><span>What a fresh install shows before any server exists.</span></a>
-    <a href="#friend"><b>Friend page</b><span>Phone-first cards (side by side on a wide screen), big join address, last update, Start / Stop / Restart when allowed.</span></a>
+    <a href="#dashboard" data-as="friend"><b>Friend view</b><span>The admin layout with the owner's parts hidden: dashboard, server pages (read-only console, friend quick commands) and Activity.</span></a>
+    <a href="#server" data-open="pal" data-as="friend"><b>Server page as a friend</b><span>Palworld as Sam sees it. Use the pink bar's switch to flip between the two.</span></a>
   </div>
   <p class="hint">The self-update banner is the "Basecamp 0.11.0 is ready" row in "Needs you" on the dashboard. Tick "Connection lost" in the pink bar to see the reconnecting badge. The sun/moon button in the top bar switches theme: system, light, dark.</p>
 </section>
@@ -1396,11 +1343,11 @@ OptionSettings=(Difficulty=None,DayTimeSpeedRate=1.000000,NightTimeSpeedRate=1.0
   </main>
 </div>
 
-<nav class="tabbar admin-only" aria-label="Main">
+<nav class="tabbar" aria-label="Main">
   <a href="#dashboard" data-nav="dashboard"><svg class="i"><use href="#i-servers"/></svg>Servers</a>
-  <a href="#activity" data-nav="activity"><svg class="i"><use href="#i-activity"/></svg>Activity<span class="count">2</span></a>
-  <a href="#templates" data-nav="templates"><svg class="i"><use href="#i-template"/></svg>Templates</a>
-  <a href="#prefs" data-nav="prefs"><svg class="i"><use href="#i-sliders"/></svg>Settings</a>
+  <a href="#activity" data-nav="activity"><svg class="i"><use href="#i-activity"/></svg>Activity<span class="count admin-only" data-failcount>2</span></a>
+  <a class="admin-only" href="#templates" data-nav="templates"><svg class="i"><use href="#i-template"/></svg>Templates</a>
+  <a class="admin-only" href="#prefs" data-nav="prefs"><svg class="i"><use href="#i-sliders"/></svg>Settings</a>
 </nav>
 
 <dialog id="confirm">
@@ -1454,33 +1401,35 @@ function toast(text) {
 
 // ---- servers shown on the server page
 const MANIFEST = "From Steam's app manifest";
-const PAL_QUICK = [["Save", "save"], ["Players", "showplayers"], ["Broadcast…", "broadcast {message}"]];
+// [label, command, friend]: friend marks the commands friends may tap too (template field "friend": true)
+const PAL_QUICK = [["Save", "save", true], ["Players", "showplayers", true], ["Broadcast…", "broadcast {message}", false]];
 const SERVERS = {
-  pal: { build: "17643921", name: "Palworld", mono: "Pw", st: "run", label: "Running", players: "6", max: "of 32 on", addr: "100.64.0.10:8211",
+  pal: { dir: "C:\\Users\\<you>\\SteamCMD\\steamapps\\common\\PalServer", build: "17643921", name: "Palworld", mono: "Pw", st: "run", label: "Running", players: "6", max: "of 32 on", addr: "100.64.0.10:8211",
     up: "2 d 4 h", cpu: "18%, 9.2 GB", pid: "20148", updated: "27 Oct 2026, 05:12", updsrc: MANIFEST, steam: "17702213, newer",
     next: "Tomorrow 05:00", backup: "Today 12:00", fw: ["c-warn", "1 port too broad"], quick: PAL_QUICK },
-  ens: { build: "18003377", name: "Enshrouded", mono: "En", st: "warn", label: "Running, restart pending", players: "3", max: "of 16 on", addr: "100.64.0.10:15637",
+  ens: { dir: "C:\\Users\\<you>\\SteamCMD\\steamapps\\common\\EnshroudedServer", build: "18003377", name: "Enshrouded", mono: "En", st: "warn", label: "Running, restart pending", players: "3", max: "of 16 on", addr: "100.64.0.10:15637",
     up: "6 h 10 min", cpu: "11%, 6.8 GB", pid: "18820", updated: "21 Oct 2026, 04:30", updsrc: MANIFEST, steam: "Up to date",
     next: "Now, by the schedule", backup: "Today 12:00", fw: ["c-ok", "Open to Tailscale"], quick: [] },
-  vr: { build: "16710342", name: "V Rising", mono: "VR", st: "bad", label: "Crashed", players: "–", max: "", addr: "100.64.0.10:9876",
+  vr: { dir: "C:\\Users\\<you>\\SteamCMD\\steamapps\\common\\VRisingDedicatedServer", build: "16710342", name: "V Rising", mono: "VR", st: "bad", label: "Crashed", players: "–", max: "", addr: "100.64.0.10:9876",
     up: "", cpu: "", pid: "none", updated: "3 Oct 2026, 04:30", updsrc: MANIFEST, steam: "Up to date",
-    next: "Tomorrow 05:00", backup: "Today 13:45", fw: ["c-ok", "Open to Tailscale"], quick: [["Announce…", "announce {message}"], ["Restart warning", "announcerestart 5"]] },
-  dw: { build: "19820144", name: "Dragonwilds", mono: "DW", st: "upd", label: "Updating", players: "–", max: "", addr: "100.64.0.10:7777",
+    next: "Tomorrow 05:00", backup: "Today 13:45", fw: ["c-ok", "Open to Tailscale"], quick: [["Announce…", "announce {message}", false], ["Restart warning", "announcerestart 5", false]] },
+  dw: { dir: "C:\\Users\\<you>\\SteamCMD\\steamapps\\common\\RSDragonwildsServer", build: "19820144", name: "Dragonwilds", mono: "DW", st: "upd", label: "Updating", players: "–", max: "", addr: "100.64.0.10:7777",
     up: "", cpu: "", pid: "none", updated: "24 Oct 2026, 04:31", updsrc: MANIFEST, steam: "19911020, installing now",
     next: "Tomorrow 05:00", backup: "Today 13:58", fw: ["c-ok", "Open to Tailscale"], quick: [] },
-  wr: { build: "2214", name: "Windrose", mono: "Wr", st: "idle", label: "Stopped", players: "–", max: "", addr: "100.64.0.10:7787",
+  wr: { dir: "C:\\Users\\<you>\\SteamCMD\\steamapps\\common\\WindroseServer", build: "2214", name: "Windrose", mono: "Wr", st: "idle", label: "Stopped", players: "–", max: "", addr: "100.64.0.10:7787",
     up: "", cpu: "", pid: "none", updated: "28 Oct 2026, 21:15", updsrc: "From Steam's app manifest. Updated outside Basecamp.", steam: "Up to date",
     next: "None set", backup: "Yesterday 23:40", fw: ["c-warn", "Rule missing"], quick: [] },
 };
 let current = SERVERS.pal;
+let role = "admin";
 function showServer(key) {
   current = SERVERS[key] || SERVERS.pal;
   const v = $("#v-server");
   $$("[data-f=name]", v).forEach((n) => { n.textContent = current.name; });
-  for (const f of ["mono", "players", "max", "addr", "build", "up", "cpu", "pid", "updated", "updsrc", "steam", "next", "backup"]) {
+  for (const f of ["mono", "players", "max", "addr", "build", "up", "cpu", "pid", "updated", "updsrc", "steam", "next", "backup", "dir"]) {
     $(`[data-f=${f}]`, v).textContent = current[f];
   }
-  $("[data-f=state]", v).textContent = current.label;
+  $("[data-f=state]", v).textContent = stateLabel();
   const fw = $("[data-f=fw]", v);
   fw.className = `chip ${current.fw[0]}`; fw.textContent = current.fw[1];
   $("#srv-copy").dataset.copy = current.addr;
@@ -1490,16 +1439,22 @@ function showServer(key) {
   const dot = $(".dot", pill);
   dot.className = "dot" + (current.st === "run" ? " live" : current.st === "idle" ? " hollow" : "");
   $$("[data-when]", v).forEach((n) => { n.hidden = !n.dataset.when.split(" ").includes(current.st); });
-  // quick commands come from the game's template; only while it's running
+  renderQuick();
+  fillConsole();
+}
+// quick commands come from the game's template; only while it's running. Friends get the ones marked friend.
+// friends see "Down" for a crashed server
+function stateLabel() { return role === "friend" && current.st === "bad" ? "Down" : current.label; }
+function renderQuick() {
   const qb = $("#quickbar");
-  qb.replaceChildren(qb.firstElementChild, ...current.quick.map(([label, cmd]) => {
+  const list = current.quick.filter(([, , friend]) => role === "admin" || friend);
+  qb.replaceChildren(qb.firstElementChild, ...list.map(([label, cmd]) => {
     const b = document.createElement("button");
     b.type = "button"; b.textContent = label; b.dataset.cmd = cmd;
     b.title = cmd;
     return b;
   }));
-  qb.hidden = !current.quick.length || !["run", "warn"].includes(current.st);
-  fillConsole();
+  qb.hidden = !list.length || !["run", "warn"].includes(current.st);
 }
 document.addEventListener("click", (e) => {
   const a = e.target.closest("[data-open]");
@@ -1625,12 +1580,12 @@ $$(".filters button").forEach((b) => b.addEventListener("click", () => {
   let shown = 0;
   $$("#v-activity .ev").forEach((ev) => {
     ev.hidden = f !== "all" && !ev.dataset.k.split(" ").includes(f);
-    if (!ev.hidden) shown++;
+    if (getComputedStyle(ev).display !== "none") shown++;
   });
   // hide a day heading when none of its events are shown
   $$("#v-activity .day").forEach((d) => {
     let n = d.nextElementSibling, any = false;
-    while (n && !n.classList.contains("day")) { if (!n.hidden) any = true; n = n.nextElementSibling; }
+    while (n && !n.classList.contains("day")) { if (getComputedStyle(n).display !== "none") any = true; n = n.nextElementSibling; }
     d.hidden = !any;
   });
   $("#feed-empty").hidden = shown > 0;
@@ -1678,7 +1633,7 @@ $$("[data-confirm]").forEach((b) => b.addEventListener("click", () => {
   const name = b.dataset.name || current.name;
   const [title, body, ok, danger] = CONFIRM[b.dataset.confirm](name);
   $("#confirm-title").textContent = title;
-  $("#confirm-body").textContent = body;
+  $("#confirm-body").textContent = role === "friend" ? `${body} The owner sees in Activity that you did it.` : body;
   $("#confirm-ok").textContent = ok;
   $("#confirm-ok").className = danger ? "btn danger solid" : "btn primary";
   pending = `${DONE[b.dataset.confirm]}: ${name}`;
@@ -1700,19 +1655,51 @@ setInterval(() => {
 $("#mock-notes").addEventListener("change", (e) => document.body.classList.toggle("no-notes", !e.target.checked));
 $("#mock-offline").addEventListener("change", (e) => { $("#offline").hidden = !e.target.checked; });
 $("#friend-controls").addEventListener("change", (e) => document.body.classList.toggle("friend-locked", !e.target.checked));
-$("#as-admin").addEventListener("click", () => { location.hash = "dashboard"; });
-$("#as-friend").addEventListener("click", () => { location.hash = "friend"; });
+$("#as-admin").addEventListener("click", () => setRole("admin"));
+$("#as-friend").addEventListener("click", () => setRole("friend"));
+$$("[data-as]").forEach((a) => a.addEventListener("click", () => setRole(a.dataset.as)));
+
+// ---- red badge: hard failures until dismissed (or the server runs normally again)
+function setFailCount(n) {
+  $$("[data-failcount]").forEach((c) => { c.textContent = String(n); c.hidden = n === 0; });
+  $("#fail-bar").hidden = n === 0;
+}
+function dismiss(ev) {
+  const tag = $(".fail", ev);
+  if (!tag) return;
+  tag.remove();
+  $("[data-dismiss]", ev)?.remove();
+  ev.dataset.k = ev.dataset.k.replace("fail", "").trim();
+  setFailCount($$("#v-activity .fail").length);
+}
+$$("[data-dismiss]").forEach((b) => b.addEventListener("click", () => { dismiss(b.closest(".ev")); toast("Dismissed"); }));
+$("#dismiss-all").addEventListener("click", () => { $$("#v-activity .ev").forEach(dismiss); toast("All failures dismissed"); });
+
+// ---- roles: the friend view is the admin layout with the owner's parts hidden
+const ADMIN_VIEWS = ["config", "edit", "newgame", "templates", "prefs", "welcome"];
+function setRole(r) {
+  role = r;
+  document.body.dataset.role = r;
+  $("#as-admin").setAttribute("aria-pressed", String(r === "admin"));
+  $("#as-friend").setAttribute("aria-pressed", String(r === "friend"));
+  // schedule is read-only for friends
+  $$('#v-server [data-panel="schedule"] input').forEach((i) => { i.disabled = r === "friend"; });
+  // a friend can't be on an owner-only tab
+  const sel = $('#v-server [data-tab][aria-selected="true"]');
+  if (r === "friend" && sel && sel.classList.contains("admin-only")) $('#v-server [data-tab="console"]').click();
+  renderQuick();
+  $('#v-server [data-f=state]').textContent = stateLabel();
+  $('.filters [aria-pressed="true"]')?.click();
+  if (ADMIN_VIEWS.includes(location.hash.replace(/^#/, ""))) location.hash = "dashboard";
+}
 
 // ---- routing
 function route() {
   let name = location.hash.replace(/^#/, "") || "dashboard";
+  if (name === "friend") { setRole("friend"); name = "dashboard"; }
+  if (role === "friend" && ADMIN_VIEWS.includes(name)) name = "dashboard";
   if (!document.getElementById(`v-${name}`)) name = "dashboard";
   $$("[data-view]").forEach((v) => { v.hidden = v.id !== `v-${name}`; });
-  const friend = name === "friend";
-  document.body.dataset.role = friend ? "friend" : "admin";
-  $("#brand-name").textContent = friend ? "Game servers" : "Basecamp";
-  $("#as-admin").setAttribute("aria-pressed", String(!friend));
-  $("#as-friend").setAttribute("aria-pressed", String(friend));
   const navName = name === "server" || name === "config" || name === "edit" || name === "welcome" ? "dashboard" : name;
   $$("[data-nav]").forEach((a) => {
     if (a.dataset.nav === navName) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
@@ -1721,6 +1708,7 @@ function route() {
   window.scrollTo(0, 0);
 }
 window.addEventListener("hashchange", route);
+document.body.dataset.role = "admin";
 showServer("pal");
 route();
 </script>

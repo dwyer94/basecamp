@@ -5,10 +5,11 @@ A clickable static mock of the fresher UI, for the owner to review before the re
 - Open `index.html` in a browser. Plain HTML/CSS/JS, no build step, placeholder data only.
 - The pink bar at the top and the pink dashed boxes are mock-only. They switch between the admin and friend views, show the "connection lost" state, and explain what changed. Untick "Notes" to hide the boxes.
 - The sun/moon button in the top bar is the real theme toggle: it follows the system, then light, then dark.
+- "Admin / Friend" in the pink bar switches who is looking, on the page you're on, so the same server page can be compared in both modes. In friend mode "Friend controls on" turns friend controls off (read-only).
 - "All views" lists every screen.
 - Checked at 375, 1280 and 1920 px wide, light and dark.
 
-Round 1 of the owner's feedback is applied (see "Decisions" below). Round 2, on how much of the admin UI friends see, is still to come; the friend view keeps its current structure until then.
+Rounds 1 and 2 of the owner's feedback are applied (see "Decisions" below).
 
 ## Views
 
@@ -23,9 +24,9 @@ Round 1 of the owner's feedback is applied (see "Decisions" below). Round 2, on 
 | New game | `#newgame` | Drop-down, name, folder, then a list of steps | Game tiles, a six-step bar (click the steps in the mock), the start button names the game |
 | Templates | `#templates` | Add box, then one card per template | Compact list with source tags (Built-in, Yours, Yours replaces built-in), with "add by file or paste" beside it on a desktop |
 | Settings | `#prefs` | One long page of cards | Same cards with a jump list; Friends moved near the top; two columns of cards on a wide screen |
-| Activity | `#activity` | Audit log: a raw table of the last 200 rows | **New.** A feed grouped by day, with filters (a side column on a desktop), a red "Failure" tag on hard failures and the failure count in the menu |
+| Activity | `#activity` | Audit log: a raw table of the last 200 rows | **New.** A feed grouped by day, with filters (a side column on a desktop), a red "Failure" tag on hard failures, the failure count in the menu, and Dismiss / Dismiss all |
 | First run | `#welcome` | "No servers yet. Add one from a template." | **New.** Three steps: SteamCMD found, join address, first game |
-| Friend page | `#friend` | Plain cards: name, state, uptime, address, small buttons | **Redesigned for phones.** Big join address with Copy (full width on a phone), big Start for a stopped server, "Down" instead of "Crashed", the game's last update. Cards sit side by side on a desktop. Tick the box to see it with friend controls off. |
+| Friend view | Admin/Friend switch | A separate page of plain cards: name, state, uptime, address, small buttons | **The admin layout with the owner's parts hidden** (details below): Servers and Activity in the menu, the same cards and server page, "Down" for a crashed server. `#friend` opens it on the dashboard. |
 | Confirm sheet | any risky button | Browser `confirm()` boxes | In-page sheet that says what will happen; destructive ones (Kill, Delete, Stop SteamCMD) get a red button |
 | Connection lost | mock bar | "reconnecting…" text in the header | Amber "Reconnecting…" badge in the top bar |
 
@@ -44,7 +45,11 @@ Round 1 of the owner's feedback is applied (see "Decisions" below). Round 2, on 
   - forms stop at about 880 px wide; Settings goes to two columns of cards on a wide screen;
   - tables and lists are denser, rows, cards and tiles have hover states, and buttons size to their label instead of filling the width.
 - **Phone layout for the admin too.** Under 900 px the sidebar becomes a bottom tab bar (Servers, Activity, Templates, Settings) and New game moves to the top bar. Cards stack in one column, action buttons stretch to full width, and the server page shows the details panel above the tabs.
-- **Friend page is phone-first.** One column on a phone, a large join address on a dashed "ticket" with a full-width Copy button, and big Start/Stop/Restart buttons when friend controls are on. Every server keeps its address, including stopped and down ones.
+- **Friends see the admin UI, minus the owner's parts.** One level for every friend, no roles. It's the same pages with things hidden, so it stays phone-friendly the same way the admin view is:
+  - **Can do** (when friend controls are on): Start, Stop, Restart and Update, each with the same warning (and, for Update, the save backup) as the owner; the quick commands marked for friends (Palworld: Save and Players, not Broadcast).
+  - **Can see:** dashboard cards (state, players, address, uptime, CPU/RAM, last updated, update available), the server page with a read-only console, the details panel without the install folder, Schedule (read-only), Firewall status (read-only, no Check again), Backups (list only), History without config saves, and Activity without the owner's events (settings changes, config saves, templates, Basecamp updates, logins, Discord). Events a friend did show their Tailscale login.
+  - **Never see:** Needs you, the Basecamp self-update, the Config files tab, install and exe paths, Templates, Add/Edit, New game, Settings, Kill, Restart now, Cancel restart, Cancel update, typing console commands, Back up now, Restore, Download and Delete.
+  - **Friend controls off:** the same pages with no action buttons and no quick commands.
 - **Schedules get their own tab** on the server page, with the next run spelled out ("Next: tomorrow 05:00").
 - **Plainer words.** "Activity" instead of "Audit log", "Add existing server" instead of "Add server", Discord copy about messages rather than webhooks where possible.
 - **Light and dark** from one set of CSS colour tokens, following the system, with a toggle that's remembered in the browser.
@@ -57,14 +62,20 @@ Round 1 of the owner's feedback is applied (see "Decisions" below). Round 2, on 
 
   ```json
   "quick_commands": [
-    {"label": "Save", "command": "save"},
-    {"label": "Players", "command": "showplayers"},
+    {"label": "Save", "command": "save", "friend": true},
+    {"label": "Players", "command": "showplayers", "friend": true},
     {"label": "Broadcast…", "command": "broadcast {message}"}
   ]
   ```
 
-  Each is sent over the server's usual console channel (RCON, REST or stdin). A command with `{message}` isn't sent straight away: it goes into the command box for the owner to finish. The row shows only while the server is running and the template lists commands. Older templates without the field keep working (add-only, like the migrations).
-- **Activity's red count** is hard failures only: crashes, giving up restarting, failed updates and installs, failed scheduled runs (restart, update, backup), failed Discord messages and failed backups. It is not "new since you looked". Discord delivery failures need to be written to the audit log, which they aren't today.
+  Add `"friend": true` to a command friends may tap too (Palworld marks Save and Players). Each is sent over the server's usual console channel (RCON, REST or stdin). A command with `{message}` isn't sent straight away: it goes into the command box for the owner to finish. The row shows only while the server is running and the template lists commands. Older templates without the field keep working (add-only, like the migrations).
+- **Activity's red count** is hard failures only: crashes, giving up restarting, failed updates and installs, failed scheduled runs (restart, update, backup), failed Discord messages and failed backups. It is not "new since you looked". A failure stops counting when the owner dismisses it (Dismiss on each item, or Dismiss all), or when that server runs normally again: a good start clears a crash or gave-up, a good update clears a failed update. Failures with no server, such as a Discord delivery, clear only on dismiss. Discord delivery failures need to be written to the audit log, which they aren't today. The badge and Dismiss are the owner's; friends see the "Failure" tag on server events only.
+- **Friend routes** (for the build piece):
+  - The friend JSON is no longer a tiny allow-list, but each view's friend JSON must still be built from its own allow-list, never by trimming the admin JSON (D-30). That keeps out config contents, install and exe paths, and secrets (RCON passwords, webhook URLs, the admin logins).
+  - The friend routes need tests that check the keys exactly, one per view (dashboard, server page details, backups list, schedule, firewall status, history, Activity).
+  - The console stream to friends is read-only: no command route for friends except the template's `friend: true` quick commands, checked against the template on the server, not trusted from the page.
+  - Update joins the friend routes, with the same per-server rate limit as Start, Stop and Restart (one friend click per 60 s), and it logs the friend's login.
+  - Activity for friends filters out the owner's event kinds on the server, not in the page.
 
 ## Decisions from round 1
 
@@ -79,7 +90,14 @@ Round 1 of the owner's feedback is applied (see "Decisions" below). Round 2, on 
 9. Dashboard summary keeps "RAM free".
 10. Colours stay as they are.
 
+## Decisions from round 2
+
+1. Friends get one level, the same for all; the friend view is the admin layout with parts hidden (see "What changed").
+2. Friends may Update, with the same warning and save backup.
+3. Friend quick commands: Players and Save, flagged `friend: true` in the template.
+4. Red badge: clears on dismiss, or when that server runs normally again; failures with no server clear only on dismiss.
+
 ## Open questions
 
-1. **When does a failure stop counting** towards Activity's red count: after 24 hours, once that server runs normally again, or when you dismiss it?
-2. **Quick commands for friends.** If round 2 opens the console to friends, should they get the quick commands too, or only some of them (players yes, broadcast no)?
+1. **Backups for friends.** The list shows file names and sizes. Is that fine, or should friends see only "last backup" in the details panel?
+2. **Console history for friends.** Should friends see console lines from before they opened the page (the scrollback), or only new lines? The scrollback can show commands the owner typed, such as a broadcast.
