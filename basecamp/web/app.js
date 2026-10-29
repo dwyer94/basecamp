@@ -252,6 +252,8 @@ function firewallSection(id, box, root) {
 function metaLine(s) {
   return el("div", { class: "meta" },
     s.uptime_s !== null ? el("span", {}, fmtUptime(s.uptime_s)) : null,
+    s.players ? el("span", { title: s.players_detail && s.players_detail.error
+      ? `Unknown: ${s.players_detail.error}` : "Asked every minute" }, playersText(s.players)) : null,
     s.cpu_percent !== null ? el("span", {}, `CPU ${s.cpu_percent}%`) : null,
     s.rss_mb !== null ? el("span", {}, `RAM ${s.rss_mb} MB`) : null,
     s.state === "crashed" && s.last_exit_code !== null
@@ -642,6 +644,7 @@ const BLANK = {
   log_source: "stdout", log_file: "", rcon_host: "127.0.0.1", rcon_port: null, rest_port: null,
   real_exe_name: "", ready_pattern: "", ready_after_s: 15, min_free_ram_mb: 0,
   stop_recipe: [], stop_warning: null, notes: "", backup_every_h: 0, backup_keep: 10, notify_off: [],
+  players: null,
 };
 
 function field(label, input, hint) {
@@ -770,6 +773,26 @@ function serverForm(root, id) {
         "Sent before a stop, restart or update you start (never before a crash restart). The first number is the lead time, the others are reminders. {minutes} and {seconds} in the command are filled in. Kill and Stop now skip it."));
   };
 
+  // D-132: how to ask the game for its player count.
+  const playersFields = () => {
+    const p = values.players || { source: "", command: "", pattern: "", port: null };
+    const source = el("select", {}, [["", "Don't ask"], ["rest", "REST API (Palworld)"], ["rcon", "RCON command"],
+      ["a2s", "Steam server query (A2S)"]].map(([v, label]) => el("option", { value: v, selected: p.source === v }, label)));
+    const command = el("input", { value: p.command || "", placeholder: "RCON command, e.g. listplayers", autocomplete: "off", spellcheck: "false" });
+    const pattern = el("input", { value: p.pattern || "", placeholder: "Regex, e.g. Players: (\\d+)", autocomplete: "off", spellcheck: "false" });
+    const port = el("input", { type: "number", value: p.port ?? "", placeholder: "query port" });
+    const show = () => {
+      command.hidden = pattern.hidden = source.value !== "rcon";
+      port.hidden = source.value !== "a2s";
+    };
+    source.addEventListener("change", show);
+    show();
+    inputs.players = () => (source.value ? { source: source.value, command: command.value, pattern: pattern.value,
+      port: port.value === "" ? null : Number(port.value) } : null);
+    return field("Player count", el("div", {}, source, command, pattern, port),
+      "Asked every minute while it runs; shown on both pages, the count only. REST and RCON use the password below. RCON: a pattern with a group reads the number from the answer; without one, each matching line is a player.");
+  };
+
   // Install folder, with SteamCMD's default for a Steam server added by hand (D-125).
   const installField = () => {
     const input = text("install_dir");
@@ -841,7 +864,8 @@ function serverForm(root, id) {
         field("Save folder", text("save_dir")),
         field("RCON port", num("rcon_port")),
         field("REST port", num("rest_port"), "Palworld's REST API (RESTAPIPort, 8212). Its commands: announce <text>, save, shutdown <seconds> <text>, info, players, metrics."),
-        passwordFields()),
+        passwordFields(),
+        playersFields()),
       el("fieldset", {}, el("legend", {}, "Backups and Discord"),
         field("Back up every (hours)", num("backup_every_h", { min: 0, step: "any" }),
           "While the server runs. 0 = only by hand (and before updates)."),

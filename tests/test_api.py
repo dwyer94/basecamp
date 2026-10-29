@@ -297,7 +297,7 @@ def test_draft_from_template_then_save(client, tmp_path):
         str(install / "Pal" / "Saved" / "Config" / "WindowsServer" / "PalWorldSettings.ini")]
     assert draft["join_port"] == 8211 and draft["template_id"] == "palworld"
     assert any("doesn't exist" in m for m in res["messages"])
-    assert res["unverified"] == []  # checked by running it (D-98)
+    assert res["unverified"] == ["players"]  # the rest checked by running it (D-98)
     saved = client.post("/api/servers", json=draft)
     assert saved.status_code == 201 and saved.json()["config"]["template_id"] == "palworld"
 
@@ -334,7 +334,8 @@ def test_import_existing_install_reads_appmanifest(client, tmp_path):
 
 
 def test_pages_and_health(client):
-    assert client.get("/static/app.js").status_code == 200
+    res = client.get("/static/app.js")
+    assert res.status_code == 200 and res.headers["cache-control"] == "no-cache"
     assert client.get("/healthz").json()["ok"]
     assert "Basecamp" in client.get("/").text
 

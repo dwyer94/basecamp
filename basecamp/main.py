@@ -20,6 +20,7 @@ from basecamp.db import Store
 from basecamp.livestatus import LiveStatus
 from basecamp.logs import setup_logging
 from basecamp.notify import Notifier
+from basecamp.players import Players
 from basecamp.selfupdate import LAUNCHER_ENV, SelfUpdater
 from basecamp.settings import Settings
 from basecamp.steam import SteamRunner
@@ -45,6 +46,7 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
     backups = Backups(store, supervisor, settings, notifier.server_event)
     steam = SteamRunner(store, supervisor, settings, backups, notifier)
     live = LiveStatus(settings, store, supervisor)
+    players = Players(store, supervisor, settings)
     adopted = supervisor.adopt_orphans()
     if adopted:
         log.info("Adopted %d running server(s)", len(adopted))
@@ -57,11 +59,13 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
                       + (f"; starting {', '.join(names)}" if names else ""))
     backups.start_scheduler()
     steam.start_scheduler()
+    players.start()
     live.poke()  # the servers as they are after adopting
     updater = SelfUpdater(settings, store, notifier, stop)
     updater.start()
     app = create_app(store, supervisor, settings, notifier=notifier, backups=backups,
-                     crashes=crashes, steam=steam, updater=updater, live=live)
+                     crashes=crashes, steam=steam, updater=updater, live=live,
+                     players=players)
     config = uvicorn.Config(app, host=settings.host,
                             port=settings.port, log_config=None, access_log=False,
                             ws_ping_interval=20,
@@ -90,6 +94,7 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None) -
         # Game servers keep running (D-09); the next start adopts them.
         log.info("Basecamp stopping; game servers are left running")
         backups.stop_scheduler()
+        players.close()
         updater.close()
         supervisor.remote.close()
         steam.close()

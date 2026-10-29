@@ -105,6 +105,10 @@ class Settings:
     default_backup_keep: int = 10
     # R-41: old copies kept per config file saved from the page.
     config_copies_keep: int = 20
+    # D-132: how often each running server is asked for its player count (one at a time),
+    # and how long a Steam server query may take.
+    players_poll_s: float = 60.0
+    players_timeout_s: float = 3.0
     # New game from a template (D-130): how long the first start may take to reach Running,
     # and then how long to wait for the config files it should write.
     setup_start_timeout_s: float = 600.0

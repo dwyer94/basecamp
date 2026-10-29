@@ -24,7 +24,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from basecamp.models import LogSource, Port, ServerKind, StopStep, StopWarning
+from basecamp.models import LogSource, PlayerQuery, Port, ServerKind, StopStep, StopWarning
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ _CHECKABLE = {
     "steam_app_id", "exe", "args", "working_dir", "real_exe_name", "ports", "join_port_label",
     "log_source", "log_file", "ready_pattern", "ready_after_s", "stop_recipe", "config_files",
     "save_dir", "rcon_port", "rest_port", "min_free_ram_mb", "stop_warning", "steam_installdir",
-    "required_values",
+    "required_values", "players",
 }
 # A key in an INI file or a dotted path in a JSON one: one line, no '=' or brackets.
 _VALUE_KEY = r"^[^\x00-\x1f=\[\]]{1,100}$"
@@ -88,6 +88,7 @@ class Template(BaseModel):
     rest_port: int | None = Field(default=None, ge=1, le=65535)
     min_free_ram_mb: int = Field(default=0, ge=0)
     required_values: list[RequiredValue] = Field(default_factory=list, max_length=20)
+    players: PlayerQuery | None = None  # how to ask for the player count (D-132)
     notes: str = ""
     docs: list[str] = Field(default_factory=list)
     unverified: list[str] = Field(default_factory=list)
@@ -260,6 +261,7 @@ def draft(template: Template, install_dir: str, name: str = "") -> dict:
         "stop_recipe": [s.model_dump(mode="json") for s in template.stop_recipe],
         "stop_warning": (template.stop_warning.model_dump(mode="json")
                          if template.stop_warning else None),
+        "players": template.players.model_dump(mode="json") if template.players else None,
         "notes": template.notes,
     }
 

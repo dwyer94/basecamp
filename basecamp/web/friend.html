@@ -62,7 +62,9 @@ function render(servers) {
     root.append(el("div", { class: "card" },
       el("div", { class: "card-head" },
         el("span", { class: "name" }, s.name), statePill(s.state)),
-      s.uptime_s !== null ? el("div", { class: "meta" }, fmtUptime(s.uptime_s)) : null,
+      s.uptime_s !== null || s.players ? el("div", { class: "meta" },
+        s.uptime_s !== null ? el("span", {}, fmtUptime(s.uptime_s)) : null,
+        s.players ? el("span", {}, playersText(s.players)) : null) : null,
       s.join_address ? el("div", { class: "address" },
         el("code", {}, s.join_address),
         el("button", { class: "small", onclick: () => copyText(s.join_address) }, "Copy"))

@@ -16,7 +16,9 @@ from basecamp.settings import Settings
 from basecamp.supervisor import ServerStatus
 
 # Everything a friend can get for a server, here and on the status WebSocket (tested).
-FRIEND_FIELDS = ("id", "name", "state", "uptime_s", "join_address")
+# players: {"count", "max"} (count None = unknown), or None when the game doesn't report it
+# or isn't running. The count only, never names (D-132).
+FRIEND_FIELDS = ("id", "name", "state", "uptime_s", "join_address", "players")
 
 
 def discord_line(settings: Settings, server: Server) -> str | None:
@@ -32,13 +34,16 @@ def _uptime(status: ServerStatus) -> float | None:
     return round(status.uptime_s)
 
 
-def friend_view(settings: Settings, server: Server, status: ServerStatus) -> dict:
+def friend_view(settings: Settings, server: Server, status: ServerStatus,
+                players: dict | None = None) -> dict:
     view = {
         "id": server.id,
         "name": server.name,
         "state": status.state.value,
         "uptime_s": _uptime(status),
         "join_address": join_address(settings, server),
+        "players": {"count": players.get("count"), "max": players.get("max")} if players
+        else None,
     }
     assert tuple(view) == FRIEND_FIELDS
     return view
@@ -74,8 +79,9 @@ class CpuSampler:
 
 def admin_view(settings: Settings, server: Server, status: ServerStatus,
                cpu: CpuSampler | None = None, restart_at: float | None = None,
-               steam: dict | None = None, remote: dict | None = None) -> dict:
-    view = friend_view(settings, server, status)
+               steam: dict | None = None, remote: dict | None = None,
+               players: dict | None = None) -> dict:
+    view = friend_view(settings, server, status, players)
     view.update(
         config=server.model_dump(mode="json", exclude={"id"}),
         discord_line=discord_line(settings, server),
@@ -89,6 +95,7 @@ def admin_view(settings: Settings, server: Server, status: ServerStatus,
         stop_warning=status.warning,  # a stop countdown: {"kind", "stop_at"} (R-25)
         steam=steam,  # build ID, a queued or running install/update, the last run (R-30)
         remote=remote,  # console channels and whether the RCON/REST passwords are set
+        players_detail=players,  # with when it was asked, how, and why it's unknown
     )
     return view
 

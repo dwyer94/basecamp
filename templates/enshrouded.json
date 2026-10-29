@@ -18,11 +18,12 @@
   ],
   "config_files": ["enshrouded_server.json"],
   "save_dir": "savegame",
+  "players": {"source": "a2s", "port": 15637},
   "notes": "enshrouded_server.json (UTF-8, no BOM) is written on the first start, with generated passwords for its user groups; change them before friends join. Stop the server before editing it: the server overwrites it on exit. Set gameSettingsPreset to Custom, or the preset wins over your gameSettings values. The server only opens its queryPort (UDP 15637 by default, plus one random UDP port that changes each start); game traffic goes through Steam's networking, so friends join with the host and the query port. Ctrl+Break saves the world (savegame\\world0.ksd, plus the game's own savegame\\backup\\), logs 'Close Log file' and exits with code 0 within a second. The console pipe gets everything the log file logs\\enshrouded_server.log has, and more, so Basecamp reads the pipe.",
   "docs": [
     "https://steamdb.info/app/2278520/",
     "https://xgamingserver.com/blog/enshrouded-server-config-json-settings-explained/",
     "https://docs.emeraldhost.de/en/gameserver/enshrouded/read-server-log"
   ],
-  "unverified": []
+  "unverified": ["players"]
 }

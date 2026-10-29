@@ -85,6 +85,12 @@ function keepSocket(path, { onMessage, onOpen, onState }) {
   };
 }
 
+// The player count (D-132): {count, max}; a null count is "unknown".
+function playersText(p) {
+  if (p.count === null || p.count === undefined) return "players: unknown";
+  return `${p.count}${p.max ? `/${p.max}` : ""} player${p.count === 1 && !p.max ? "" : "s"} on`;
+}
+
 function statePill(state) {
   return el("span", { class: `pill ${state}` }, state);
 }

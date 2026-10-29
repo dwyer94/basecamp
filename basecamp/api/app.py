@@ -38,6 +38,7 @@ from basecamp.db import Store
 from basecamp.livestatus import LiveStatus
 from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig, ServerKind, ServerState
 from basecamp.notify import Notifier
+from basecamp.players import Players
 from basecamp.selfupdate import SelfUpdater, UpdateError
 from basecamp.settings import PAGE_SETTINGS, Settings, SettingsFile
 from basecamp.setup import SetupError, Setups
@@ -185,7 +186,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                live: LiveStatus | None = None,
                settings_check_s: float = 3.0,
                fw: firewall.Firewall | None = None,
-               setups: Setups | None = None) -> FastAPI:
+               setups: Setups | None = None,
+               players: Players | None = None) -> FastAPI:
     """The services are made by main.run; tests may leave them out (no crash restarts)."""
     hub = _Hub()
     cpu = views.CpuSampler()
@@ -195,6 +197,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     config_files = config_files or ConfigFiles(settings)
     updater = updater or SelfUpdater(settings, store, notifier)
     live = live or LiveStatus(settings, store, sup)
+    players = players or Players(store, sup, settings)  # main.run starts its polling
     def settings_reloaded(who: str, result: dict[str, list[str]]) -> None:
         """Audit a settings.toml reload (D-127): key names only, never values."""
         if result.get("error"):
@@ -227,6 +230,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     sup.add_listener(hub.poke)
     sup.add_change_listener(hub.poke)
     steam.add_listener(hub.poke)
+    players.add_listener(hub.poke)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -251,7 +255,12 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             await run_in_threadpool(settings_file.check)
         peer = request.client.host if request.client else None
         request.state.who = auth.identify(peer, request.headers, settings)
-        return await call_next(request)
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            # Ask each time (a 304 when unchanged), so after an update a phone never runs
+            # a new app.js against a cached common.js.
+            response.headers.setdefault("Cache-Control", "no-cache")
+        return response
 
     def audit(w: auth.Who, action: str, server_id: int | None = None, detail: str = "") -> None:
         store.add_audit(w.label, action, server_id, detail)
@@ -266,7 +275,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     def admin_view(server, status) -> dict:  # type: ignore[no-untyped-def]
         restart_at = crashes.restart_at(server.id) if crashes else None
         return views.admin_view(settings, server, status, cpu, restart_at,
-                                steam.view(server), remote_view(server))
+                                steam.view(server), remote_view(server),
+                                players.admin_view(server))
 
     def remote_view(server) -> dict:  # type: ignore[no-untyped-def]
         """Which console channels work, and whether each password is set (never it)."""
@@ -296,7 +306,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             if w.is_admin:
                 out.append(admin_view(server, status))
             else:
-                out.append(views.friend_view(settings, server, status))
+                out.append(views.friend_view(settings, server, status,
+                                             players.friend_view(server)))
         cpu.forget_others(pids)
         return out
 
@@ -341,7 +352,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         status = sup.status(server_id)
         if w.is_admin:
             return admin_view(server, status)
-        return views.friend_view(settings, server, status)
+        return views.friend_view(settings, server, status, players.friend_view(server))
 
     def save(config: ServerConfig, server_id: int | None = None) -> Any:
         try:
@@ -1287,4 +1298,5 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     app.state.live = live
     app.state.settings_file = settings_file
     app.state.setups = setups
+    app.state.players = players
     return app

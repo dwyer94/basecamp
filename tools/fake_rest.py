@@ -49,6 +49,7 @@ class FakeRest:
         self.delay = delay
         self.on_shutdown = on_shutdown
         self.calls: list[tuple[str, str, dict | None]] = []
+        self.players: list[dict] = []  # who's on: players and metrics answer with these
         self.lock = threading.Lock()
         fake = self
 
@@ -92,7 +93,12 @@ class FakeRest:
                 if echo:
                     print(f"rest: {method} {name} {body or ''}", flush=True)
                 if method == "GET":
-                    self._send(200, GETS[name])
+                    answer = dict(GETS[name])
+                    if name == "players":
+                        answer["players"] = list(fake.players)
+                    elif name == "metrics":
+                        answer["currentplayernum"] = len(fake.players)
+                    self._send(200, answer)
                     return
                 self._send(200)
                 if name == "shutdown" and fake.on_shutdown is not None:

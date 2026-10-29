@@ -26,10 +26,11 @@
   ],
   "save_dir": "save-data\\Saves",
   "rcon_port": 25575,
+  "players": {"source": "a2s", "port": 9877},
   "notes": "With -persistentDataPath, the server reads its settings from save-data\\Settings\\ and saves to save-data\\Saves\\v4\\<saveName>\\ (AutoSave_<n>.save.gz). The first start doesn't write the settings there: copy ServerHostSettings.json and ServerGameSettings.json from VRisingServer_Data\\StreamingAssets\\Settings\\ (those are defaults, overwritten by updates; UTF-8 with a BOM, CRLF). Command-line options win over the files (the log says which). Ctrl+Break saves the world on exit ('SaveOnExit() - Saving the world on exit!') and exits with code 0 within a second or two. RCON is off until Rcon.Enabled and a Password are set in ServerHostSettings.json; then put the same password in the server's RCON password, for the announce warning and console commands (help lists them). Don't use RCON's shutdown in a stop recipe: it saves, but the server then hangs instead of exiting, and its message stops at the first space. Besides UDP 9876 and 9877 the server opens one random UDP port per start. The game's HTTP API (API.Enabled, port 9090) is off by default. Crash dumps go to AppData\\LocalLow\\Stunlock Studios\\VRisingServer\\ in the user's profile. 1829350 is the dedicated server; 1604030 is the V Rising game, not the server.",
   "docs": [
     "https://github.com/StunlockStudios/vrising-dedicated-server-instructions/blob/master/1.1.x-pc/INSTRUCTIONS.md",
     "https://steamdb.info/app/1829350/"
   ],
-  "unverified": ["steam_installdir"]
+  "unverified": ["steam_installdir", "players"]
 }

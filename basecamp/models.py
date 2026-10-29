@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ntpath
 import os
+import re
 from enum import StrEnum
 from pathlib import Path
 
@@ -115,6 +116,36 @@ class StopWarning(BaseModel):
                 .replace("{seconds}", str(round(minutes * 60))))
 
 
+class PlayerSource(StrEnum):
+    REST = "rest"  # Palworld's REST API: GET metrics (currentplayernum, maxplayernum)
+    RCON = "rcon"  # an RCON command, its answer read with `pattern`
+    A2S = "a2s"  # Steam's server query (A2S_INFO) on `port`
+
+
+class PlayerQuery(BaseModel):
+    """How to ask a game how many players are on (D-132). The count only, never names."""
+
+    source: PlayerSource
+    command: str = Field(default="", max_length=200)  # rcon: e.g. "listplayers"
+    # rcon: a regex. With a group, the first group is the count (a second, the most players);
+    # without one, each matching line is a player.
+    pattern: str = Field(default="", max_length=200)
+    port: int | None = Field(default=None, ge=1, le=65535)  # a2s: the query port
+
+    @model_validator(mode="after")
+    def _check(self) -> PlayerQuery:
+        if self.source is PlayerSource.RCON:
+            if not self.command.strip() or not self.pattern:
+                raise ValueError("an rcon player count needs a command and a pattern")
+            try:
+                re.compile(self.pattern)
+            except re.error as e:
+                raise ValueError(f"pattern isn't a valid regex: {e}") from None
+        if self.source is PlayerSource.A2S and self.port is None:
+            raise ValueError("an a2s player count needs the query port")
+        return self
+
+
 # R-22: used when a server has no recipe. Kill always follows the last step.
 DEFAULT_STOP_RECIPE: tuple[StopStep, ...] = (
     StopStep(action=StopAction.CTRL_BREAK, wait_s=30),
@@ -156,6 +187,7 @@ class ServerConfig(BaseModel):
     backup_every_h: float = Field(default=0, ge=0, le=24 * 30)  # R-50; 0 = no schedule
     backup_keep: int = Field(default=10, ge=1, le=1000)
     notify_off: list[NotifyEvent] = Field(default_factory=list)  # R-61: events not posted
+    players: PlayerQuery | None = None  # D-132: how to ask for the player count (None = don't)
 
     @model_validator(mode="after")
     def _check(self) -> ServerConfig:
