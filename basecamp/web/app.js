@@ -295,12 +295,13 @@ async function waitForRestart(startedAt, box) {
   box.replaceChildren(notice("Basecamp hasn't come back after 5 minutes. Check the launcher's log on the host PC.", "error"));
 }
 
-async function restartBasecamp(box) {
+async function restartBasecamp(box, button) {
   const busy = servers.filter((s) => s.steam && s.steam.job).length;
   if (busy) { alert("An install or update is running or queued. Wait for it or cancel it first."); return; }
   if (!confirm("Restart Basecamp? The page goes away for a few seconds; game servers keep running.")) return;
   try {
     const res = await api("POST", "/api/restart");
+    button.disabled = true;
     waitForRestart(res.started_at, box);
   } catch (e) { alert(e.message); }
 }
@@ -1439,7 +1440,7 @@ function restartCard(u) {
   if (u.restarting) waitForRestart(me.started_at, box);
   return el("div", { class: "card" }, box,
     el("div", { class: "buttons", style: "margin-top:0" },
-      el("button", { class: "danger", disabled: !u.can_install, onclick: () => restartBasecamp(box) }, "Restart Basecamp")),
+      el("button", { class: "danger", disabled: !u.can_install || u.restarting, onclick: (e) => restartBasecamp(box, e.target) }, "Restart Basecamp")),
     el("div", { class: "hint" }, u.can_install
       ? "Basecamp exits and its launcher starts it again within seconds. Game servers keep running and are picked up again; an install or update must finish first."
       : "Basecamp isn't running under its launcher here (python -m basecamp), so nothing would start it again. Restart it by hand."));
