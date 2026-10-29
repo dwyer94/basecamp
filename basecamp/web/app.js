@@ -1,280 +1,437 @@
-// Admin page: dashboard, server page with live console, config files and backups, config
-// editor, add/edit form, templates, settings (with Discord), audit.
-// Hash routes: #  #server/<id>  #config/<id>/<n>  #new  #edit/<id>  #setup  #setup/<id>
-//              #templates  #settings
-//              #audit  (#discord is the settings page)
+// The page for everyone (batch 3, D-135): the admin sees it all; friends see the same
+// layout with the owner's parts hidden (body[data-role], .admin-only, .friend-only, and
+// .ctl for the buttons friend controls allow). Friends never get the owner's data: their
+// API answers come from allow-lists on the server.
+// This file: shell, routing, server cards, dashboard, server page, Activity, first run.
+// pages.js: config editor, add/edit form, new game, templates, settings.
+// Hash routes: #dashboard  #server/<id>[/<tab>]  #activity  #welcome
+//              #config/<id>/<n>  #new  #edit/<id>  #newgame  #setup/<id>  #templates  #prefs
 "use strict";
 
 let me = {};
 let servers = [];          // latest list from the status WebSocket
-let page = null;           // the current view's {update(servers), close()}
+let host = null;           // {ram_free_mb, ram_total_mb, boot_time (admin)}
+let failures = 0;          // open hard failures (the red badge, admin only)
+let page = null;           // the current view's {update(), close(), dirty()}
+let firewallInfo = null;   // GET /api/firewall, cached by Basecamp for a minute
+let firewallAt = 0;
 
-async function api(method, path, body) {
-  const opts = { method, headers: {} };
-  if (body !== undefined) {
-    opts.headers["Content-Type"] = "application/json";
-    opts.body = JSON.stringify(body);
-  }
-  const res = await fetch(path, opts);
-  if (res.status === 204) return null;
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(errorText(data.detail) || `${res.status} ${res.statusText}`);
-  return data;
-}
+const isAdmin = () => Boolean(me.is_admin);
+const canControl = () => Boolean(me.can_control);
+const serverById = (id) => servers.find((x) => x.id === id);
 
-function errorText(detail) {
-  if (!detail) return "";
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) {
-    return detail.map((d) => {
-      const where = (d.loc || []).filter((x) => x !== "body").join(".");
-      return where ? `${where}: ${d.msg}` : d.msg;
-    }).join("\n");
-  }
-  return JSON.stringify(detail);
-}
-
-function notice(text, kind = "") {
-  return el("div", { class: `notice ${kind}` }, text);
-}
-
-// The stop warning a server would send now (R-25): its lead time in minutes, or 0.
-function warnMinutes(s) {
-  const w = s.config.stop_warning;
-  return s.state === "running" && w && w.minutes && w.minutes.length ? w.minutes[0] : 0;
-}
-
-async function act(server, action) {
-  const lead = warnMinutes(server);
-  const warned = lead ? ` Players get ${lead} min warning first.` : "";
-  if (action === "start" && server.steam && server.steam.failed && !server.steam.job
-    && !confirm(`The last ${server.steam.last.kind} of ${server.name} failed, so its files may be half updated. Start anyway?`)) return;
-  if (action === "stop" && !server.restart_at && !confirm(`Stop ${server.name}?${warned}`)) return;
-  if (action === "restart" && !confirm(`Restart ${server.name}?${warned}`)) return;
-  if (action === "kill" && !confirm(`Kill ${server.name} without saving?${server.stop_warning ? " This also ends the countdown." : ""}`)) return;
-  if (action === "stop-now") {
-    const verb = { restart: "Restart", update: "Update" }[server.stop_warning && server.stop_warning.kind] || "Stop";
-    if (!confirm(`${verb} ${server.name} now, without waiting for the rest of the warning?`)) return;
-    try {
-      await api("POST", `/api/servers/${server.id}/stop?now=true`);
-      toast(`${verb} now: ${server.name}`);
-    } catch (e) { alert(`${server.name}: ${e.message}`); }
-    return;
-  }
-  try {
-    const result = await api("POST", `/api/servers/${server.id}/${action}`);
-    if (result && result.warnings && result.warnings.length) toast(result.warnings.join(" "));
-    else toast(`${action[0].toUpperCase() + action.slice(1)}: ${server.name}`);
-  } catch (e) {
-    alert(`${server.name}: ${e.message}`);
-  }
-}
-
-// -- SteamCMD (R-11, R-30..R-32) ------------------------------------------------------
+// -- state: one word, a colour, an icon and the fact that matters ------------------------
 
 const PHASES = { queued: "Queued", backup: "Backing up the save", warning: "Warning players",
   stopping: "Stopping", steamcmd: "SteamCMD running", starting: "Starting again" };
+const WARN_VERB = { stop: "Stopping", restart: "Restarting", update: "Updating" };
+const NOW_VERB = { stop: "Stop", restart: "Restart", update: "Update" };
+const nowVerb = (s) => NOW_VERB[s.stop_warning && s.stop_warning.kind] || "Stop";
 
-async function steamAction(s, action) {
-  const st = s.steam;
-  if (action === "update") {
-    const running = ["starting", "running"].includes(s.state);
-    const ask = running
-      ? `Update ${s.name}? It backs up the save, stops the server, runs SteamCMD and starts it again.`
-      : `Update ${s.name}? It backs up the save and runs SteamCMD.`;
-    if (!confirm(ask)) return;
-  } else if (action === "install") {
-    if (!confirm(`Install ${s.name} into ${s.config.install_dir}? SteamCMD downloads it there.`)) return;
-  } else if (action === "cancel") {
-    const midway = st.job && st.job.phase === "steamcmd";
-    if (!confirm(midway ? `Stop SteamCMD? ${s.name} may be left half updated and won't be started.`
-      : `Cancel the ${st.job.kind} of ${s.name}?`)) return;
-  }
-  try {
-    await api("POST", `/api/servers/${s.id}/${action === "cancel" ? "steam/cancel" : action}`);
-    toast(action === "cancel" ? "Cancelling" : `${action === "install" ? "Install" : "Update"} queued: ${s.name}`);
-  } catch (e) {
-    alert(`${s.name}: ${e.message}`);
-  }
+function jobActive(s) {
+  return Boolean(s.job && s.job.position === 0 && !["queued", "warning"].includes(s.job.phase));
 }
 
-function jobText(job) {
-  if (job.position > 0) return `${job.kind === "install" ? "Install" : "Update"} queued (${job.position} ahead)`;
-  let text = PHASES[job.phase] || job.phase;
-  if (job.phase === "steamcmd" && job.progress !== null) text += ` · ${job.progress.toFixed(0)}%`;
-  return job.cancelling ? `${text} · cancelling…` : text;
-}
-
-function steamButton(s) {
-  const st = s.steam;
-  if (!st) return null;
-  if (st.job) {
-    return el("button", { disabled: st.job.phase === "starting" || st.job.cancelling,
-      onclick: () => steamAction(s, "cancel") }, "Cancel update");
+function stateOf(s) {
+  const w = s.stop_warning;
+  if (w && ["running", "starting"].includes(s.state)) {
+    return { st: "warn", key: "warn", label: `${WARN_VERB[w.kind] || "Stopping"} in`, stopAt: w.stop_at,
+      mark: "dot", fact: "players warned" };
   }
-  if (!st.installed) {
-    const idle = s.state === "stopped" || s.state === "crashed";
-    return el("button", { disabled: !idle, onclick: () => steamAction(s, "install") }, "Install");
+  if (jobActive(s) || s.state === "updating") {
+    const job = s.job || {};
+    const fact = job.phase === "steamcmd" && job.progress !== null && job.progress !== undefined
+      ? `SteamCMD ${Math.round(job.progress)}%` : PHASES[job.phase] || "";
+    return { st: "upd", key: "upd", label: job.kind === "install" ? "Installing" : "Updating", mark: "refresh", fact };
   }
-  return el("button", { disabled: ["stopping", "updating"].includes(s.state) || Boolean(s.stop_warning),
-    onclick: () => steamAction(s, "update") }, "Update");
+  if (s.state === "crashed") {
+    return { st: "bad", key: "bad", label: isAdmin() ? "Crashed" : "Down", mark: "alert",
+      fact: s.restart_at ? `restarting at ${hhmm(s.restart_at)}` : "not restarting" };
+  }
+  if (s.state === "starting") return { st: "upd", key: "starting", label: "Starting", mark: "refresh", fact: "" };
+  if (s.state === "stopping") return { st: "upd", key: "stopping", label: "Stopping", mark: "refresh", fact: "" };
+  if (s.state === "running") {
+    return { st: "run", key: "run", label: "Running", mark: "live", fact: s.uptime_s !== null ? `up ${fmtUp(s.uptime_s)}` : "" };
+  }
+  const queued = s.job && !jobActive(s);
+  return { st: "idle", key: "idle", label: "Stopped", mark: "hollow",
+    fact: queued ? `${s.job.kind === "install" ? "install" : "update"} queued` : "" };
 }
 
-function steamLine(s) {
-  const st = s.steam;
-  if (!st) return null;
-  return el("div", {},
-    st.job && st.job.phase !== "warning" ? el("div", { class: "notice" }, jobText(st.job),
-      st.job.phase === "steamcmd" && st.job.progress !== null && st.job.position === 0
-        ? el("progress", { max: "100", value: String(st.job.progress) }) : null) : null,
-    !st.job && st.failed && st.last ? el("div", { class: "notice error" },
-      `Last ${st.last.kind} ${st.last.result}: ${st.last.message} `,
-      el("a", { href: `/api/servers/${s.id}/steam/runs/${st.last.run_id}/log`, target: "_blank" },
-        "SteamCMD output")) : null);
+function stateMark(st) {
+  if (st.mark === "live") return el("span", { class: "dot live" });
+  if (st.mark === "hollow") return el("span", { class: "dot hollow" });
+  if (st.mark === "dot") return el("span", { class: "dot" });
+  return icon(st.mark);
 }
 
-// -- stop countdown (R-25) -----------------------------------------------------------
-
-function fmtCountdown(stopAt) {
-  const left = Math.max(0, Math.round(stopAt - Date.now() / 1000));
-  return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+function stateLabel(st) {
+  if (!st.stopAt) return el("span", {}, st.label);
+  return el("span", {}, `${st.label} `, el("span", { class: "num", "data-stop-at": String(st.stopAt) }, fmtCountdown(st.stopAt)));
 }
 
 // Every element with data-stop-at shows the time left; one timer for the whole page.
 setInterval(() => {
-  for (const node of document.querySelectorAll("[data-stop-at]")) {
-    node.textContent = fmtCountdown(Number(node.dataset.stopAt));
-  }
+  for (const node of $$("[data-stop-at]")) node.textContent = fmtCountdown(Number(node.dataset.stopAt));
 }, 1000);
 
-function countdownLine(s) {
-  const w = s.stop_warning;
-  if (!w) return null;
-  const what = { stop: "Stopping", restart: "Restarting", update: "Updating" }[w.kind] || "Stopping";
-  return el("div", { class: "notice countdown" },
-    `${what} in `, el("strong", { "data-stop-at": String(w.stop_at) }, fmtCountdown(w.stop_at)),
-    " · players are being warned ",
-    el("button", { class: "small", onclick: () => act(s, "stop-now") },
-      w.kind === "stop" ? "Stop now" : `${what.replace(/ing$/, "")} now`));
-}
-
-function actionButtons(s) {
-  const active = ["starting", "running", "stopping", "updating"].includes(s.state);
-  const updating = s.state === "updating" || Boolean(s.steam && s.steam.job && s.steam.job.position === 0
-    && s.steam.job.phase !== "queued");
-  const counting = Boolean(s.stop_warning);
-  return el("div", { class: "buttons" },
-    el("button", { class: "primary", disabled: active, onclick: () => act(s, "start") }, "Start"),
-    s.restart_at
-      ? el("button", { onclick: () => act(s, "stop") }, "Cancel restart")
-      : el("button", { disabled: !active || updating || counting || s.state === "stopping",
-        onclick: () => act(s, "stop") }, "Stop"),
-    el("button", { disabled: !active || updating || counting, onclick: () => act(s, "restart") }, "Restart"),
-    steamButton(s));
-}
-
-function addressBlock(s) {
-  if (!s.join_address) {
-    return el("div", { class: "hint" }, me.join_host
-      ? "No join port set." : el("span", {}, "Join address: set the join host on the ",
-        el("a", { href: "#settings" }, "Settings"), " page."));
+function playersBlock(s) {
+  const up = ["running", "starting"].includes(s.state) || Boolean(s.stop_warning);
+  if (!up) return el("div", { class: "players" }, el("b", {}, "–"), el("span", {}, "offline"));
+  const p = s.players;
+  if (!p) return el("div", { class: "players" }, el("b", {}, "–"), el("span", {}, "not counted"));
+  if (p.count === null || p.count === undefined) {
+    const why = s.players_detail && s.players_detail.error;
+    return el("div", { class: "players", title: why ? `Unknown: ${why}` : "Not asked yet" }, el("b", {}, "?"), el("span", {}, "unknown"));
   }
-  return el("div", { class: "address" },
-    el("code", {}, s.join_address),
-    el("button", { class: "small", onclick: () => copyText(s.join_address) }, "Copy"),
-    el("button", { class: "small", onclick: () => copyText(s.discord_line, "Copied for Discord") },
-      "Copy for Discord"));
+  return el("div", { class: "players" }, el("b", {}, String(p.count)), el("span", {}, p.max ? `of ${p.max} on` : "on"));
 }
 
-// R-34: "update available" from the last build check; "unknown" when it failed.
-function buildBadge(s) {
-  const st = s.steam;
-  if (!st || !st.build_id || !st.latest || st.job) return null;
-  if (st.update_available) {
-    return el("span", { class: "tag update", title: `Steam has build ${st.latest.build_id}; this is ${st.build_id}` },
-      "update available");
-  }
-  if (!st.latest.build_id) {
-    return el("span", { class: "tag muted", title: `Last check: ${st.latest.error || "no answer"}` }, "update: unknown");
-  }
-  return null;
+function updatedLine(s) {
+  const u = s.last_updated;
+  if (!u) return null;
+  return el("span", { class: "updated", title: `Game last updated ${fullDate(u.at)}` }, icon("download"), `Updated ${relTime(u.at)}`);
 }
 
-function cardHead(s, nameNode) {
-  return el("div", { class: "card-head" }, nameNode, el("span", { class: "tags" }, buildBadge(s), firewallBadge(s), statePill(s.state)));
+function addrBox(address, label = "Copy join address") {
+  return el("div", { class: "addr" }, el("code", {}, address),
+    el("button", { class: "btn ghost sm", type: "button", "aria-label": label, onclick: () => copyText(address) },
+      icon("copy"), "Copy"));
 }
 
-// -- firewall indicator (D-128) -------------------------------------------------------
+function progressBar(job) {
+  if (!job || job.progress === null || job.progress === undefined || job.phase !== "steamcmd") return null;
+  const v = Math.max(0, Math.min(100, job.progress));
+  return el("div", { class: "progress", role: "progressbar", "aria-valuenow": String(Math.round(v)),
+    "aria-valuemin": "0", "aria-valuemax": "100", "aria-label": "Update progress" }, el("i", { style: `width:${v}%` }));
+}
 
-let firewallInfo = null;   // GET /api/firewall: per server, cached by Basecamp for a minute
-const FW_TEXT = { open: "open (Tailscale)", too_broad: "too broad", blocked: "blocked", missing: "missing", unknown: "unknown" };
+// -- firewall (D-128): read-only, a minute's cache on the server ---------------------------
+
+const FW_CHIP = { open: ["c-ok", "Firewall open"], too_broad: ["c-warn", "Firewall too broad"],
+  blocked: ["c-bad", "Firewall blocks it"], missing: ["c-warn", "Firewall rule missing"] };
+const FW_TEXT = { open: "Open to Tailscale", too_broad: "Too broad", blocked: "Blocked", missing: "Missing", unknown: "Unknown" };
+const FW_CLASS = { open: "c-ok", too_broad: "c-warn", blocked: "c-bad", missing: "c-warn", unknown: "" };
 
 async function loadFirewall(force = false) {
+  if (!force && firewallInfo && Date.now() - firewallAt < 55000) return firewallInfo;
   try { firewallInfo = await api(force ? "POST" : "GET", force ? "/api/firewall/check" : "/api/firewall"); }
   catch (e) { firewallInfo = { error: e.message, servers: {}, notes: [] }; }
+  firewallAt = Date.now();
   return firewallInfo;
 }
 
-function firewallBadge(s) {
-  const f = firewallInfo && firewallInfo.servers[String(s.id)];
-  if (!f || !f.ports.length) return null;
-  return el("span", { class: `tag fw-${f.status}`, title: "Windows Firewall, for Tailscale traffic. Not a reachability test." },
-    `Firewall: ${FW_TEXT[f.status]}`);
+function firewallOf(id) { return firewallInfo && firewallInfo.servers ? firewallInfo.servers[String(id)] : null; }
+
+function firewallChip(s) {
+  const f = firewallOf(s.id);
+  if (!f || !f.ports || !f.ports.length || !FW_CHIP[f.status]) return null;
+  const [cls, text] = FW_CHIP[f.status];
+  return el("span", { class: `chip ${cls}`, title: "Windows Firewall, for Tailscale traffic. Not a reachability test." }, icon("shield"), text);
 }
 
-function firewallSection(id, box, root) {
-  const f = firewallInfo && firewallInfo.servers[String(id)];
-  const again = async (btn) => {
-    btn.disabled = true; btn.textContent = "Checking…";
-    await loadFirewall(true);
-    firewallSection(id, box, root);
-    if (page && page.update) page.update();
+// -- actions ---------------------------------------------------------------------------
+
+function leadMinutes(s) {
+  const w = s.config && s.config.stop_warning;
+  return s.state === "running" && w && w.minutes && w.minutes.length ? w.minutes[0] : 0;
+}
+
+function sheetFor(s, action) {
+  const n = s.name;
+  const lead = leadMinutes(s);
+  const warned = isAdmin() ? (lead ? `Players get a ${lead} minute warning first, then ` : "")
+    : "Everyone on it gets the game's stop warning first, if it has one, then ";
+  const running = ["running", "starting"].includes(s.state);
+  const midway = s.job && s.job.phase === "steamcmd";
+  const sheets = {
+    stop: [`Stop ${n}?`, `${warned}${warned ? "it" : "It"} saves and stops.`, "Stop", false],
+    restart: [`Restart ${n}?`, `${warned}${warned ? "it" : "It"} stops and starts again.`, "Restart", false],
+    update: [`Update ${n}?`, running ? "Basecamp backs up the save, warns players, stops it, runs SteamCMD and starts it again."
+      : "Basecamp backs up the save and runs SteamCMD.", "Update", false],
+    install: [`Install ${n}?`, `SteamCMD downloads it into ${s.config ? s.config.install_dir : "its folder"}.`, "Install", false],
+    now: [`${nowVerb(s)} ${n} now?`, "Skips the rest of the warning. Anyone still on gets dropped.", `${nowVerb(s)} now`, false],
+    cancel: midway ? ["Stop SteamCMD?", `${n} may be left half updated and won't be started.`, "Stop SteamCMD", true]
+      : [`Cancel the ${s.job ? s.job.kind : "update"} of ${n}?`, "Nothing has been changed yet.", "Cancel it", false],
+    kill: [`Kill ${n}?`, `Ends the process at once without saving. Anything since the last save is lost.${s.stop_warning ? " This also ends the countdown." : ""} Use it only when Stop doesn't work.`, "Kill without saving", true],
   };
-  const check = el("button", { class: "small", onclick: (e) => again(e.target) }, "Check again");
-  if (!firewallInfo) { box.replaceChildren(el("p", { class: "muted" }, "Reading the firewall rules…")); return; }
-  if (!f) { box.replaceChildren(notice(firewallInfo.error || "Not checked yet.", "error"), el("div", { class: "buttons" }, check)); return; }
-  box.replaceChildren(...[  // replaceChildren would print a null as "null"
-    f.ports.length ? el("table", {}, el("tbody", {}, f.ports.map((p) => el("tr", {},
-      el("td", {}, `${p.protocol.toUpperCase()} ${p.port}`, p.label ? el("div", { class: "hint" }, p.label) : null),
-      el("td", {}, el("span", { class: `tag fw-${p.status}` }, FW_TEXT[p.status])),
-      el("td", {}, el("span", { class: "hint" }, p.detail))))))
-      : el("p", { class: "muted" }, "No ports listed (add them under Edit)."),
-    f.note ? notice(f.note) : null,
-    ...f.commands.map((c) => el("div", { class: "fw-command" },
-      el("div", { class: "hint" }, "To add the missing rule, run this in an admin PowerShell in Basecamp's program folder on this PC:"),
-      el("code", {}, c), el("button", { class: "small", onclick: () => copyText(c, "Copied the command") }, "Copy"))),
-    ...(firewallInfo.notes || []).map((n) => el("div", { class: "hint" }, n)),
-    el("div", { class: "hint" }, "This only reads Windows Firewall's rules. Friends can still be stopped by Tailscale's access rules, the address the game listens on, or Steam's own networking, so it isn't a reachability test.",
-      firewallInfo.checked_at ? ` Checked ${new Date(firewallInfo.checked_at * 1000).toLocaleTimeString()}.` : ""),
-    el("div", { class: "buttons" }, check)].filter(Boolean));
+  const sheet = sheets[action];
+  if (!sheet) return null;
+  const [title, body, ok, danger] = sheet;
+  const tail = isAdmin() ? "" : " The owner sees in Activity that you did it.";
+  return { title, body: body + tail, ok, danger };
 }
 
-function metaLine(s) {
-  return el("div", { class: "meta" },
-    s.uptime_s !== null ? el("span", {}, fmtUptime(s.uptime_s)) : null,
-    s.players ? el("span", { title: s.players_detail && s.players_detail.error
-      ? `Unknown: ${s.players_detail.error}` : "Asked every minute" }, playersText(s.players)) : null,
-    s.cpu_percent !== null ? el("span", {}, `CPU ${s.cpu_percent}%`) : null,
-    s.rss_mb !== null ? el("span", {}, `RAM ${s.rss_mb} MB`) : null,
-    s.state === "crashed" && s.last_exit_code !== null
-      ? el("span", {}, `exit code ${s.last_exit_code}`) : null,
-    s.adopted && !s.has_console && s.state === "running"
-      ? el("span", {}, "no console (restart to get it back)") : null,
-    s.restart_at ? el("span", { class: "unverified" },
-      `restarting at ${new Date(s.restart_at * 1000).toLocaleTimeString()}`) : null,
-    s.schedule ? el("span", {}, [s.schedule.restart_at ? `restarts ${s.schedule.restart_at}` : "",
-      s.schedule.update_at ? `updates ${s.schedule.update_at}` : ""].filter(Boolean).join(", ")) : null,
-    s.schedule && Object.keys(s.schedule.waiting).length ? el("span", { class: "unverified" },
-      `scheduled ${Object.keys(s.schedule.waiting).join(" and ")} waiting for players to leave`) : null,
-    s.steam ? el("span", {}, s.steam.build_id ? `build ${s.steam.build_id}`
-      : s.steam.installed ? "build unknown" : "not installed") : null);
+const DONE = { start: "Starting", stop: "Stopping", restart: "Restarting", update: "Update queued",
+  install: "Install queued", now: "Going ahead now", cancel: "Cancelling", kill: "Killed", cancelrestart: "Restart cancelled" };
+
+async function act(s, action) {
+  if (action === "start" && isAdmin() && s.steam && s.steam.failed && !s.job) {
+    const go = await confirmSheet({ title: `Start ${s.name} anyway?`,
+      body: `The last ${s.steam.last.kind} failed, so its files may be half updated.`, ok: "Start anyway" });
+    if (!go) return;
+  } else if (!["start", "cancelrestart"].includes(action)) {
+    const sheet = sheetFor(s, action);
+    if (sheet && !(await confirmSheet(sheet))) return;
+  }
+  try {
+    let result;
+    if (!isAdmin()) {
+      result = await api("POST", `/api/friend/servers/${s.id}/${action}`);
+    } else {
+      const path = { cancel: "steam/cancel", now: "stop?now=true", cancelrestart: "stop" }[action] || action;
+      result = await api("POST", `/api/servers/${s.id}/${path}`);
+    }
+    if (result && result.warnings && result.warnings.length) toast(result.warnings.join(" "));
+    else if (result && result.warning_s) toast(`${DONE[action]} in ${Math.round(result.warning_s / 60)} min; players are being warned`);
+    else toast(`${DONE[action] || action}: ${s.name}`);
+  } catch (e) {
+    toast(`${s.name}: ${e.message}`, "bad");
+  }
 }
 
-// -- Basecamp's own updates (R-90..R-92) ---------------------------------------------
+function actBtn(s, action, label, { primary = false, ctl = true, cls = "", iconName = null } = {}) {
+  return el("button", { type: "button", class: `btn${primary ? " primary" : ""}${ctl ? " ctl" : ""} ${cls}`.trim(),
+    onclick: () => act(s, action) }, iconName ? icon(iconName) : null, label);
+}
 
+function canUpdate(s) {
+  if (isAdmin()) return Boolean(s.steam && s.steam.installed);
+  return s.update_available !== null || Boolean(s.last_updated);  // a Steam server, as far as a friend can tell
+}
+
+// The buttons that fit the state; a friend's go through .ctl so "friend controls off" hides them.
+function cardActions(s) {
+  const st = stateOf(s);
+  const open = (label = "Open") => el("a", { class: "btn", href: `#server/${s.id}` }, label);
+  const out = [];
+  if (st.key === "warn") {
+    out.push(actBtn(s, "now", `${nowVerb(s)} now`, { primary: true, ctl: false, cls: "admin-only" }));
+    out.push(el("a", { class: "btn friend-only", href: `#server/${s.id}` }, "Open"));
+  } else if (st.key === "upd") {
+    if (s.job) out.push(actBtn(s, "cancel", `Cancel ${s.job.kind === "install" ? "install" : "update"}`, { ctl: false, cls: "admin-only" }));
+    out.push(el("a", { class: `btn${s.job ? " friend-only" : ""}`, href: `#server/${s.id}` }, "Open"));
+  } else if (st.key === "bad") {
+    out.push(actBtn(s, "start", "Start", { primary: true }));
+    if (s.restart_at) out.push(actBtn(s, "cancelrestart", "Cancel restart", { ctl: false, cls: "admin-only" }));
+    out.push(open("Open console"));
+  } else if (st.key === "run") {
+    out.push(actBtn(s, "restart", "Restart"), actBtn(s, "stop", "Stop"));
+    if (canUpdate(s) && !s.job) out.push(actBtn(s, "update", "Update"));
+  } else if (st.key === "idle") {
+    if (isAdmin() && s.steam && !s.steam.installed && !s.job) {
+      out.push(actBtn(s, "install", "Install", { primary: true, ctl: false }));
+    } else {
+      out.push(actBtn(s, "start", "Start", { primary: true }));
+      if (canUpdate(s) && !s.job) out.push(actBtn(s, "update", "Update"));
+    }
+    if (s.job) out.push(actBtn(s, "cancel", `Cancel ${s.job.kind}`, { ctl: false, cls: "admin-only" }));
+  } else {
+    out.push(open());
+  }
+  return out;
+}
+
+// -- server card ---------------------------------------------------------------------
+
+function cardHint(s, st) {
+  if (st.key === "run" || st.key === "warn") {
+    const parts = [s.cpu_percent !== null && s.cpu_percent !== undefined ? `CPU ${s.cpu_percent}%` : "",
+      s.rss_mb ? `RAM ${fmtMB(s.rss_mb)}` : ""].filter(Boolean);
+    return parts.join(", ");
+  }
+  if (st.key === "bad") {
+    if (isAdmin() && s.last_exit_code !== null && s.last_exit_code !== undefined) return `Exit code ${s.last_exit_code}`;
+    return "It stopped unexpectedly.";
+  }
+  if (st.key === "upd" && s.job) return s.job.kind === "install" ? "Installing with SteamCMD." : "Save backed up first. Starts again when done.";
+  if (st.key === "idle" && isAdmin() && s.steam) {
+    if (!s.steam.installed) return "Not installed yet";
+    if (s.steam.build_id) return `Build ${s.steam.build_id}${s.steam.update_available === false ? " up to date" : ""}`;
+  }
+  return "";
+}
+
+function cardChips(s) {
+  const chips = [];
+  if (s.update_available && !s.job) chips.push(el("span", { class: "chip c-upd" }, icon("download"), "Update available"));
+  if (isAdmin() && s.steam && s.steam.failed && !s.job) chips.push(el("span", { class: "chip c-bad" }, icon("alert"), `Last ${s.steam.last.kind} failed`));
+  if (s.job && !jobActive(s)) chips.push(el("span", { class: "chip c-upd" }, icon("clock"), `${s.job.kind === "install" ? "Install" : "Update"} queued`));
+  if (isAdmin() && s.schedule && s.schedule.restart_at) chips.push(el("span", { class: "chip" }, icon("clock"), `Restarts ${s.schedule.restart_at}`));
+  if (isAdmin() && s.schedule && Object.keys(s.schedule.waiting || {}).length) {
+    chips.push(el("span", { class: "chip c-warn" }, icon("users"), "Waiting for players to leave"));
+  }
+  if (isAdmin() && s.adopted && !s.has_console && s.state === "running") chips.push(el("span", { class: "chip", title: "Restart it to get the console back" }, "No console"));
+  chips.push(firewallChip(s));
+  return chips.filter(Boolean);
+}
+
+function serverCard(s) {
+  const st = stateOf(s);
+  const href = `#server/${s.id}`;
+  const hint = cardHint(s, st);
+  const showLastLine = isAdmin() && st.key === "bad" && s.last_line;
+  const bar = st.key === "upd" ? progressBar(s.job) : null;
+  const chips = cardChips(s);
+  return el("article", { class: "srv", "data-st": st.st },
+    el("a", { class: "band", href }, stateMark(st), stateLabel(st), el("span", { class: "fact" }, st.fact)),
+    el("div", { class: "srv-body" },
+      el("div", { class: "srv-title" },
+        el("span", { class: "mono", "aria-hidden": "true" }, monogram(s.name)),
+        el("div", { class: "grow" },
+          el("a", { class: "srv-name", href }, s.name),
+          hint ? el("div", { class: "hint" }, hint) : null,
+          updatedLine(s)),
+        playersBlock(s)),
+      bar,
+      showLastLine ? el("div", { class: "lastline", title: s.last_line }, s.last_line) : null,
+      !bar && !showLastLine && s.join_address ? addrBox(s.join_address) : null,
+      chips.length ? el("div", { class: "chips" }, chips) : null),
+    el("div", { class: "srv-actions" }, cardActions(s)));
+}
+
+// -- shell -----------------------------------------------------------------------------
+
+function setFailures(n) {
+  failures = n;
+  for (const c of $$("[data-failcount]")) { c.textContent = String(n); c.hidden = !n; }
+}
+
+function renderWho() {
+  const who = $("#who");
+  const name = me.name || (me.login === "localhost" ? "This PC" : me.login) || "Friend";
+  const initials = monogram(name.replace(/@.*/, "")).toUpperCase();
+  who.replaceChildren(...[
+    isAdmin() ? null : el("span", { class: "rolebadge" }, "Friend"),
+    el("span", { class: "avatar", "aria-hidden": "true" }, initials),
+    el("span", { class: "name", title: me.login || "" }, name)].filter(Boolean));
+}
+
+function renderFoot() {
+  const foot = $("#side-foot");
+  if (!isAdmin()) {
+    foot.replaceChildren(me.login ? `Signed in as ${me.login}, friend` : "Signed in as a friend");
+    return;
+  }
+  const up = host && host.boot_time ? Date.now() / 1000 - host.boot_time : null;
+  const days = up !== null ? Math.floor(up / 86400) : null;
+  const upText = up === null ? "" : days >= 1 ? `${days} day${days === 1 ? "" : "s"}` : fmtUp(up);
+  foot.replaceChildren(...[`Basecamp ${me.version}`, up !== null ? el("br") : null, up !== null ? `Up ${upText} on the host PC` : null].filter(Boolean));
+}
+
+function setNav(name) {
+  for (const a of $$("[data-nav]")) {
+    if (a.dataset.nav === name) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  }
+}
+
+function crumb(...parts) {
+  const out = [];
+  parts.forEach((p, i) => {
+    if (i) out.push(icon("chevron"));
+    out.push(Array.isArray(p) ? el("a", { href: p[1] }, p[0]) : el("span", {}, p));
+  });
+  return el("div", { class: "crumb" }, out);
+}
+
+function errorView(root, message, back = "#dashboard") {
+  root.replaceChildren(el("section", { class: "view narrow" },
+    el("div", { class: "callout", "data-st": "bad" }, icon("alert"), el("div", { class: "grow" }, el("div", {}, message))),
+    el("div", { class: "btnrow" }, el("a", { class: "btn", href: back }, "Back"))));
+}
+
+// -- dashboard -------------------------------------------------------------------------
+
+async function needsYouExtras() {
+  const out = { update: null, setups: [] };
+  const [u, setups] = await Promise.all([api("GET", "/api/update").catch(() => null), api("GET", "/api/setups").catch(() => [])]);
+  out.update = u;
+  out.setups = setups || [];
+  return out;
+}
+
+const STEP_TEXT = { install: "installing", first_start: "first start", values: "waiting for the values it needs",
+  firewall: "checking the firewall", ready: "ready to start" };
+
+function attRow(st, iconName, title, hint, buttons = [], extra = null) {
+  return el("div", { class: "att", "data-st": st },
+    el("span", { class: "ico" }, icon(iconName)),
+    el("div", { class: "what" }, el("b", {}, title), hint ? el("div", { class: "hint" }, hint) : null),
+    buttons.length ? el("div", { class: "btnrow" }, buttons) : null,
+    extra);
+}
+
+function needsYouRows(extras) {
+  const rows = [];
+  for (const s of servers) {
+    if (s.state === "crashed" && !s.restart_at) {
+      rows.push(attRow("bad", "alert", `${s.name} crashed and Basecamp stopped retrying.`,
+        `${s.last_exit_code !== null && s.last_exit_code !== undefined ? `Exit code ${s.last_exit_code}. ` : ""}Check the console, then start it again.`,
+        [el("a", { class: "btn sm", href: `#server/${s.id}` }, "Open console"),
+          el("button", { class: "btn sm primary", type: "button", onclick: () => act(s, "start") }, "Start")]));
+    } else if (s.steam && s.steam.failed && !s.job && s.steam.last) {
+      rows.push(attRow("bad", "alert", `The last ${s.steam.last.kind} of ${s.name} ${s.steam.last.result}.`, s.steam.last.message,
+        [el("a", { class: "btn sm", href: `/api/servers/${s.id}/steam/runs/${s.steam.last.run_id}/log`, target: "_blank", rel: "noopener" }, "SteamCMD output"),
+          el("button", { class: "btn sm primary", type: "button", onclick: () => act(s, s.steam.last.kind === "install" ? "install" : "update") }, "Try again")]));
+    }
+  }
+  if (servers.some((s) => s.steam) && me.steamcmd_found === false) {
+    rows.push(attRow("warn", "alert", "SteamCMD isn't where Basecamp looks for it.", el("span", {}, "Not found: ", el("code", {}, me.steamcmd || "")),
+      [el("a", { class: "btn sm primary", href: "#prefs/s-steam" }, "Set its path")]));
+  }
+  const u = extras.update;
+  if (u) {
+    if (u.failure) {
+      rows.push(attRow("bad", "alert", `Basecamp ${u.failure.to} wasn't healthy, so it rolled back to ${u.failure.from}.`,
+        `${u.failure.reason}${u.failure.db_restored ? " Its database copy was put back too." : ""}`,
+        [el("button", { class: "btn sm", type: "button", onclick: () => dismissUpdate() }, "Dismiss")]));
+    }
+    if (u.install_error) {
+      rows.push(attRow("bad", "alert", "Basecamp's update didn't install.", u.install_error,
+        [el("button", { class: "btn sm", type: "button", onclick: () => dismissUpdate() }, "Dismiss")]));
+    }
+    if (u.status === "installing") {
+      rows.push(attRow("upd", "download", "Installing Basecamp's update…", "The page reloads when it's back."));
+      waitForVersion(u.current);
+    } else if (u.ready) {
+      const again = u.failed_versions.includes(u.ready_version) ? ` ${u.ready_version} already failed its health check once and rolled back.` : "";
+      rows.push(attRow("upd", "download", `Basecamp ${u.ready_version} is ready to install.`,
+        u.can_install ? `This PC runs ${u.current}. The page goes away for about a minute; game servers keep running.${again}`
+          : "Basecamp isn't running under its launcher here, so it can't install.",
+        [el("button", { class: "btn sm", type: "button", onclick: () => dismissUpdate() }, "Not now"),
+          u.can_install ? el("button", { class: "btn sm primary", type: "button", onclick: () => installUpdate(u) }, "Install") : null].filter(Boolean),
+        u.latest && u.latest.notes ? el("details", {}, el("summary", {}, "Release notes"), el("pre", {}, u.latest.notes)) : null));
+    } else if (u.available && u.status === "failed") {
+      rows.push(attRow("warn", "alert", `Basecamp ${u.latest.version} is out but can't be installed.`, u.error));
+    }
+  }
+  for (const v of extras.setups) {
+    const failed = v.status === "failed";
+    rows.push(attRow(failed ? "bad" : "warn", "plus", `Setting up ${v.name}: ${failed ? "stopped at " : ""}${STEP_TEXT[v.step] || v.step}.`,
+      v.message || null, [el("a", { class: "btn sm primary", href: `#setup/${v.server_id}` }, "Continue")]));
+  }
+  return rows;
+}
+
+async function dismissUpdate() {
+  try { await api("POST", "/api/update/dismiss"); if (page && page.refresh) page.refresh(); }
+  catch (e) { toast(e.message, "bad"); }
+}
+
+async function installUpdate(u) {
+  const again = u.failed_versions.includes(u.ready_version) ? ` ${u.ready_version} already failed its health check once and rolled back.` : "";
+  const go = await confirmSheet({ title: `Install Basecamp ${u.ready_version}?`,
+    body: `The page goes away for about a minute. Game servers keep running. If ${u.ready_version} isn't healthy, Basecamp rolls back to ${u.current}.${again}`, ok: "Install" });
+  if (!go) return;
+  try { await api("POST", "/api/update/install"); toast("Installing; the page reloads when Basecamp is back"); waitForVersion(u.current); }
+  catch (e) { toast(e.message, "bad"); }
+}
+
+let waiting = false;
 // After Install, Basecamp exits and the launcher starts the new version: wait for it.
-async function waitForVersion(from, box) {
-  box.replaceChildren(notice("Installing… Basecamp restarts; the page reloads when it's back."));
+async function waitForVersion(from) {
+  if (waiting) return;
+  waiting = true;
   const deadline = Date.now() + 5 * 60 * 1000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 2000));
@@ -285,12 +442,12 @@ async function waitForVersion(from, box) {
       if (u.status !== "installing") { location.reload(); return; }
     } catch (e) { /* down while it restarts */ }
   }
-  box.replaceChildren(notice("Basecamp hasn't come back after 5 minutes. Check the launcher's log on the host PC.", "error"));
+  waiting = false;
+  toast("Basecamp hasn't come back after 5 minutes. Check the launcher's log on the host PC.", "bad");
 }
 
 // After Restart Basecamp (D-126): wait for a Basecamp that started after this one.
-async function waitForRestart(startedAt, box) {
-  box.replaceChildren(notice("Restarting… Game servers keep running. The page reloads when Basecamp is back."));
+async function waitForRestart(startedAt) {
   const deadline = Date.now() + 5 * 60 * 1000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 2000));
@@ -299,271 +456,192 @@ async function waitForRestart(startedAt, box) {
       if (now.started_at !== startedAt) { location.reload(); return; }
     } catch (e) { /* down while it restarts */ }
   }
-  box.replaceChildren(notice("Basecamp hasn't come back after 5 minutes. Check the launcher's log on the host PC.", "error"));
+  toast("Basecamp hasn't come back after 5 minutes. Check the launcher's log on the host PC.", "bad");
 }
-
-async function restartBasecamp(box, button) {
-  const busy = servers.filter((s) => s.steam && s.steam.job).length;
-  if (busy) { alert("An install or update is running or queued. Wait for it or cancel it first."); return; }
-  if (!confirm("Restart Basecamp? The page goes away for a few seconds; game servers keep running.")) return;
-  try {
-    const res = await api("POST", "/api/restart");
-    button.disabled = true;
-    waitForRestart(res.started_at, box);
-  } catch (e) { alert(e.message); }
-}
-
-async function installUpdate(u, box) {
-  const v = u.ready_version;
-  const again = u.failed_versions.includes(v)
-    ? `\n\n${v} already failed its health check once and rolled back.` : "";
-  if (!confirm(`Install Basecamp ${v}? The page goes away for a minute; game servers keep running.${again}`)) return;
-  try {
-    await api("POST", "/api/update/install");
-    waitForVersion(u.current, box);
-  } catch (e) { alert(e.message); }
-}
-
-async function dismissUpdate(box) {
-  try { await api("POST", "/api/update/dismiss"); updateBanner(box); } catch (e) { alert(e.message); }
-}
-
-function releaseNotes(latest) {
-  if (!latest || !latest.notes) return null;
-  return el("details", {}, el("summary", {}, "Release notes"),
-    el("pre", { class: "notes" }, latest.notes));
-}
-
-async function updateBanner(box) {
-  let u;
-  try { u = await api("GET", "/api/update"); } catch (e) { return; }
-  if (u.status === "installing") { waitForVersion(u.current, box); return; }
-  const parts = [];
-  if (u.failure) {
-    parts.push(el("div", { class: "notice error" },
-      `Basecamp ${u.failure.to} wasn't healthy (${u.failure.reason}), so it rolled back to ${u.failure.from}`
-        + (u.failure.db_restored ? " and its database copy." : "."),
-      " ", el("button", { class: "small", onclick: () => dismissUpdate(box) }, "Dismiss")));
-  }
-  if (u.install_error) {
-    parts.push(el("div", { class: "notice error" }, u.install_error, " ",
-      el("button", { class: "small", onclick: () => dismissUpdate(box) }, "Dismiss")));
-  }
-  const latest = u.latest;
-  if (u.ready) {
-    parts.push(el("div", { class: "notice ok" },
-      el("strong", {}, `Basecamp ${u.ready_version} is ready to install`), ` (this PC runs ${u.current}). `,
-      u.can_install
-        ? el("button", { class: "small primary", onclick: () => installUpdate(u, box) }, "Install")
-        : el("span", { class: "muted" }, "Basecamp isn't running under the launcher here, so it can't install."),
-      releaseNotes(latest)));
-  } else if (u.available && (u.status === "checking" || u.status === "downloading")) {
-    parts.push(notice(`Downloading Basecamp ${latest.version}…`));
-  } else if (u.available && u.status === "failed") {
-    parts.push(el("div", { class: "notice error" }, `Basecamp ${latest.version} is out but can't be installed: ${u.error}`,
-      releaseNotes(latest)));
-  }
-  box.replaceChildren(...parts);
-}
-
-// -- dashboard ----------------------------------------------------------------------
 
 function dashboard(root) {
-  const list = el("div");
-  const banner = el("div");
-  const setupsBox = el("div");
-  updateBanner(banner);
-  api("GET", "/api/setups").then((rows) => setupsBox.replaceChildren(...rows.map((v) =>
-    el("div", { class: `notice ${v.status === "failed" ? "error" : ""}` },
-      `Setting up ${v.name}: ${STEP_TEXT[v.step] || v.step}${v.status === "failed" ? " stopped" : ""}. `,
-      el("a", { href: `#setup/${v.server_id}` }, "Continue"))))).catch(() => {});
-  const refreshFirewall = () => loadFirewall().then(() => update());
-  const timer = setInterval(refreshFirewall, 60 * 1000);
-  root.replaceChildren(
-    banner,
-    setupsBox,
-    el("div", { class: "buttons", style: "margin-bottom:12px" },
-      el("a", { class: "button primary", href: "#setup" }, "New game"),
-      el("a", { class: "button", href: "#new" }, "Add server"),
-      el("a", { class: "button", href: "#templates" }, "Templates"),
-      el("a", { class: "button", href: "#settings" }, "Settings"),
-      el("a", { class: "button", href: "#audit" }, "Audit log")),
-    list);
+  if (isAdmin() && !servers.length) return welcomePage(root);
+  let extras = { update: null, setups: [] };
+  const top = el("div", { class: "dash-top" });
+  const grid = el("div", { class: "grid" });
+  root.replaceChildren(el("section", { class: "view" }, top,
+    el("div", { class: "pagehead" }, el("div", { class: "grow" }, el("h2", {}, "Servers")),
+      el("div", { class: "btnrow admin-only" }, el("a", { class: "btn sm", href: "#new" }, icon("plus"), "Add existing server"))),
+    grid));
   const update = () => {
-    list.replaceChildren();
-    if (!servers.length) {
-      list.append(el("p", { class: "empty" }, "No servers yet. Add one from a template."));
-    }
-    for (const s of servers) {
-      list.append(el("div", { class: "card" },
-        cardHead(s, el("a", { class: "name", href: `#server/${s.id}` }, s.name)),
-        metaLine(s), countdownLine(s), steamLine(s), addressBlock(s), actionButtons(s)));
-    }
+    if (isAdmin() && !servers.length) { route(); return; }
+    const up = servers.filter((s) => s.state === "running").length;
+    const players = servers.reduce((n, s) => n + (s.players && s.players.count ? s.players.count : 0), 0);
+    const rows = isAdmin() ? needsYouRows(extras) : [];
+    top.classList.toggle("has-att", rows.length > 0);
+    top.replaceChildren(
+      el("div", { class: "summary" },
+        el("h1", {}, servers.length ? `${up} of ${servers.length} server${servers.length === 1 ? "" : "s"} up` : "No servers yet"),
+        el("div", { class: "stats" },
+          el("div", { class: "stat" }, el("b", {}, String(players)), el("span", {}, players === 1 ? "player online" : "players online")),
+          isAdmin() ? el("div", { class: "stat" }, el("b", {}, String(rows.length)), el("span", {}, rows.length === 1 ? "needs you" : "need you")) : null,
+          host ? el("div", { class: "stat" }, el("b", {}, fmtMB(host.ram_free_mb)), el("span", {}, `RAM free of ${Math.round(host.ram_total_mb / 1024)} GB`)) : null)),
+      rows.length ? el("section", { class: "attention", "aria-label": "Needs you" }, el("header", {}, el("h2", {}, "Needs you")), rows) : null);
+    grid.replaceChildren(...servers.map(serverCard));
+    if (!servers.length) grid.replaceChildren(el("p", { class: "empty" }, "No servers yet."));
   };
+  const refresh = async () => { extras = isAdmin() ? await needsYouExtras() : extras; update(); };
+  const fw = () => loadFirewall().then(update);
   update();
-  refreshFirewall();
-  return { update, close: () => clearInterval(timer) };
+  refresh();
+  fw();
+  const timer = setInterval(() => { refresh(); fw(); }, 60 * 1000);
+  return { update, refresh, close: () => clearInterval(timer) };
 }
 
-// -- server page ------------------------------------------------------------------------
+// -- first run -----------------------------------------------------------------------
 
-function serverPage(root, id) {
-  const head = el("div", { class: "card" });
-  const out = el("div", { class: "console", "aria-live": "off" });
-  const input = el("input", { placeholder: "Command (sent to the server's console)",
-    autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
-  // stdin, or RCON / REST once the server has the port and password (D-97).
+function welcomePage(root) {
+  setNav("dashboard");
+  const hostInput = el("input", { type: "text", id: "w-host", value: me.join_host || "", placeholder: "e.g. 100.64.0.10",
+    autocomplete: "off", spellcheck: "false", style: "flex:1 1 160px", "aria-label": "Join host" });
+  const saveHost = async () => {
+    try {
+      await api("PUT", "/api/settings", { join_host: hostInput.value.trim() });
+      me = await api("GET", "/api/me");
+      toast("Saved");
+      welcomePage(root);
+    } catch (e) { toast(e.message, "bad"); }
+  };
+  root.replaceChildren(el("section", { class: "view", id: "v-welcome" },
+    el("div", { class: "welcome" },
+      el("div", { class: "stack" },
+        el("h1", {}, "Set up your first game server"),
+        el("p", { class: "muted", style: "max-width:52ch" }, "Basecamp runs your game servers on this PC, restarts them when they crash, backs up saves and lets friends on your tailnet see what's up. Three things and you're done.")),
+      el("ol", { class: "steps" },
+        el("li", { class: me.steamcmd_found ? "ok" : "" },
+          el("b", {}, me.steamcmd_found ? "SteamCMD found" : "Find SteamCMD"),
+          el("span", { class: "hint" }, me.steamcmd_found ? el("code", {}, me.steamcmd)
+            : el("span", {}, "Not at ", el("code", {}, me.steamcmd || "?"), ". Steam games need it.")),
+          me.steamcmd_found ? null : el("div", { class: "btnrow" }, el("a", { class: "btn", href: "#prefs/s-steam" }, "Set its path"))),
+        el("li", { class: me.join_host ? "ok" : "" },
+          el("b", {}, "Set the join address"),
+          el("span", { class: "hint" }, "Your host PC's Tailscale address, so friends get a full address to copy."),
+          el("div", { class: "btnrow" }, hostInput, el("button", { class: "btn", type: "button", onclick: saveHost }, "Save"))),
+        el("li", {},
+          el("b", {}, "Add your first game"),
+          el("span", { class: "hint" }, "Pick from the templates. Basecamp installs it and walks you through the rest."),
+          el("div", { class: "btnrow" }, el("a", { class: "btn primary", href: "#newgame" }, "New game"),
+            el("a", { class: "btn ghost", href: "#new" }, "I already have one installed")))))));
+  return { update: () => { if (servers.length && location.hash !== "#welcome") route(); } };
+}
+
+// -- server page -------------------------------------------------------------------------
+
+const TAB_DEFS = [["console", "Console", "terminal", false], ["files", "Config files", "file", true],
+  ["backups", "Backups", "box", true], ["schedule", "Schedule", "cal", false],
+  ["firewall", "Firewall", "shield", false], ["history", "History", "activity", false]];
+
+function serverPage(root, id, firstTab) {
+  let detail = null;          // GET /api/servers/<id>: quick commands, last backup, (friend) build and schedule
+  let tab = TAB_DEFS.some(([t, , , admin]) => t === firstTab && (!admin || isAdmin())) ? firstTab : "console";
+  let lastKey = "";
+  const head = el("div", { class: "srvhead" });
+  const side = el("aside", { class: "srvside", "aria-label": "Details" });
+  const panels = {};
+  const tabButtons = TAB_DEFS.map(([t, label, ic, admin]) => el("button", {
+    type: "button", role: "tab", class: admin ? "admin-only" : null, "aria-selected": String(t === tab),
+    onclick: () => showTab(t) }, icon(ic), label));
+  for (const [t] of TAB_DEFS) panels[t] = el("div", { class: "tabpanel", role: "tabpanel", hidden: t !== tab });
+
+  // console
+  const lines = el("div", { class: "lines", "aria-live": "off" });
+  const quickbar = el("div", { class: `quickbar${isAdmin() ? "" : " ctl"}`, hidden: true });
   const channel = el("select", { "aria-label": "Send by" });
+  const input = el("input", { placeholder: "Command, e.g. broadcast Hello", autocomplete: "off", autocapitalize: "off",
+    spellcheck: "false", "aria-label": "Console command" });
+  const consoleState = el("p", { class: "hint", hidden: true });
   let channelsKey = "";
-  const consoleState = el("div", { class: "hint" });
-  const history = el("div");
-  const backupBox = el("div");
-  const configBox = el("div");
-  const steamBox = el("div");
-  const firewallBox = el("div");
-  let backupBusy = false;
   let lastSeq = 0;
   let follow = true;
-  out.addEventListener("scroll", () => {
-    follow = out.scrollTop + out.clientHeight >= out.scrollHeight - 20;
-  });
-
+  lines.addEventListener("scroll", () => { follow = lines.scrollTop + lines.clientHeight >= lines.scrollHeight - 20; });
   const addLine = (line) => {
     if (line.seq <= lastSeq) return;
     lastSeq = line.seq;
-    const cls = { in: "in", sys: "sys", steam: "steam" }[line.source] || "";
+    const cls = { in: "l-in", sys: "l-sys", steam: "l-steam" }[line.source] || "";
     const prefix = line.source === "in" ? "> " : line.source === "sys" ? "# " : "";
-    out.append(el("div", { class: cls }, prefix + line.text));
-    while (out.childElementCount > 2000) out.firstElementChild.remove();
-    if (follow) out.scrollTop = out.scrollHeight;
+    lines.append(el("div", { class: cls }, prefix + line.text));
+    while (lines.childElementCount > 2000) lines.firstElementChild.remove();
+    if (follow) lines.scrollTop = lines.scrollHeight;
   };
-
   const sock = keepSocket(() => `/ws/servers/${id}/console?after=${lastSeq}`, {
     onMessage: (msg) => {
       if (msg.type === "lines") msg.lines.forEach(addLine);
       else if (msg.type === "line") addLine(msg);
-      else if (msg.type === "error") toast(msg.message);
+      else if (msg.type === "error") toast(msg.message, "bad");
     },
-    onState: (up) => { consoleState.textContent = up ? "" : "Console reconnecting…"; },
+    onState: (up) => { consoleState.hidden = up; consoleState.textContent = "Console reconnecting…"; },
   });
-
-  const send = () => {
-    const text = input.value.trim();
+  const send = (text) => {
     if (!text) return;
     sock.send({ type: "command", text, channel: channel.value });
-    input.value = "";
   };
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
-  channel.addEventListener("change", () => update());
-
-  const loadHistory = async () => {
-    const rows = await api("GET", `/api/audit?server_id=${id}&limit=20`).catch(() => []);
-    history.replaceChildren(rows.length ? el("table", {},
-      el("tbody", {}, rows.map((r) => el("tr", {},
-        el("td", {}, new Date(r.ts).toLocaleString()), el("td", {}, r.who),
-        el("td", {}, r.action), el("td", {}, ["console", "backup", "config"].some((a) => r.action.startsWith(a)) ? r.detail : "")))))
-      : el("p", { class: "muted" }, "Nothing yet."));
-  };
-
-  const backupNow = async () => {
-    backupBusy = true; loadBackups();
-    try {
-      const res = await api("POST", `/api/servers/${id}/backups`);
-      toast(`Backup made: ${res.backup.name}`);
-    } catch (e) { alert(e.message); }
-    backupBusy = false; loadBackups();
-  };
-  const restore = async (b) => {
-    if (!confirm(`Restore ${b.name}? The current save is backed up first, then replaced.`)) return;
-    backupBusy = true; loadBackups();
-    try {
-      const res = await api("POST", `/api/servers/${id}/backups/${encodeURIComponent(b.name)}/restore`);
-      toast(res.safety_backup ? `Restored. The save before it: ${res.safety_backup}` : "Restored");
-    } catch (e) { alert(e.message); }
-    backupBusy = false; loadBackups();
-  };
-  const removeBackup = async (b) => {
-    if (!confirm(`Delete backup ${b.name}?`)) return;
-    try { await api("DELETE", `/api/servers/${id}/backups/${encodeURIComponent(b.name)}`); } catch (e) { alert(e.message); }
-    loadBackups();
-  };
-  const loadBackups = async () => {
-    let res;
-    try { res = await api("GET", `/api/servers/${id}/backups`); } catch (e) {
-      backupBox.replaceChildren(notice(e.message, "error")); return;
-    }
-    const s = servers.find((x) => x.id === id);
-    const stopped = s && (s.state === "stopped" || s.state === "crashed");
-    const schedule = res.every_h > 0
-      ? `Every ${res.every_h} h while running, keeping the newest ${res.keep}.`
-      : `No schedule (set one under Edit). Keeping the newest ${res.keep}.`;
-    backupBox.replaceChildren(el("div", {},
-      !res.save_dir ? notice("No save folder set. Set one under Edit to make backups.")
-        : !res.save_dir_exists ? notice(`Save folder not found: ${res.save_dir}`) : null,
-      el("p", { class: "muted" }, res.save_dir ? el("span", {}, "From ", el("code", {}, res.save_dir), ". ") : null,
-        schedule, " Stored in ", el("code", {}, res.folder), "."),
-      el("div", { class: "buttons" },
-        el("button", { class: "primary", disabled: backupBusy || !res.save_dir_exists, onclick: backupNow },
-          backupBusy ? "Working…" : "Back up now")),
-      res.backups.length ? el("table", {}, el("tbody", {}, res.backups.map((b) => el("tr", {},
-        el("td", {}, new Date(b.created * 1000).toLocaleString(), el("div", { class: "hint" }, b.reason)),
-        el("td", {}, fmtSize(b.size_bytes), b.files !== null ? el("div", { class: "hint" }, `${b.files} files`) : null),
-        el("td", {}, el("div", { class: "buttons", style: "margin:0" },
-          el("button", { class: "small", disabled: backupBusy || !stopped || !res.save_dir,
-            title: stopped ? "" : "Stop the server first", onclick: () => restore(b) }, "Restore"),
-          el("a", { class: "button small", href: `/api/servers/${id}/backups/${encodeURIComponent(b.name)}/download`,
-            download: b.name }, "Download"),
-          el("button", { class: "small danger", disabled: backupBusy, onclick: () => removeBackup(b) }, "Delete")))))))
-        : el("p", { class: "muted" }, "No backups yet."),
-      res.backups.length && !stopped ? el("div", { class: "hint" }, "Stop the server to restore a backup.") : null));
-    loadHistory();
-  };
-
-  const loadConfigs = async () => {
-    let res;
-    try { res = await api("GET", `/api/servers/${id}/configs`); } catch (e) {
-      configBox.replaceChildren(notice(e.message, "error")); return;
-    }
-    configBox.replaceChildren(res.files.length ? el("table", {}, el("tbody", {}, res.files.map((f) => el("tr", {},
-      el("td", {}, el("strong", {}, f.name), el("div", { class: "hint" }, f.path || f.entry)),
-      el("td", {}, f.error ? el("span", { class: "unverified" }, f.error)
-        : f.exists ? el("span", {}, fmtSize(f.size_bytes), el("div", { class: "hint" }, new Date(f.modified * 1000).toLocaleString()))
-          : el("span", { class: "hint" }, "doesn't exist yet")),
-      el("td", {}, f.error ? null : el("a", { class: "button small", href: `#config/${id}/${f.n}` }, "Open"))))))
-      : el("p", { class: "muted" }, "None listed. Add paths under Edit → Files → Config files."));
-  };
-
-  root.replaceChildren(head,
-    el("h2", {}, "Console"), out,
-    el("div", { class: "command" }, channel, input, el("button", { class: "primary", onclick: send }, "Send")),
-    consoleState,
-    steamBox,
-    el("h2", {}, "Firewall"), firewallBox,
-    el("h2", {}, "Config files"), configBox,
-    el("h2", {}, "Backups"), backupBox,
-    el("h2", {}, "History"), history);
-
-  let lastState = null;
-  loadConfigs();
-  firewallSection(id, firewallBox, root);
-  loadFirewall().then(() => { firewallSection(id, firewallBox, root); update(); });
-  const update = () => {
-    const s = servers.find((x) => x.id === id);
-    if (!s) {
-      head.replaceChildren(el("p", {}, "No such server. ", el("a", { href: "#" }, "Back")));
+  const form = el("form", { class: "admin-only", onsubmit: (e) => { e.preventDefault(); send(input.value.trim()); input.value = ""; } },
+    channel, input, el("button", { class: "btn primary", type: "submit" }, "Send"));
+  quickbar.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-n]");
+    if (!b) return;
+    const q = (detail && detail.quick_commands || []).find((x) => String(x.n) === b.dataset.n);
+    if (!q) return;
+    if (!isAdmin()) {
+      try { await api("POST", `/api/friend/servers/${id}/quick/${q.n}`); toast(`Sent: ${q.label}`); }
+      catch (err) { toast(err.message, "bad"); }
       return;
     }
-    const c = s.config;
-    // replaceChildren would print a null as "null"; countdownLine and steamLine can be null.
-    head.replaceChildren(...[
-      cardHead(s, el("span", { class: "name" }, s.name)),
-      metaLine(s), countdownLine(s), steamLine(s), addressBlock(s), actionButtons(s),
-      el("div", { class: "buttons" },
-        el("a", { class: "button", href: `#edit/${id}` }, "Edit"),
-        ["starting", "running", "stopping"].includes(s.state)
-          ? el("button", { class: "danger", onclick: () => act(s, "kill") }, "Kill") : null),
-      el("p", { class: "muted" }, c.exe_path, c.args ? ` ${c.args}` : "",
-        s.pid ? ` · PID ${s.pid}` : "")].filter(Boolean));
+    if (q.command.includes("{message}")) {  // ask for the rest: put it in the box, ready to finish
+      input.value = q.command.replace("{message}", "").trimEnd() + " ";
+      input.focus();
+      return;
+    }
+    if (q.channel && [...channel.options].some((o) => o.value === q.channel)) sock.send({ type: "command", text: q.command, channel: q.channel });
+    else send(q.command);
+  });
+  panels.console.append(el("div", { class: "console" }, lines, quickbar,
+    el("div", { class: "readonly friend-only" }, icon("eye"), "Read-only console. Only the owner can type commands."), form), consoleState);
+
+  const showTab = (t) => {
+    tab = t;
+    tabButtons.forEach((b, i) => b.setAttribute("aria-selected", String(TAB_DEFS[i][0] === t)));
+    for (const [k, p] of Object.entries(panels)) p.hidden = k !== t;
+    history.replaceState(null, "", `#server/${id}${t === "console" ? "" : `/${t}`}`);
+    if (t === "console") lines.scrollTop = lines.scrollHeight;
+    loadTab(t);
+  };
+
+  // tabs other than the console load when shown, and again when the state changes
+  const loadTab = (t) => {
+    const s = serverById(id);
+    if (!s) return;
+    if (t === "files") loadConfigs(panels.files, id);
+    else if (t === "backups") loadBackups(panels.backups, s, () => loadDetail());
+    else if (t === "schedule") scheduleTab(panels.schedule, s, detail);
+    else if (t === "firewall") firewallTab(panels.firewall, s);
+    else if (t === "history") historyTab(panels.history, s);
+  };
+
+  const loadDetail = async () => {
+    try { detail = await api("GET", `/api/servers/${id}`); } catch (e) { detail = null; }
+    update();
+    if (tab === "schedule") loadTab("schedule");
+  };
+
+  root.replaceChildren(el("section", { class: "view", id: "v-server" }, head,
+    el("div", { class: "srvgrid" },
+      el("div", {}, el("div", { class: "tabs", role: "tablist" }, tabButtons), Object.values(panels)),
+      side)));
+
+  const update = () => {
+    const s = serverById(id);
+    if (!s) { errorView(root, "No such server.", "#dashboard"); return; }
+    const st = stateOf(s);
+    renderHead(head, s, st);
+    renderSide(side, s, st, detail);
+    // console input, channels, quick commands
     const remote = s.remote || { channels: ["stdin"], default: "stdin" };
     const key = remote.channels.join(",");
     if (key !== channelsKey) {
@@ -572,1147 +650,547 @@ function serverPage(root, id) {
         el("option", { value: x, selected: x === remote.default }, x === "stdin" ? "console" : x.toUpperCase())));
     }
     channel.hidden = remote.channels.length < 2;
-    const up = s.state !== "stopped" && s.state !== "crashed";
+    const up = !["stopped", "crashed"].includes(s.state);
     input.disabled = !(up && (s.has_console || channel.value !== "stdin"));
-    steamBox.replaceChildren(s.steam ? steamSection(s) : el("div"));
-    const stateKey = `${s.state} ${s.steam && s.steam.job ? s.steam.job.phase : ""}`;
-    if (stateKey !== lastState) { lastState = stateKey; loadBackups(); }  // and the history
+    input.placeholder = up ? "Command, e.g. broadcast Hello" : "Start the server to send commands";
+    const quick = (detail && detail.quick_commands) || [];
+    const quickKey = JSON.stringify(quick);
+    if (quickKey !== quickbar.dataset.key) {  // not on every tick: a click mid-render would be lost
+      quickbar.dataset.key = quickKey;
+      quickbar.replaceChildren(el("span", { class: "lbl" }, "Quick"),
+        ...quick.map((q) => el("button", { type: "button", "data-n": String(q.n), title: q.command || q.label }, q.label)));
+    }
+    quickbar.hidden = !quick.length || s.state !== "running";
+    const stateKey = `${s.state} ${s.job ? s.job.phase : ""} ${Boolean(s.stop_warning)}`;
+    if (stateKey !== lastKey) {
+      const first = !lastKey;
+      lastKey = stateKey;
+      if (!first) loadDetail();
+      if (tab !== "console" && tab !== "schedule") loadTab(tab);
+    }
   };
+  channel.addEventListener("change", update);
   update();
-  return { update, close: () => sock.close() };
+  loadDetail();
+  loadTab(tab);
+  loadFirewall().then(update);
+  const timer = setInterval(() => { loadFirewall().then(update); }, 60 * 1000);
+  return { update, close: () => { sock.close(); clearInterval(timer); } };
 }
 
-async function checkBuild(s) {
-  try {
-    await api("POST", `/api/servers/${s.id}/steam/check`);
-    toast(`Asking Steam about ${s.name}`);
-  } catch (e) { alert(`${s.name}: ${e.message}`); }
-}
-
-function latestLine(s) {
-  const st = s.steam;
-  const l = st.latest;
-  const when = l ? ` (checked ${new Date(l.checked_at * 1000).toLocaleString()})` : "";
-  let text;
-  if (st.checking) text = "Asking Steam for the latest build…";
-  else if (!l) text = "Latest build on Steam: not checked yet.";
-  else if (!l.build_id) text = `Latest build on Steam: unknown${when}.`;
-  else if (st.update_available) text = `Steam has build ${l.build_id} on ${l.branch}${when}: an update is available.`;
-  else if (st.update_available === false) text = `Up to date with Steam's ${l.branch} branch${when}.`;
-  else text = `Latest build on Steam: ${l.build_id} on ${l.branch}${when}.`;
-  return el("p", { class: "muted" }, el("span", { class: st.update_available ? "update-text" : "" }, text), " ",
-    el("button", { class: "small", disabled: st.checking || !st.steamcmd_found, onclick: () => checkBuild(s) },
-      "Check for update"));
-}
-
-function steamSection(s) {
-  const st = s.steam;
-  const c = s.config;
-  const last = st.last;
-  return el("div", {},
-    el("h2", {}, "SteamCMD"),
-    !st.steamcmd_found ? notice(el("span", {}, `SteamCMD not found at ${st.steamcmd}. Set its path on the `,
-      el("a", { href: "#settings" }, "Settings"), " page."), "error") : null,
-    el("p", { class: "muted" }, `App ${c.steam_app_id || "?"}`,
-      c.steam_beta ? `, beta branch ${c.steam_beta}` : "", c.steam_validate ? ", validate on update" : "",
-      ". Installed build: ", el("strong", {}, st.build_id || (st.installed ? "unknown" : "not installed")),
-      ". Folder ", el("code", {}, c.install_dir || "(not set)"), "."),
-    st.build_id ? latestLine(s) : null,
-    last ? el("p", { class: "muted" },
-      `Last ${last.kind}: ${last.result}`, last.ended_at ? `, ${new Date(last.ended_at).toLocaleString()}` : "",
-      last.who ? ` by ${last.who}` : "", last.backup ? `. Backup ${last.backup}` : "", ". ",
-      el("a", { href: `/api/servers/${s.id}/steam/runs/${last.run_id}/log`, target: "_blank" }, "Output")) : null,
-    el("div", { class: "hint" }, "SteamCMD output shows in the console above while it runs."));
-}
-
-// -- add / edit form ----------------------------------------------------------------
-
-const EVENTS = {
-  up: "Server is up (with the join address)",
-  stopped: "Stopped from Basecamp",
-  crashed: "Crashed (and restarting)",
-  gave_up: "Gave up restarting",
-  backup_failed: "Scheduled backup failed",
-  update: "Update started / finished / failed",
-};
-
-function fmtSize(bytes) {
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
-
-const BLANK = {
-  name: "", kind: "custom", template_id: "", install_dir: "", exe_path: "", args: "",
-  working_dir: "", ports: [], join_port: null, start_on_boot: false, boot_order: 0,
-  steam_app_id: null, steam_beta: "", steam_validate: false, config_files: [], save_dir: "",
-  log_source: "stdout", log_file: "", rcon_host: "127.0.0.1", rcon_port: null, rest_port: null,
-  real_exe_name: "", ready_pattern: "", ready_after_s: 15, min_free_ram_mb: 0,
-  stop_recipe: [], stop_warning: null, notes: "", backup_every_h: 0, backup_keep: 10, notify_off: [],
-  players: null, restart_at: "", update_at: "", schedule_players: "ignore",
-};
-
-function field(label, input, hint) {
-  return el("div", {}, el("label", {}, label), input, hint ? el("div", { class: "hint" }, hint) : null);
-}
-
-function serverForm(root, id) {
-  const editing = id !== null;
-  const messages = el("div");
-  const form = el("form", { novalidate: true });
-  const tplSelect = el("select", {}, el("option", { value: "" }, "Detect from install folder"));
-  const installInput = el("input", { placeholder: "C:\\GameServers\\Palworld", autocomplete: "off", spellcheck: "false" });
-  // SteamCMD's steamapps\common (D-125): the default install folder, and folders to import.
-  const folderSelect = el("select", { "aria-label": "Existing folders" });
-  const libraryHint = el("div", { class: "hint" });
-  let library = null;
-  let tplById = {};
-  let autoInstall = "";      // the default we filled in, replaced when the game changes
-  let values = { ...BLANK };
-
-  const folderName = (tpl, name) => tpl ? (tpl.steam_installdir || tpl.id)
-    : (name || "").replace(/[\\/:*?"<>|\x00-\x1f]+/g, " ").replace(/^[ .]+|[ .]+$/g, "");
-  const defaultInstall = (tpl, name) => {
-    if (!library || !library.steamcmd_found || (tpl && tpl.kind !== "steam")) return "";
-    const folder = folderName(tpl, name);
-    return folder ? `${library.common}\\${folder}` : "";
-  };
-  const onGameChange = () => {
-    if (installInput.value && installInput.value !== autoInstall) return;
-    autoInstall = defaultInstall(tplById[tplSelect.value]) || "";
-    installInput.value = autoInstall;
-  };
-  tplSelect.addEventListener("change", onGameChange);
-  folderSelect.addEventListener("change", () => {
-    if (!folderSelect.value) return;
-    installInput.value = folderSelect.value;
-    autoInstall = "";
-    const f = library.folders.find((x) => x.path === folderSelect.value);
-    const match = f && f.app_id && Object.values(tplById).find((t) => t.steam_app_id === f.app_id);
-    tplSelect.value = match ? match.id : "";
-  });
-  const showLibrary = () => {
-    const folders = library.folders || [];
-    folderSelect.replaceChildren(el("option", { value: "" },
-      folders.length ? `Pick one of ${folders.length} folders…` : "No folders yet"),
-      ...folders.map((f) => el("option", { value: f.path },
-        f.name + (f.app_id ? ` · app ${f.app_id}` : " · no appmanifest")
-          + (f.used_by ? ` · already “${f.used_by}”` : ""))));
-    folderSelect.disabled = !folders.length;
-    libraryHint.replaceChildren(library.error ? el("span", { class: "unverified" }, library.error)
-      : el("span", {}, "In ", el("code", {}, library.common),
-        library.exists ? "." : " (SteamCMD makes it on the first install)."));
-  };
-
-  const fill = (data) => {
-    values = { ...BLANK, ...(me.backup_defaults || {}), ...data };
-    renderForm();
-  };
-
-  const inputs = {};
-  const text = (key, attrs = {}) => {
-    const i = el("input", { value: values[key] ?? "", ...attrs });
-    inputs[key] = () => i.value;
-    return i;
-  };
-  const num = (key, attrs = {}) => {
-    const i = el("input", { type: "number", value: values[key] ?? "", ...attrs });
-    inputs[key] = () => (i.value === "" ? null : Number(i.value));
-    return i;
-  };
-  const check = (key, label) => {
-    const i = el("input", { type: "checkbox", checked: !!values[key] });
-    inputs[key] = () => i.checked;
-    return el("label", { class: "check" }, i, label);
-  };
-  const select = (key, options) => {
-    const s = el("select", {}, options.map((o) => el("option", { value: o, selected: values[key] === o }, o)));
-    inputs[key] = () => s.value;
-    return s;
-  };
-  const lines = (key) => {
-    const t = el("textarea", {});
-    t.value = (values[key] || []).join("\n");
-    inputs[key] = () => t.value.split("\n").map((x) => x.trim()).filter(Boolean);
-    return t;
-  };
-
-  const portRows = el("div");
-  const addPortRow = (p = { port: "", protocol: "udp", label: "" }) => {
-    const row = el("div", { class: "row port" },
-      el("input", { type: "number", placeholder: "port", value: p.port, "data-k": "port" }),
-      el("select", { "data-k": "protocol" },
-        ["udp", "tcp"].map((x) => el("option", { value: x, selected: p.protocol === x }, x))),
-      el("input", { placeholder: "label (game, query…)", value: p.label, "data-k": "label" }),
-      el("button", { type: "button", class: "small", onclick: () => row.remove() }, "✕"));
-    portRows.append(row);
-  };
-  const stepRows = el("div");
-  const addStepRow = (s = { action: "ctrl_break", command: "", wait_s: 30 }) => {
-    const row = el("div", { class: "row step" },
-      el("select", { "data-k": "action" },
-        ["stdin", "rcon", "rest", "ctrl_break", "ctrl_c", "wait_save"].map((x) => el("option", { value: x, selected: s.action === x }, x))),
-      el("input", { placeholder: "command", value: s.command, "data-k": "command" }),
-      el("input", { type: "number", placeholder: "wait s", value: s.wait_s, "data-k": "wait_s" }),
-      el("button", { type: "button", class: "small", onclick: () => row.remove() }, "✕"));
-    stepRows.append(row);
-  };
-
-  // R-25: the warning players get before a stop, restart or update from Basecamp.
-  const warningFields = () => {
-    const w = values.stop_warning || { action: "rcon", command: "", minutes: [] };
-    const action = el("select", {}, ["stdin", "rcon", "rest"].map((x) => el("option", { value: x, selected: w.action === x }, x)));
-    const command = el("input", { value: w.command, placeholder: "e.g. broadcast Restarting in {minutes} min",
-      autocomplete: "off", spellcheck: "false" });
-    const minutes = el("input", { value: (w.minutes || []).join(", "), placeholder: "e.g. 5, 1 (empty = off)",
-      inputmode: "decimal", autocomplete: "off" });
-    inputs.stop_warning = () => {
-      const mins = minutes.value.split(/[,\s]+/).filter(Boolean).map(Number);
-      if (!command.value.trim() && !mins.length) return null;
-      return { action: action.value, command: command.value, minutes: mins };
-    };
-    return el("div", { style: "margin-top:12px" },
-      el("label", {}, "Warn players first"),
-      el("div", { class: "row warn" }, action, command),
-      field("Warn at (minutes before)", minutes,
-        "Sent before a stop, restart or update you start (never before a crash restart). The first number is the lead time, the others are reminders. {minutes} and {seconds} in the command are filled in. Kill and Stop now skip it."));
-  };
-
-  // D-132: how to ask the game for its player count.
-  const playersFields = () => {
-    const p = values.players || { source: "", command: "", pattern: "", port: null };
-    const source = el("select", {}, [["", "Don't ask"], ["rest", "REST API (Palworld)"], ["rcon", "RCON command"],
-      ["a2s", "Steam server query (A2S)"]].map(([v, label]) => el("option", { value: v, selected: p.source === v }, label)));
-    const command = el("input", { value: p.command || "", placeholder: "RCON command, e.g. listplayers", autocomplete: "off", spellcheck: "false" });
-    const pattern = el("input", { value: p.pattern || "", placeholder: "Regex, e.g. Players: (\\d+)", autocomplete: "off", spellcheck: "false" });
-    const port = el("input", { type: "number", value: p.port ?? "", placeholder: "query port" });
-    const show = () => {
-      command.hidden = pattern.hidden = source.value !== "rcon";
-      port.hidden = source.value !== "a2s";
-    };
-    source.addEventListener("change", show);
-    show();
-    inputs.players = () => (source.value ? { source: source.value, command: command.value, pattern: pattern.value,
-      port: port.value === "" ? null : Number(port.value) } : null);
-    return field("Player count", el("div", {}, source, command, pattern, port),
-      "Asked every minute while it runs; shown on both pages, the count only. REST and RCON use the password below. RCON: a pattern with a group reads the number from the answer; without one, each matching line is a player.");
-  };
-
-  // Install folder, with SteamCMD's default for a Steam server added by hand (D-125).
-  const installField = () => {
-    const input = text("install_dir");
-    const useDefault = () => {
-      const name = inputs.name ? inputs.name() : values.name;
-      const path = defaultInstall(tplById[values.template_id], name);
-      if (path) input.value = path;
-      else toast(library && library.error ? library.error : "No default: type a folder");
-    };
-    return field("Install folder", el("div", { class: "row" }, input,
-      el("button", { type: "button", class: "small", onclick: useDefault }, "Default")),
-      "Default = SteamCMD's steamapps\\common\\<game folder> (the template's, else the server name).");
-  };
-
-  const collect = () => {
-    const data = {};
-    for (const [key, get] of Object.entries(inputs)) data[key] = get();
-    data.template_id = values.template_id || "";
-    data.ports = [...portRows.querySelectorAll(".port")].map((r) => ({
-      port: Number($("[data-k=port]", r).value),
-      protocol: $("[data-k=protocol]", r).value,
-      label: $("[data-k=label]", r).value.trim(),
-    })).filter((p) => p.port);
-    data.stop_recipe = [...stepRows.querySelectorAll(".step")].map((r) => ({
-      action: $("[data-k=action]", r).value,
-      command: $("[data-k=command]", r).value,
-      wait_s: Number($("[data-k=wait_s]", r).value || 0),
-    }));
-    return data;
-  };
-
-  const renderForm = () => {
-    for (const key of Object.keys(inputs)) delete inputs[key];
-    portRows.replaceChildren();
-    (values.ports || []).forEach(addPortRow);
-    stepRows.replaceChildren();
-    (values.stop_recipe || []).forEach(addStepRow);
-    form.replaceChildren(
-      field("Name", text("name", { required: true })),
-      field("Type", select("kind", ["steam", "custom"])),
-      installField(),
-      field("Exe", text("exe_path", { required: true }), "Full path to the server's exe."),
-      field("Launch arguments", text("args")),
-      field("Working folder", text("working_dir"), "Empty = the exe's folder."),
-      el("fieldset", {}, el("legend", {}, "Ports"), portRows,
-        el("button", { type: "button", class: "small", onclick: () => addPortRow() }, "Add port"),
-        field("Join port", num("join_port"), "The port friends type in (R-24).")),
-      check("start_on_boot", "Start when Basecamp starts"),
-      field("Boot order", num("boot_order")),
-      el("fieldset", {}, el("legend", {}, "Steam"),
-        field("App ID", num("steam_app_id")),
-        field("Beta branch", text("steam_beta")),
-        check("steam_validate", "Validate on update")),
-      el("fieldset", {}, el("legend", {}, "Running"),
-        field("Output", select("log_source", ["stdout", "file"]),
-          "stdout = the console pipe; file = tail a log file the game writes."),
-        field("Log file", text("log_file"), "Relative to the working folder."),
-        field("Ready line", text("ready_pattern"), "Text in the output that means the server is up."),
-        field("Ready after (s)", num("ready_after_s"), "Running after this long if no ready line shows."),
-        field("Real exe name", text("real_exe_name"), "For games whose launcher starts another exe."),
-        field("Warn below free RAM (MB)", num("min_free_ram_mb"))),
-      el("fieldset", {}, el("legend", {}, "Stop recipe"), stepRows,
-        el("button", { type: "button", class: "small", onclick: () => addStepRow() }, "Add step"),
-        el("div", { class: "hint" },
-          "Each step runs, then waits up to its seconds for the exit (wait_save: for the game to save to the save folder, then goes on). Kill always comes last. Empty = Ctrl+Break, 30 s, kill."),
-        warningFields()),
-      el("fieldset", {}, el("legend", {}, "Files"),
-        field("Config files", lines("config_files"), "One path per line."),
-        field("Save folder", text("save_dir")),
-        field("RCON port", num("rcon_port")),
-        field("REST port", num("rest_port"), "Palworld's REST API (RESTAPIPort, 8212). Its commands: announce <text>, save, shutdown <seconds> <text>, info, players, metrics."),
-        passwordFields(),
-        playersFields()),
-      el("fieldset", {}, el("legend", {}, "Schedule"),
-        field("Restart every day at", text("restart_at", { type: "time" }), "This PC's time. Only while it's running, with the stop warning. Empty = off."),
-        field("Update every day at", text("update_at", { type: "time" }), "Steam servers: only when the update-available badge says Steam has a newer build (checked every 6 h). Same steps as Update. Empty = off."),
-        field("While players are on", select("schedule_players", ["ignore", "skip", "delay"]),
-          "ignore = go ahead anyway (they get the stop warning); skip = not that day; delay = ask again every 5 min until nobody's on, and after 2 h go ahead anyway. Needs a player count: an unknown count counts as nobody on.")),
-      el("fieldset", {}, el("legend", {}, "Backups and Discord"),
-        field("Back up every (hours)", num("backup_every_h", { min: 0, step: "any" }),
-          "While the server runs. 0 = only by hand (and before updates)."),
-        field("Backups to keep", num("backup_keep", { min: 1 })),
-        el("label", {}, "Post to Discord when"),
-        (() => {
-          const boxes = Object.entries(EVENTS).map(([key, label]) => {
-            const i = el("input", { type: "checkbox", checked: !(values.notify_off || []).includes(key), "data-ev": key });
-            return el("label", { class: "check" }, i, label);
-          });
-          inputs.notify_off = () => boxes.map((b) => $("input", b)).filter((i) => !i.checked).map((i) => i.dataset.ev);
-          return el("div", {}, boxes);
-        })(),
-        el("div", { class: "hint" }, "The webhook and the defaults for new servers are on the Settings page.")),
-      field("Notes", (() => {
-        const t = el("textarea", {}); t.value = values.notes || "";
-        inputs.notes = () => t.value; return t;
-      })()),
-      el("div", { class: "buttons" },
-        el("button", { class: "primary", type: "submit" }, editing ? "Save" : "Add server"),
-        el("a", { class: "button", href: editing ? `#server/${id}` : "#" }, "Cancel"),
-        editing ? el("button", { type: "button", class: "danger", onclick: remove }, "Delete") : null));
-  };
-
-  // RCON and REST passwords (D-97): kept in secrets.toml, saved apart from the form, never shown.
-  const passwords = {};
-  const passwordFields = () => {
-    const set = values.password_set || {};
-    const box = (ch, label) => {
-      const i = el("input", { type: "password", autocomplete: "new-password",
-        placeholder: set[ch] ? "set (type to change)" : "not set" });
-      const clear = el("label", { class: "check" }, el("input", { type: "checkbox" }), "remove");
-      passwords[ch] = () => ($("input", clear).checked ? "" : i.value || null);
-      return field(label, el("div", {}, i, set[ch] ? clear : null));
-    };
-    return el("div", {}, box("rcon", "RCON password"), box("rest", "REST password"),
-      el("div", { class: "hint" }, "The game's admin password for RCON or REST, as in its own settings file. Kept in the data folder's secrets.toml, never in the server's settings or the audit log."));
-  };
-  const savePasswords = async (serverId) => {
-    const body = {};
-    for (const [ch, get] of Object.entries(passwords)) {
-      const v = get();
-      if (v !== null) body[`${ch}_password`] = v;
-    }
-    if (Object.keys(body).length) await api("PUT", `/api/servers/${serverId}/remote`, body);
-  };
-
-  const remove = async () => {
-    if (!confirm(`Delete ${values.name}? Game files are not touched.`)) return;
-    try {
-      await api("DELETE", `/api/servers/${id}`);
-      location.hash = "#";
-    } catch (e) { alert(e.message); }
-  };
-
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    try {
-      const saved = editing
-        ? await api("PUT", `/api/servers/${id}`, collect())
-        : await api("POST", "/api/servers", collect());
-      await savePasswords(saved.id);
-      location.hash = `#server/${saved.id}`;
-    } catch (err) {
-      messages.replaceChildren(notice(err.message, "error"));
-      messages.scrollIntoView();
-    }
-  });
-
-  const useTemplate = async () => {
-    try {
-      const res = await api("POST", "/api/drafts",
-        { template_id: tplSelect.value, install_dir: installInput.value, name: values.name });
-      fill(res.draft);
-      messages.replaceChildren(...res.messages.map((m) =>
-        notice(m, m.startsWith("Not yet checked") ? "" : "ok")));
-    } catch (err) {
-      messages.replaceChildren(notice(err.message, "error"));
-    }
-  };
-
-  const top = editing ? el("div") : el("div", { class: "card" },
-    el("h2", { style: "margin-top:0" }, "Start from a template"),
-    field("Game", tplSelect),
-    field("Install folder", installInput,
-      "Picking a game fills in SteamCMD's usual folder for it. For a new install keep it (or pick a folder that doesn't exist yet or is empty): save, then press Install on the server's page."),
-    field("Or import an existing install", folderSelect, libraryHint),
-    el("div", { class: "hint" }, "Leave the game on 'Detect' to read the app ID from the install's appmanifest."),
-    el("div", { class: "buttons" }, el("button", { class: "primary", onclick: useTemplate }, "Fill in")));
-
-  root.replaceChildren(el("h2", {}, editing ? "Edit server" : "Add server"), top, messages, form);
-
-  if (editing) {
-    api("GET", `/api/servers/${id}`).then((s) => fill({ ...s.config, password_set: (s.remote || {}).password_set }))
-      .catch((e) => root.replaceChildren(notice(e.message, "error")));
-  } else {
-    fill({});
-    api("GET", "/api/templates").then((res) => {
-      for (const t of res.templates) {
-        tplById[t.id] = t;
-        tplSelect.append(el("option", { value: t.id },
-          `${t.name}${t.source === "data folder" ? " (data folder)" : ""}`));
-      }
-    });
+function renderHead(head, s, st) {
+  const bar = st.key === "upd" ? progressBar(s.job) : null;
+  const callouts = [];
+  if (st.key === "warn") {
+    const verb = WARN_VERB[s.stop_warning.kind] || "Stopping";
+    callouts.push(el("div", { class: "callout", "data-st": "warn" }, icon("clock"),
+      el("div", { class: "grow" }, el("div", {}, el("strong", {}, `${verb} in `, el("span", { class: "num", "data-stop-at": String(s.stop_warning.stop_at) }, fmtCountdown(s.stop_warning.stop_at))),
+        ". Players are being warned.")),
+      actBtn(s, "now", `${nowVerb(s)} now`, { ctl: false, cls: "sm admin-only" })));
   }
-  api("GET", "/api/steam/library").then((res) => { library = res; showLibrary(); })
-    .catch((e) => libraryHint.replaceChildren(el("span", { class: "unverified" }, e.message)));
-  if (editing) api("GET", "/api/templates").then((res) => { for (const t of res.templates) tplById[t.id] = t; });
-  return {};
+  if (st.key === "bad") {
+    callouts.push(el("div", { class: "callout", "data-st": "bad" }, icon("alert"),
+      el("div", { class: "grow" }, el("div", {}, s.restart_at
+        ? [el("strong", {}, "Crashed"), `, so Basecamp starts it again at ${hhmm(s.restart_at)}.`]
+        : [el("strong", {}, isAdmin() ? "Crashed" : "Down"), isAdmin()
+          ? `. Basecamp isn't restarting it.${s.last_exit_code !== null && s.last_exit_code !== undefined ? ` Last exit code ${s.last_exit_code}.` : ""} The console below has its last output.`
+          : ". The owner has been told; you can start it again."]))));
+  }
+  if (st.key === "upd" && s.job) {
+    callouts.push(el("div", { class: "callout", "data-st": "upd" }, icon("refresh"),
+      el("div", { class: "grow" }, el("div", {}, el("strong", {}, `${st.label}${st.fact ? `: ${st.fact}` : ""}`),
+        s.job.kind === "update" ? ". The save is backed up first. It starts again when the update is done, if it was running." : "."), bar)));
+  }
+  if (isAdmin() && s.steam && s.steam.failed && !s.job && s.steam.last) {
+    callouts.push(el("div", { class: "callout", "data-st": "bad" }, icon("alert"),
+      el("div", { class: "grow" }, el("div", {}, el("strong", {}, `Last ${s.steam.last.kind} ${s.steam.last.result}`), `: ${s.steam.last.message} `,
+        el("a", { href: `/api/servers/${s.id}/steam/runs/${s.steam.last.run_id}/log`, target: "_blank", rel: "noopener" }, "SteamCMD output")))));
+  }
+  if (isAdmin() && s.steam && !s.steam.steamcmd_found) {
+    callouts.push(el("div", { class: "callout", "data-st": "warn" }, icon("alert"),
+      el("div", { class: "grow" }, el("div", {}, "SteamCMD isn't at ", el("code", {}, s.steam.steamcmd), ". ", el("a", { href: "#prefs/s-steam" }, "Set its path"), "."))));
+  }
+  if (isAdmin() && s.adopted && !s.has_console && s.state === "running") {
+    callouts.push(el("div", { class: "callout", "data-st": "idle" }, icon("terminal"),
+      el("div", { class: "grow" }, el("div", {}, "Picked up after Basecamp restarted, without its console. Restart it to get the console back."))));
+  }
+  const active = ["starting", "running", "stopping", "updating"].includes(s.state);
+  const actions = [];
+  if (["idle", "bad"].includes(st.key) && !(isAdmin() && s.steam && !s.steam.installed)) {
+    actions.push(actBtn(s, "start", "Start", { primary: true, iconName: "play" }));
+  }
+  if (isAdmin() && st.key === "idle" && s.steam && !s.steam.installed && !s.job) actions.push(actBtn(s, "install", "Install", { primary: true, ctl: false, iconName: "download" }));
+  if (st.key === "bad" && s.restart_at) actions.push(actBtn(s, "cancelrestart", "Cancel restart", { ctl: false, cls: "admin-only" }));
+  if (st.key === "run") actions.push(actBtn(s, "restart", "Restart", { iconName: "refresh" }), actBtn(s, "stop", "Stop", { iconName: "stop" }));
+  if (["run", "idle"].includes(st.key) && canUpdate(s) && !s.job) actions.push(actBtn(s, "update", "Update", { iconName: "download" }));
+  if (s.job) actions.push(actBtn(s, "cancel", `Cancel ${s.job.kind === "install" ? "install" : "update"}`, { ctl: false, cls: "admin-only" }));
+  if (isAdmin() && s.steam && s.steam.installed && !s.job) {
+    actions.push(el("button", { class: "btn ghost", type: "button", disabled: s.steam.checking || !s.steam.steamcmd_found,
+      onclick: async () => { try { await api("POST", `/api/servers/${s.id}/steam/check`); toast(`Asking Steam about ${s.name}`); } catch (e) { toast(e.message, "bad"); } } },
+    icon("refresh"), s.steam.checking ? "Asking Steam…" : "Check for update"));
+  }
+  actions.push(el("a", { class: "btn ghost admin-only", href: `#edit/${s.id}` }, icon("sliders"), "Edit settings"));
+  actions.push(el("span", { class: "sep" }));
+  if (isAdmin() && active) {
+    actions.push(el("div", { class: "force" }, el("span", { class: "hint" }, "Not responding?"),
+      el("button", { class: "btn danger sm", type: "button", onclick: () => act(s, "kill") }, icon("bolt"), "Kill")));
+  }
+  head.replaceChildren(
+    crumb(["Servers", "#dashboard"], s.name),
+    el("div", { class: "top" },
+      el("span", { class: "mono", "aria-hidden": "true" }, monogram(s.name)),
+      el("div", { class: "grow" }, el("h1", {}, s.name),
+        el("div", {}, el("span", { class: "pill", "data-st": st.st }, stateMark(st), stateLabel(st)),
+          el("span", { class: "rolebadge friend-only", style: "margin-left:8px" }, "Friend view"))),
+      ["run", "warn"].includes(st.key) ? playersBlock(s) : null),
+    ...callouts,
+    el("div", { class: "actionbar" }, actions));
 }
 
-// -- new game from a template, in one flow (D-130) -------------------------------------
-
-const STEP_TEXT = { install: "installing", first_start: "first start", values: "values it needs",
-  firewall: "firewall", ready: "ready to start" };
-
-async function newGamePage(root) {
-  const res = await api("GET", "/api/templates");
-  const tplSelect = el("select", {}, el("option", { value: "" }, "Pick a game…"),
-    res.templates.map((t) => el("option", { value: t.id }, `${t.name}${t.source === "data folder" ? " (data folder)" : ""}`)));
-  const nameInput = el("input", { autocomplete: "off", placeholder: "Default: the game's name" });
-  const installInput = el("input", { autocomplete: "off", spellcheck: "false", placeholder: "Default: SteamCMD's steamapps\\common\\<game folder>" });
-  const about = el("div");
-  const out = el("div");
-  tplSelect.addEventListener("change", () => {
-    const t = res.templates.find((x) => x.id === tplSelect.value);
-    about.replaceChildren(...(t ? [
-      t.required_values.length ? el("p", { class: "muted" }, "It will ask for: ", t.required_values.map((v) => v.label).join(", "), ".") : null,
-      t.unverified.length ? el("div", { class: "unverified" }, "Not yet checked: ", t.unverified.join(", ")) : null,
-      t.notes ? el("details", {}, el("summary", {}, "Notes"), el("p", { class: "muted" }, t.notes)) : null] : []).filter(Boolean));
-  });
-  const begin = async (btn) => {
-    if (!tplSelect.value) { toast("Pick a game"); return; }
-    btn.disabled = true;
-    try {
-      const v = await api("POST", "/api/setups", { template_id: tplSelect.value,
-        name: nameInput.value.trim(), install_dir: installInput.value.trim() });
-      location.hash = `#setup/${v.server_id}`;
-    } catch (e) { out.replaceChildren(notice(e.message, "error")); btn.disabled = false; }
-  };
-  root.replaceChildren(el("h2", {}, "New game"),
-    el("div", { class: "card" },
-      el("p", { class: "muted", style: "margin-top:0" }, "Basecamp adds the server from the game's template, installs it with SteamCMD, starts it once so it writes its config files, asks for the values it needs, shows the firewall, and then it's ready to start. You can leave this page and come back; the dashboard shows where it got to."),
-      field("Game", tplSelect), about,
-      field("Server name", nameInput),
-      field("Install folder", installInput, "Leave empty for SteamCMD's usual folder. It must be new or empty. To use a game that's already installed, use Add server instead."),
-      el("div", { class: "buttons" }, el("button", { class: "primary", onclick: (e) => begin(e.target) }, "Start setup"),
-        el("a", { class: "button", href: "#" }, "Cancel"))),
-    out);
+function renderSide(side, s, st, detail) {
+  const kv = [];
+  const row = (k, v, cls = null) => { if (v === null || v === undefined || v === "") return; kv.push(el("dt", { class: cls }, k), el("dd", { class: cls }, v)); };
+  if (["run", "warn"].includes(st.key)) {
+    row("Up", s.uptime_s !== null ? fmtUp(s.uptime_s) : "");
+    row("CPU, RAM", [s.cpu_percent !== null && s.cpu_percent !== undefined ? `${s.cpu_percent}%` : "", s.rss_mb ? fmtMB(s.rss_mb) : ""].filter(Boolean).join(", "));
+  }
+  const build = isAdmin() ? s.steam && s.steam.build_id : detail && detail.build_id;
+  const latest = isAdmin() ? s.steam && s.steam.latest && s.steam.latest.build_id : detail && detail.latest_build;
+  row("Build", build);
+  if (s.last_updated) {
+    row("Updated", el("span", {}, fullDate(s.last_updated.at),
+      el("div", { class: "hint" }, s.last_updated.source === "steam" ? "From Steam's app manifest" : "Basecamp's last update")));
+  }
+  if (latest) row("Steam has", s.update_available ? `${latest}, newer` : "Up to date");
+  const schedule = isAdmin() ? s.schedule : detail && detail.schedule;
+  row("Next restart", schedule && schedule.restart_at ? cap(nextAt(schedule.restart_at)) : "None set");
+  if (schedule && schedule.update_at) row("Next update", cap(nextAt(schedule.update_at)));
+  if (detail) row("Last backup", detail.last_backup ? whenShort(detail.last_backup) : "None yet");
+  const f = firewallOf(s.id);
+  if (f && f.ports && f.ports.length) row("Firewall", el("span", { class: `chip ${FW_CLASS[f.status] || ""}` }, FW_TEXT[f.status] || f.status));
+  if (isAdmin()) {
+    row("PID", s.pid ? String(s.pid) : "none");
+    if (s.config && s.config.install_dir) row("Install folder", el("code", { style: "font-weight:500" }, s.config.install_dir));
+  }
+  const discord = s.discord_line || (s.join_address ? `${s.name}: ${s.join_address}` : "");
+  side.replaceChildren(el("div", { class: "panel" },
+    el("div", { class: "field" },
+      el("span", { class: "flabel" }, "Join address"),
+      s.join_address ? addrBox(s.join_address) : el("p", { class: "hint" }, isAdmin()
+        ? el("span", {}, me.join_host ? "No join port set. " : "No join host set. ", el("a", { href: me.join_host ? `#edit/${s.id}` : "#prefs/s-join" }, "Set it"), ".")
+        : "Not set by the owner yet."),
+      discord && s.join_address ? el("div", { class: "addr-actions" },
+        el("button", { class: "btn sm", type: "button", onclick: () => copyText(discord, "Copied for Discord") }, icon("chat"), "Copy for Discord")) : null),
+    el("dl", { class: "kv" }, kv)));
 }
 
-function setupPage(root, id) {
-  const head = el("div", { class: "card" });
-  const body = el("div", { class: "card" });
-  const firewallBox = el("div");
-  let view = null;
-  let shownKey = "";
-  root.replaceChildren(el("h2", {}, "New game"), head, body);
+function cap(text) { return text ? text[0].toUpperCase() + text.slice(1) : text; }
 
-  const call = async (path, payload, btn) => {
-    if (btn) btn.disabled = true;
-    try { view = await api("POST", `/api/setups/${id}/${path}`, payload); shownKey = ""; render(); }
-    catch (e) { alert(e.message); }
-    if (btn) btn.disabled = false;
+// -- server page tabs ------------------------------------------------------------------
+
+async function loadConfigs(box, id) {
+  let res;
+  try { res = await api("GET", `/api/servers/${id}/configs`); } catch (e) { box.replaceChildren(callout("bad", e.message)); return; }
+  box.replaceChildren(el("div", { class: "panel" }, res.files.length ? el("div", { class: "list" }, res.files.map((f) =>
+    el("div", { class: "row" }, icon("file"),
+      el("div", { class: "grow" }, el("b", {}, f.name), el("div", { class: "hint" }, el("code", {}, f.path || f.entry))),
+      el("span", { class: "hint" }, f.error ? f.error : f.exists ? `${fmtSize(f.size_bytes)}, changed ${relTime(f.modified)}` : "Doesn't exist yet"),
+      f.error ? null : el("a", { class: "btn sm", href: `#config/${id}/${f.n}` }, f.exists ? "Open" : "Create"))))
+    : el("p", { class: "hint" }, "None listed. ", el("a", { href: `#edit/${id}` }, "Add paths under Edit settings"), "."),
+  el("p", { class: "hint" }, `Each save keeps the old file; the newest ${res.keep} copies are kept.`)));
+}
+
+const BACKUP_WHY = { scheduled: "Schedule", manual: "By hand", "pre-update": "Before update", "pre-restore": "Before restore" };
+
+async function loadBackups(box, s, changed) {
+  const id = s.id;
+  let res;
+  try { res = await api("GET", `/api/servers/${id}/backups`); } catch (e) { box.replaceChildren(callout("bad", e.message)); return; }
+  const stopped = ["stopped", "crashed"].includes(s.state);
+  let busy = false;
+  const again = () => { const now = serverById(id); if (now) loadBackups(box, now, changed); changed(); };
+  const backupNow = async (btn) => {
+    busy = true; btn.disabled = true; btn.textContent = "Working…";
+    try { const out = await api("POST", `/api/servers/${id}/backups`); toast(`Backup made: ${out.backup.name}`); }
+    catch (e) { toast(e.message, "bad"); }
+    busy = false; again();
   };
-  const finish = async (start, btn) => {
-    if (!start && !confirm("Leave the setup? The server stays as it is; you can carry on from its page.")) return;
+  const restore = async (b) => {
+    if (!(await confirmSheet({ title: "Restore this backup?", body: `${whenShort(b.created)}. The current save is backed up first, then replaced.`, ok: "Restore" }))) return;
+    try { const out = await api("POST", `/api/servers/${id}/backups/${encodeURIComponent(b.name)}/restore`); toast(out.safety_backup ? `Restored. The save before it: ${out.safety_backup}` : "Restored"); }
+    catch (e) { toast(e.message, "bad"); }
+    again();
+  };
+  const remove = async (b) => {
+    if (!(await confirmSheet({ title: "Delete this backup?", body: "The zip is removed from the backups folder. This can't be undone.", ok: "Delete backup", danger: true }))) return;
+    try { await api("DELETE", `/api/servers/${id}/backups/${encodeURIComponent(b.name)}`); toast("Backup deleted"); }
+    catch (e) { toast(e.message, "bad"); }
+    again();
+  };
+  const schedule = res.every_h > 0 ? `Every ${res.every_h} h while running, keeping the newest ${res.keep}` : `Only by hand and before updates, keeping the newest ${res.keep}`;
+  box.replaceChildren(el("div", { class: "panel" },
+    el("header", {}, el("h3", {}, schedule),
+      el("button", { class: "btn primary sm", type: "button", disabled: !res.save_dir_exists, onclick: (e) => backupNow(e.currentTarget) }, "Back up now")),
+    !res.save_dir ? callout("warn", el("span", {}, "No save folder set. ", el("a", { href: `#edit/${id}` }, "Set one"), " to make backups."))
+      : !res.save_dir_exists ? callout("warn", el("span", {}, "Save folder not found: ", el("code", {}, res.save_dir))) : null,
+    el("p", { class: "hint" }, res.save_dir ? el("span", {}, "From ", el("code", {}, res.save_dir), ". ") : null,
+      stopped ? "Restore puts one back; the current save is backed up first." : "Stopping the server unlocks Restore.", " Stored in ", el("code", {}, res.folder), "."),
+    res.backups.length ? el("div", { class: "tablewrap" }, el("table", {},
+      el("thead", {}, el("tr", {}, el("th", {}, "Made"), el("th", {}, "Size"), el("th", {}, "Why"), el("th", {}, el("span", { hidden: true }, "Actions")))),
+      el("tbody", {}, res.backups.map((b) => el("tr", {},
+        el("td", { class: "num", title: fullDate(b.created) }, whenShort(b.created)),
+        el("td", { class: "num" }, fmtSize(b.size_bytes)),
+        el("td", {}, BACKUP_WHY[b.reason] || b.reason),
+        el("td", {}, el("div", { class: "btnrow", style: "justify-content:flex-end" },
+          el("button", { class: "btn sm", type: "button", disabled: busy || !stopped || !res.save_dir, title: stopped ? "" : "Stop the server first", onclick: () => restore(b) }, "Restore"),
+          el("a", { class: "btn sm ghost", href: `/api/servers/${id}/backups/${encodeURIComponent(b.name)}/download`, download: b.name }, icon("download"), "Download"),
+          el("button", { class: "btn sm ghost danger", type: "button", "aria-label": "Delete backup", title: "Delete backup", onclick: () => remove(b) }, icon("trash")))))))))
+      : el("p", { class: "hint" }, "No backups yet.")));
+}
+
+function scheduleTab(box, s, detail) {
+  const schedule = isAdmin() ? s.schedule : detail && detail.schedule;
+  const cfg = s.config || {};
+  const restartAt = isAdmin() ? cfg.restart_at || "" : schedule ? schedule.restart_at : "";
+  const updateAt = isAdmin() ? cfg.update_at || "" : schedule ? schedule.update_at : "";
+  const players = isAdmin() ? cfg.schedule_players || "ignore" : schedule ? schedule.players : "ignore";
+  const ro = !isAdmin();
+  const restartIn = el("input", { type: "time", id: "sch-restart", value: restartAt, disabled: ro });
+  const updateIn = el("input", { type: "time", id: "sch-update", value: updateAt, disabled: ro });
+  const choice = (value, title, hint) => el("label", {}, el("input", { type: "radio", name: "sch-players", value, checked: players === value, disabled: ro }),
+    el("span", {}, el("b", {}, title), hint ? el("span", { class: "hint" }, hint) : null));
+  const waiting = schedule && Object.keys(schedule.waiting || {});
+  const save = async (btn) => {
     btn.disabled = true;
-    try {
-      await api("POST", `/api/setups/${id}/finish${start ? "?start=true" : ""}`);
-      location.hash = `#server/${id}`;
-    } catch (e) { alert(e.message); btn.disabled = false; }
+    const body = { ...cfg, restart_at: restartIn.value, update_at: updateIn.value,
+      schedule_players: $("input[name=sch-players]:checked", box).value };
+    try { await api("PUT", `/api/servers/${s.id}`, body); toast("Schedule saved"); }
+    catch (e) { toast(e.message, "bad"); }
+    btn.disabled = false;
+  };
+  const steam = isAdmin() ? Boolean(s.steam) : Boolean(detail && (detail.build_id || s.last_updated));
+  box.replaceChildren(
+    waiting && waiting.length ? callout("warn", `The scheduled ${waiting.join(" and ")} is waiting for players to leave.`) : null,
+    el("div", { class: "split" },
+      el("div", { class: "panel" }, el("h3", {}, "Daily restart"),
+        el("div", { class: "field" }, el("label", { for: "sch-restart" }, "Time on the host PC"), restartIn),
+        el("p", { class: "hint" }, restartAt ? `Next: ${nextAt(restartAt)}, with the stop warning. Only while it's running.` : "Off. Only while it's running, with the stop warning.")),
+      el("div", { class: "panel" }, el("h3", {}, "Daily update"),
+        el("div", { class: "field" }, el("label", { for: "sch-update" }, "Time on the host PC"), updateIn),
+        el("p", { class: "hint" }, !steam ? "Steam servers only." : updateAt
+          ? `Only when Steam has a newer build${s.update_available ? `. Steam has one now, so it runs ${nextAt(updateAt)}` : ` (checked every 6 h). Next check-in ${nextAt(updateAt)}`}.`
+          : "Off. Only when Steam has a newer build (checked every 6 h)."))),
+    el("div", { class: "panel" }, el("h3", {}, "While players are on"),
+      el("div", { class: "choice" },
+        choice("ignore", "Go ahead", "They get the stop warning first."),
+        choice("skip", "Skip that day", null),
+        choice("delay", "Wait until nobody's on", "Checks every 5 min. After 2 h it goes ahead anyway.")),
+      el("p", { class: "hint" }, "Needs a player count: an unknown count counts as nobody on."),
+      el("div", { class: "btnrow admin-only" }, el("button", { class: "btn primary", type: "button", onclick: (e) => save(e.currentTarget) }, "Save schedule")),
+      el("p", { class: "hint friend-only" }, "Only the owner can change the schedule.")));
+}
+
+const FW_FRIEND = { open: "Friends can get in through it.", too_broad: "Allows any address. The owner has been told.",
+  blocked: "A rule blocks it. The owner has been told.", missing: "No rule lets it in yet. The owner has been told.", unknown: "" };
+
+async function firewallTab(box, s) {
+  const render = () => {
+    const f = firewallOf(s.id);
+    if (!firewallInfo) { box.replaceChildren(el("p", { class: "hint" }, "Reading the firewall rules…")); return; }
+    const check = el("button", { class: "btn sm admin-only", type: "button", onclick: async (e) => {
+      e.currentTarget.disabled = true; e.currentTarget.textContent = "Checking…";
+      await loadFirewall(true); render(); if (page && page.update) page.update();
+    } }, icon("refresh"), "Check again");
+    if (!f) { box.replaceChildren(el("div", { class: "panel" }, callout("warn", firewallInfo.error || "Not checked yet."), el("div", { class: "btnrow" }, check))); return; }
+    box.replaceChildren(el("div", { class: "panel" },
+      el("header", {}, el("h3", {}, "Windows Firewall, for Tailscale traffic"), check),
+      f.ports.length ? el("div", { class: "tablewrap" }, el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "Port"), el("th", {}, "Status"), el("th", {}, "Rule"))),
+        el("tbody", {}, f.ports.map((p) => el("tr", {},
+          el("td", { class: "num" }, `${p.protocol.toUpperCase()} ${p.port}`, p.label ? el("div", { class: "hint" }, p.label) : null),
+          el("td", {}, el("span", { class: `chip ${FW_CLASS[p.status] || ""}` }, FW_TEXT[p.status] || p.status)),
+          el("td", { class: "hint" }, isAdmin() ? p.detail : FW_FRIEND[p.status] || ""))))))
+        : el("p", { class: "hint" }, "No ports listed."),
+      isAdmin() && f.note ? callout("warn", f.note) : null,
+      ...(isAdmin() ? f.commands || [] : []).map((c) => el("div", { class: "field" },
+        el("span", { class: "flabel" }, "To add the missing rule, run this in an admin PowerShell in Basecamp's program folder on the host PC"),
+        el("div", { class: "addr" }, el("code", {}, c), el("button", { class: "btn ghost sm", type: "button", onclick: () => copyText(c, "Copied the command") }, icon("copy"), "Copy")))),
+      ...(isAdmin() ? firewallInfo.notes || [] : []).map((n) => el("p", { class: "hint" }, n)),
+      el("p", { class: "hint" }, "This only reads the firewall's rules. Tailscale's access rules or the game's listen address can still keep friends out, so it isn't a reachability test.",
+        firewallInfo.checked_at ? ` Checked ${hhmm(firewallInfo.checked_at)}.` : "")));
+  };
+  render();
+  await loadFirewall();
+  render();
+}
+
+async function historyTab(box, s) {
+  let res;
+  try { res = await api("GET", `/api/activity?server_id=${s.id}&limit=30`); } catch (e) { box.replaceChildren(callout("bad", e.message)); return; }
+  box.replaceChildren(el("div", { class: "panel" }, res.items.length ? el("div", { class: "list" }, res.items.map((item) => {
+    const ev = describe(item);
+    return el("div", { class: "row" }, el("div", { class: "grow" }, el("b", {}, ev.short), ` by ${whoText(item)}`,
+      item.failure ? el("span", { class: "chip c-bad", style: "margin-left:6px" }, "Failure") : null,
+      ev.detail ? el("div", { class: "hint" }, ev.detail) : null),
+    el("span", { class: "hint num", title: fullDate(item.ts) }, whenShort(item.ts)));
+  })) : el("p", { class: "hint" }, "Nothing yet."),
+  el("div", { class: "btnrow" }, el("a", { class: "btn sm ghost", href: "#activity" }, "All activity"))));
+}
+
+function callout(st, text) {
+  return el("div", { class: "callout", "data-st": st }, icon(st === "run" ? "check" : "alert"), el("div", { class: "grow" }, el("div", {}, text)));
+}
+
+// -- Activity (D-134) -------------------------------------------------------------------
+
+// What a row says: [icon, state colour, sentence after the server name, short label].
+const ACTIONS = {
+  start: ["play", "run", "started", "Started"], "friend.start": ["users", "run", "started", "Started"],
+  stop: ["stop", "idle", "stopped", "Stopped"], "friend.stop": ["users", "idle", "stopped", "Stopped"],
+  "stop.now": ["stop", "idle", "stopped without waiting for the warning", "Stopped now"],
+  restart: ["refresh", "idle", "restarted", "Restarted"], "friend.restart": ["users", "idle", "restarted", "Restarted"],
+  kill: ["bolt", "bad", "killed", "Killed"],
+  update: ["download", "upd", "update started", "Update started"], "friend.update": ["users", "upd", "update started", "Update started"],
+  install: ["download", "upd", "install started", "Install started"],
+  "steam.update.ok": ["download", "run", "updated", "Updated"], "steam.install.ok": ["download", "run", "installed", "Installed"],
+  "steam.update.failed": ["download", "bad", "update failed", "Update failed"], "steam.install.failed": ["download", "bad", "install failed", "Install failed"],
+  "steam.update.cancelled": ["download", "idle", "update cancelled", "Update cancelled"], "steam.install.cancelled": ["download", "idle", "install cancelled", "Install cancelled"],
+  "steam.cancel": ["download", "idle", "SteamCMD run cancelled", "Cancelled SteamCMD"], "steam.check": ["refresh", "idle", "asked Steam for the latest build", "Build check"],
+  crash: ["alert", "bad", "crashed", "Crashed"], "crash.gave_up": ["alert", "bad", "crashed too often; Basecamp stopped retrying", "Gave up restarting"],
+  "start.failed": ["alert", "bad", "couldn't be started", "Start failed"],
+  backup: ["box", "run", "backup made", "Backup made"], "backup.scheduled": ["box", "run", "backup made", "Backup made"],
+  "backup.failed": ["box", "bad", "backup failed", "Backup failed"], "backup.restore": ["box", "warn", "backup restored", "Backup restored"],
+  "backup.delete": ["trash", "idle", "backup deleted", "Backup deleted"], "backup.download": ["download", "idle", "backup downloaded", "Backup downloaded"],
+  console: ["terminal", "idle", "console:", "Console"], "friend.command": ["terminal", "idle", "quick command:", "Quick command"],
+  "schedule.restart": ["clock", "warn", "restart started by the schedule", "Scheduled restart"],
+  "schedule.update": ["clock", "upd", "update queued by the schedule", "Scheduled update"],
+  "schedule.restart.skipped": ["clock", "idle", "scheduled restart skipped: players on", "Restart skipped"],
+  "schedule.update.skipped": ["clock", "idle", "scheduled update skipped: players on", "Update skipped"],
+  "schedule.restart.failed": ["clock", "bad", "scheduled restart failed", "Scheduled restart failed"],
+  "schedule.update.failed": ["clock", "bad", "scheduled update failed", "Scheduled update failed"],
+  "notify.failed": ["chat", "bad", "", "Discord message failed"], "notify.test": ["chat", "run", "", "Discord test"],
+  "notify.webhook": ["chat", "idle", "", "Discord webhook"],
+  "config.save": ["file", "idle", "config saved:", "Config saved"], "config.restore": ["file", "idle", "config copy restored:", "Config restored"],
+  "config.read": ["file", "idle", "config opened:", "Config opened"], "config.refused": ["file", "warn", "config path refused:", "Config refused"],
+  "config.invalid": ["file", "warn", "config not saved:", "Config not saved"],
+  "server.add": ["plus", "idle", "added", "Added"], "server.update": ["sliders", "idle", "settings saved", "Settings saved"],
+  "server.delete": ["trash", "idle", "deleted from Basecamp", "Deleted"],
+  settings: ["sliders", "idle", "", "Settings saved"], "settings.reload": ["sliders", "idle", "", "Settings file read"],
+  "settings.backups_to_all": ["sliders", "idle", "", "Backup defaults to all"],
+  "template.add": ["template", "idle", "", "Template added"], "template.replace": ["template", "idle", "", "Template replaced"],
+  "template.override": ["template", "idle", "", "Template added"], "template.delete": ["template", "idle", "", "Template deleted"],
+  "template.refused": ["template", "warn", "", "Template refused"],
+  "update.check": ["download", "idle", "", "Update check"], "update.install": ["download", "upd", "", "Basecamp update"],
+  "update.refused": ["download", "warn", "", "Basecamp update refused"], "update.dismiss": ["download", "idle", "", "Update dismissed"],
+  "basecamp.restart": ["refresh", "idle", "", "Basecamp restarted"], "basecamp.restart.refused": ["refresh", "warn", "", "Restart refused"],
+  "setup.start": ["plus", "idle", "new game setup started", "Setup started"], "setup.finish": ["plus", "idle", "new game setup closed", "Setup closed"],
+  "setup.retry": ["plus", "idle", "setup step tried again", "Setup retried"], "setup.values": ["plus", "idle", "setup values written", "Setup values"],
+  "setup.next": ["plus", "idle", "setup moved on", "Setup next"],
+  "rcon.password": ["shield", "idle", "RCON password changed", "RCON password"], "rest.password": ["shield", "idle", "REST password changed", "REST password"],
+};
+
+// Basecamp-wide rows (no server): their own sentence.
+const GLOBAL = {
+  "notify.failed": (d) => ["Discord", ` message didn't send: ${d}`],
+  "notify.test": (d) => ["Discord", d === "sent" ? " sent the test message." : ` test message failed: ${d}`],
+  "notify.webhook": (d) => ["Discord", ` webhook ${d}.`],
+  settings: (d) => ["Settings", ` saved: ${d}.`],
+  "settings.reload": (d) => ["Settings file", ` read: ${d}.`],
+  "settings.backups_to_all": (d) => ["Backup defaults", ` given to all servers: ${d}.`],
+  "template.add": (d) => ["Template", ` ${d} added.`], "template.replace": (d) => ["Template", ` ${d} replaced.`],
+  "template.override": (d) => ["Template", ` ${d} added, replacing the built-in one.`], "template.delete": (d) => ["Template", ` ${d} deleted.`],
+  "template.refused": (d) => ["Template", ` refused: ${d}`],
+  "update.check": () => ["Basecamp", " checked for updates."], "update.install": (d) => ["Basecamp", ` update: ${d}.`],
+  "update.refused": (d) => ["Basecamp", ` update refused: ${d}`], "update.dismiss": () => ["Basecamp", " update banner dismissed."],
+  "basecamp.restart": () => ["Basecamp", " restarted."], "basecamp.restart.refused": (d) => ["Basecamp", ` restart refused: ${d}`],
+};
+
+function describe(item) {
+  const a = ACTIONS[item.action] || ["activity", "idle", item.action, item.action];
+  const [ic, st, verb, short] = a;
+  const failure = item.failure;
+  if (item.server_id === null && GLOBAL[item.action]) {
+    const [subject, rest] = GLOBAL[item.action](item.detail || "");
+    return { icon: ic, st: failure ? "bad" : st, subject, text: rest, short, detail: item.detail };
+  }
+  const subject = item.server || (item.server_id !== null ? `Server ${item.server_id}` : "Basecamp");
+  const showDetail = ["console", "friend.command", "config.save", "config.restore", "config.read", "config.refused", "config.invalid"].includes(item.action);
+  const text = verb.endsWith(":") ? ` ${verb} ` : ` ${verb}.`;
+  return { icon: ic, st: failure ? "bad" : st, subject, text, code: showDetail ? item.detail : "", short,
+    detail: !showDetail && item.detail && item.detail !== item.server ? item.detail : showDetail ? item.detail : "" };
+}
+
+function whoText(item) {
+  const w = item.who;
+  if (item.action.startsWith("friend.")) return w && w !== "unknown" ? `${w}, friend` : "a friend";
+  if (w === "basecamp") return "Basecamp";
+  if (w === "schedule") return "Schedule";
+  if (w === "auto-install") return "Basecamp, automatic install";
+  if (w === "settings.toml") return "the settings file";
+  if (w === "owner") return "Owner";
+  if (w === "localhost") return "Owner (this PC)";
+  return w || "someone";
+}
+
+const FILTERS = [["all", "Everything"], ["fail", "Failures"], ["crash", "Crashes"], ["friend", "Friends"],
+  ["update", "Updates"], ["backup", "Backups"], ["discord", "Discord"], ["config", "Config and console"]];
+
+function activityPage(root) {
+  let filter = store.get("bc-activity-filter") || "all";
+  if (!FILTERS.some(([f]) => f === filter) || (!isAdmin() && filter === "discord")) filter = "all";
+  let items = [];
+  let more = false;
+  const feed = el("div", { class: "feed" });
+  const failBar = el("div");
+  const filterBox = el("div", { class: "filters stick", role: "group", "aria-label": "Show" });
+  const moreBtn = el("button", { class: "btn sm", type: "button", hidden: true, onclick: () => load(true) }, "Show older");
+  const empty = el("p", { class: "hint", hidden: true }, "Nothing of that kind yet.");
+  root.replaceChildren(el("section", { class: "view mid", id: "v-activity" },
+    el("div", { class: "pagehead" }, el("div", { class: "grow" }, el("h1", {}, "Activity"),
+      el("p", { class: "muted" }, isAdmin() ? "What happened, who did it and when." : "What happened to the servers, who did it and when."))),
+    el("div", { class: "twocol left" }, filterBox,
+      el("div", { class: "stack", style: "gap:12px" }, failBar, feed, empty, el("div", { class: "btnrow" }, moreBtn)))));
+
+  const matches = (item) => filter === "all" || (filter === "fail" ? item.failure : item.kind === filter
+    || (filter === "config" && item.kind === "config"));
+
+  const renderFilters = () => {
+    filterBox.replaceChildren(...FILTERS.filter(([f]) => isAdmin() || f !== "discord").map(([f, label]) =>
+      el("button", { type: "button", "aria-pressed": String(f === filter), onclick: () => { filter = f; store.set("bc-activity-filter", f); render(); } },
+        el("span", {}, f === "config" && !isAdmin() ? "Console" : label),
+        f === "fail" && isAdmin() && failures ? el("span", { class: "count" }, String(failures)) : null)));
   };
 
-  const valuesForm = () => {
-    const inputs = view.values.map((v) => el("input", { value: v.current, autocomplete: "off", spellcheck: "false" }));
-    return el("div", {},
-      el("p", { class: "muted" }, "The game needs these before it works. They go into its config file the way the config editor saves it, keeping a copy of the old file."),
-      ...view.values.map((v, i) => field(v.label, inputs[i],
-        el("span", {}, v.hint ? `${v.hint} ` : "", el("code", {}, `${v.file}${v.section ? ` [${v.section}]` : ""} ${v.key}`),
-          v.error ? el("span", { class: "unverified" }, ` ${v.error}`) : null))),
-      el("div", { class: "buttons" }, el("button", { class: "primary", onclick: (e) =>
-        call("values", { values: Object.fromEntries(inputs.map((x, i) => [String(i), x.value])) }, e.target) },
-      view.step === "values" ? "Save and go on" : "Save again")));
+  const dismiss = async (item) => {
+    try { const out = await api("POST", `/api/activity/${item.id}/dismiss`); setFailures(out.open_failures); item.open = false; render(); toast("Dismissed"); }
+    catch (e) { toast(e.message, "bad"); }
+  };
+  const dismissAll = async () => {
+    try { const out = await api("POST", "/api/activity/dismiss"); setFailures(out.open_failures); items.forEach((i) => { i.open = false; }); render(); toast("All failures dismissed"); }
+    catch (e) { toast(e.message, "bad"); }
   };
 
   const render = () => {
-    if (!view) return;
-    const s = servers.find((x) => x.id === id);
-    head.replaceChildren(...[
-      el("div", { class: "card-head" }, el("a", { class: "name", href: `#server/${id}` }, view.name), statePill(view.state)),
-      el("ol", { class: "steps" }, view.steps.map((st) => el("li", { class: `step-${st.state}` },
-        st.label, st.state === "current" && view.status === "failed" ? " · stopped" : "",
-        st.state === "current" && view.running ? " · working…" : ""))),
-      view.message ? notice(view.message, view.status === "failed" ? "error" : "") : null].filter(Boolean));
-    const key = `${view.step} ${view.status} ${view.running}`;
-    const job = s && s.steam && s.steam.job;
-    if (view.status === "running" || view.running) {
-      shownKey = "";
-      body.replaceChildren(...[
-        el("p", {}, view.step === "install" ? "Installing with SteamCMD…" : "Starting it once so it writes its config files, then stopping it…"),
-        job ? notice(jobText(job)) : null,
-        job && job.phase === "steamcmd" && job.progress !== null ? el("progress", { max: "100", value: String(job.progress) }) : null,
-        el("p", { class: "hint" }, "Progress and output are in the server's ", el("a", { href: `#server/${id}` }, "console"), ".")].filter(Boolean));
-      return;
+    renderFilters();
+    failBar.replaceChildren(isAdmin() && failures ? el("div", { class: "callout", "data-st": "bad" }, icon("alert"),
+      el("div", { class: "grow" }, el("div", {}, el("strong", {}, `${failures} failure${failures === 1 ? "" : "s"}`), " still count towards the red badge.")),
+      el("button", { class: "btn sm", type: "button", onclick: dismissAll }, "Dismiss all")) : "");
+    const shown = items.filter(matches);
+    const out = [];
+    let day = "";
+    for (const item of shown) {
+      const label = dayLabel(item.ts);
+      if (label !== day) { day = label; out.push(el("div", { class: "day" }, label)); }
+      const ev = describe(item);
+      const countNote = isAdmin() && item.open ? item.server_id !== null
+        ? `. Counts until ${item.server || "it"} runs normally again, or you dismiss it.` : ". Counts until you dismiss it." : "";
+      out.push(el("div", { class: "ev", "data-st": ev.st },
+        el("span", { class: "ico" }, icon(ev.icon)),
+        el("div", { class: "body" }, el("b", {}, ev.subject), ev.text, ev.code ? el("code", {}, ev.code) : null,
+          item.failure && (!isAdmin() || item.open) ? el("span", { class: "fail" }, "Failure") : null,
+          !ev.code && ev.detail && item.server_id !== null ? el("div", { class: "hint" }, ev.detail) : null,
+          el("div", { class: "who muted" }, whoText(item), countNote),
+          isAdmin() && item.open ? el("button", { class: "btn sm ghost dismiss", type: "button", onclick: () => dismiss(item) }, "Dismiss") : null),
+        el("time", { datetime: new Date(item.ts * 1000).toISOString(), title: fullDate(item.ts) }, hhmm(item.ts))));
     }
-    if (key === shownKey) return;  // don't wipe what the admin is typing
-    shownKey = key;
-    const leave = el("button", { onclick: (e) => finish(false, e.target) }, "Leave setup");
-    if (view.status === "failed") {
-      const last = s && s.steam && s.steam.last;
-      body.replaceChildren(...[
-        el("p", {}, `Stopped at: ${STEP_TEXT[view.step] || view.step}. Fix what it says above, then try again.`),
-        view.step === "install" && last ? el("p", {}, el("a", { href: `/api/servers/${id}/steam/runs/${last.run_id}/log`, target: "_blank" }, "SteamCMD output")) : null,
-        el("div", { class: "buttons" }, el("button", { class: "primary", onclick: (e) => call("retry", undefined, e.target) }, "Try again"),
-          el("a", { class: "button", href: `#server/${id}` }, "Server page"), leave)].filter(Boolean));
-      return;
-    }
-    if (view.step === "values") {
-      body.replaceChildren(valuesForm(), el("div", { class: "buttons" }, leave));
-    } else if (view.step === "firewall") {
-      firewallSection(id, firewallBox, root);
-      loadFirewall(true).then(() => firewallSection(id, firewallBox, root));
-      body.replaceChildren(
-        el("p", { class: "muted" }, "Friends can only join if Windows Firewall lets the game's ports in from Tailscale. If a port says missing, run the command on the host PC, then Check again."),
-        firewallBox,
-        el("div", { class: "buttons" }, el("button", { class: "primary", onclick: (e) => call("next", undefined, e.target) }, "Next"), leave),
-        view.values.length ? el("details", {}, el("summary", {}, "Change the values"), valuesForm()) : null);
-    } else if (view.step === "ready") {
-      body.replaceChildren(el("p", {}, el("strong", {}, `${view.name} is ready to start.`)),
-        el("div", { class: "buttons" },
-          el("button", { class: "primary", onclick: (e) => finish(true, e.target) }, "Start it"),
-          el("button", { onclick: async (e) => {
-            e.target.disabled = true;
-            try { await api("POST", `/api/setups/${id}/finish`); location.hash = `#server/${id}`; }
-            catch (err) { alert(err.message); e.target.disabled = false; }
-          } }, "Done, don't start")));
-    }
+    feed.replaceChildren(...out);
+    empty.hidden = shown.length > 0;
+    moreBtn.hidden = !more;
   };
 
-  const load = async () => {
-    try { view = await api("GET", `/api/setups/${id}`); render(); }
-    catch (e) {
-      clearInterval(timer);
-      body.replaceChildren(notice(e.message, "error"), el("p", {}, el("a", { href: `#server/${id}` }, "Server page")));
-    }
+  const PAGE = 200;
+  const load = async (older = false) => {
+    try {
+      const before = older && items.length ? `&before=${items[items.length - 1].id}` : "";
+      const res = await api("GET", `/api/activity?limit=${PAGE}${before}`);
+      items = older ? items.concat(res.items) : res.items;
+      more = res.items.length === PAGE;
+      if (res.open_failures !== undefined) setFailures(res.open_failures);
+      render();
+    } catch (e) { feed.replaceChildren(callout("bad", e.message)); }
   };
-  const timer = setInterval(load, 1500);
+  render();
   load();
-  return { update: render, close: () => clearInterval(timer) };
+  let shownFailures = failures;
+  const timer = setInterval(() => { if (!document.hidden) load(); }, 30 * 1000);
+  return { update: () => { if (failures !== shownFailures) { shownFailures = failures; load(); } }, close: () => clearInterval(timer) };
 }
 
-// -- templates -----------------------------------------------------------------------
+// -- routing ---------------------------------------------------------------------------
 
-const TEMPLATE_DOCS = "https://github.com/dwyer94/basecamp/blob/main/docs/08-templates.md";
-
-async function templatesPage(root) {
-  root.replaceChildren(el("h2", {}, "Game templates"), el("p", { class: "empty" }, "Loading…"));
-  const res = await api("GET", "/api/templates");
-  const again = () => templatesPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
-  const remove = async (id, what) => {
-    if (!confirm(`Delete the data-folder template ${id}?${what} Servers made from it keep their settings.`)) return;
-    try { await api("DELETE", `/api/templates/${encodeURIComponent(id)}`); toast(`Deleted ${id}`); again(); }
-    catch (e) { alert(e.message); }
-  };
-  const brokenId = (file) => {
-    const m = file.match(/^data folder: ([a-z0-9][a-z0-9-]{0,62})\.json$/);
-    return m ? m[1] : null;
-  };
-  root.replaceChildren(el("h2", {}, "Game templates"),
-    el("p", { class: "muted" }, "Built-in templates ship with Basecamp. Add one below, or put a JSON file in ",
-      el("code", {}, res.data_folder), ". The format: ",
-      el("a", { href: TEMPLATE_DOCS, target: "_blank", rel: "noreferrer" }, "docs/08-templates.md"), "."),
-    addTemplateCard(again),
-    ...res.errors.map((e) => el("div", { class: "notice error" }, `${e.file}: ${e.error}`,
-      brokenId(e.file) ? el("div", { class: "buttons" },
-        el("button", { class: "small danger", onclick: () => remove(brokenId(e.file), "") }, "Delete this file")) : null)),
-    ...res.templates.map((t) => el("div", { class: "card" },
-      el("div", { class: "card-head" }, el("span", { class: "name" }, t.name),
-        el("span", { class: "tag" }, t.overrides ? "data folder (overrides built-in)" : t.source)),
-      el("div", { class: "meta" },
-        t.steam_app_id ? el("span", {}, `app ${t.steam_app_id}`) : null,
-        el("span", {}, t.exe),
-        el("span", {}, t.ports.map((p) => `${p.protocol}/${p.port}`).join(", "))),
-      t.unverified.length
-        ? el("div", { class: "unverified" }, "Not yet checked: ", t.unverified.join(", ")) : null,
-      t.notes ? el("p", { class: "muted" }, t.notes) : null,
-      el("div", { class: "muted" }, t.docs.map((d) => el("div", {}, el("a", { href: d, target: "_blank", rel: "noreferrer" }, d)))),
-      t.source === "data folder" ? el("div", { class: "buttons" },
-        el("button", { class: "small danger", onclick: () => remove(t.id, t.overrides ? " The built-in one comes back." : "") },
-          t.overrides ? "Delete (back to built-in)" : "Delete")) : null)));
-}
-
-// Add a template (D-129): paste JSON or pick a .json file; checked like a file (D-31).
-function addTemplateCard(done) {
-  const area = el("textarea", { rows: 12, spellcheck: "false", autocapitalize: "off",
-    placeholder: ['{', '  "id": "mygame",', '  "name": "My Game",', '  "steam_app_id": 123456,',
-      '  "exe": "MyGameServer.exe",', '  "ports": [{"port": 7777, "protocol": "udp", "label": "game"}]', '}'].join("\n") });
-  const file = el("input", { type: "file", accept: ".json,application/json" });
-  const out = el("div");
-  const MAX = 256 * 1024;
-  file.addEventListener("change", async () => {
-    const f = file.files[0];
-    if (!f) return;
-    if (f.size > MAX) { out.replaceChildren(notice(`${f.name} is ${Math.round(f.size / 1024)} KB; a template is at most 256 KB.`, "error")); return; }
-    area.value = await f.text();
-    out.replaceChildren(notice(`Loaded ${f.name}. Check or save it.`, "ok"));
-  });
-  const send = async (save) => {
-    const text = area.value;
-    if (!text.trim()) { out.replaceChildren(notice("Paste a template or pick a file first.", "error")); return; }
-    try {
-      const check = await api("POST", "/api/templates", { text, dry_run: true });
-      const unv = check.unverified.length ? ` Not yet checked: ${check.unverified.join(", ")}.` : "";
-      if (!save) {
-        out.replaceChildren(notice(`${check.name} (${check.id}) is valid.${unv}` +
-          (check.conflict === "override" ? " Saving it overrides the built-in template." : check.conflict === "replace" ? " Saving it replaces the data-folder template with that id." : ""), "ok"));
-        return;
-      }
-      if (check.conflict === "override" && !confirm(`${check.id} is a built-in template. Save this one to override it? Delete it later to get the built-in back.`)) return;
-      if (check.conflict === "replace" && !confirm(`Replace the data-folder template ${check.id}?`)) return;
-      const saved = await api("POST", "/api/templates", { text, replace: !!check.conflict });
-      toast(`Saved ${saved.id}`);
-      done();
-    } catch (e) {
-      out.replaceChildren(el("div", { class: "notice error" }, el("strong", {}, "Not valid: "), el("pre", { class: "notes" }, e.message)));
-    }
-  };
-  return el("details", { class: "card" },
-    el("summary", {}, "Add a template"),
-    el("p", { class: "hint" }, "Paste the JSON, or pick a .json file (phones: from Files or a download). It's checked the same way as a file in the data folder, then saved as ",
-      el("code", {}, "<id>.json"), " there. It shows up in Add server at once."),
-    field("JSON file", file),
-    field("Or paste it", area),
-    out,
-    el("div", { class: "buttons" },
-      el("button", { onclick: () => send(false) }, "Check"),
-      el("button", { class: "primary", onclick: () => send(true) }, "Save template")));
-}
-
-// -- config editor (R-40..R-43) -------------------------------------------------------------
-
-// Palworld keeps its whole config on one OptionSettings=(Key=Value,...) line. Split it into
-// fields (top-level commas only; quoted strings and (a,b) lists stay whole) and back.
-const OPTION_LINE = /^(\s*OptionSettings\s*=\s*\()(.*)(\)\s*)$/;
-
-function parseOptionLine(line) {
-  const m = line.match(OPTION_LINE);
-  if (!m) return null;
-  const items = [];
-  let depth = 0, quoted = false, cur = "";
-  for (const ch of m[2]) {
-    if (quoted) { cur += ch; if (ch === '"') quoted = false; continue; }
-    if (ch === '"') quoted = true;
-    else if (ch === "(") depth++;
-    else if (ch === ")") depth--;
-    else if (ch === "," && depth === 0) { items.push(cur); cur = ""; continue; }
-    cur += ch;
-  }
-  if (cur) items.push(cur);
-  const pairs = items.map((it) => {
-    const i = it.indexOf("=");
-    return i > 0 ? { key: it.slice(0, i), raw: it.slice(i + 1) } : null;
-  });
-  if (quoted || depth !== 0 || !pairs.length || pairs.some((p) => !p)) return null;
-  return { head: m[1], tail: m[3], pairs };
-}
-
-function optionLine(parsed) {
-  return parsed.head + parsed.pairs.map((p) => `${p.key}=${p.raw}`).join(",") + parsed.tail;
-}
-
-function optionFields(parsed, onChange) {
-  const filter = el("input", { placeholder: "Filter settings", autocomplete: "off", spellcheck: "false" });
-  const rows = parsed.pairs.map((p) => {
-    const isQuoted = /^".*"$/.test(p.raw);
-    const isBool = /^(True|False)$/.test(p.raw);
-    let input;
-    if (isBool) {
-      input = el("select", {}, ["True", "False"].map((v) => el("option", { value: v, selected: p.raw === v }, v)));
-    } else {
-      input = el("input", { value: isQuoted ? p.raw.slice(1, -1) : p.raw, autocomplete: "off", spellcheck: "false" });
-    }
-    input.addEventListener("input", () => {
-      let v = input.value;
-      if (isQuoted) v = `"${v.replace(/"/g, "")}"`;  // the format has no escapes
-      p.raw = v;
-      onChange();
-    });
-    return el("div", { class: "opt", "data-key": p.key.toLowerCase() },
-      el("label", {}, p.key, isQuoted ? el("span", { class: "hint" }, " (text)") : null), input);
-  });
-  filter.addEventListener("input", () => {
-    const q = filter.value.trim().toLowerCase();
-    for (const r of rows) r.hidden = q && !r.dataset.key.includes(q);
-  });
-  return el("div", {}, filter, el("div", { class: "opts" }, rows));
-}
-
-function configPage(root, id, n) {
-  let file = null;          // the file as last loaded or saved
-  let saved = "";           // its text, to tell unsaved edits
-  const head = el("div", { class: "card" });
-  const messages = el("div");
-  const area = el("textarea", { class: "editor", wrap: "off", spellcheck: "false",
-    autocapitalize: "off", autocomplete: "off", "aria-label": "File contents" });
-  const fieldsBox = el("div", { hidden: true });
-  const copiesBox = el("div");
-  const copyView = el("div");
-  const wrapBox = el("input", { type: "checkbox" });
-  const fieldsBtn = el("button", { type: "button", hidden: true }, "Edit as fields");
-  const saveBtn = el("button", { class: "primary", type: "button" }, "Save");
-  const server = () => servers.find((x) => x.id === id);
-  const dirty = () => file !== null && area.value !== saved;
-  const base = `/api/servers/${id}/configs/${n}`;
-
-  wrapBox.addEventListener("change", () => area.setAttribute("wrap", wrapBox.checked ? "soft" : "off"));
-
-  const optionIndex = () => area.value.split("\n").findIndex((l) => OPTION_LINE.test(l));
-  let fieldsOn = false;
-  const showFields = (on) => {
-    fieldsOn = on;
-    if (on) {
-      const lines = area.value.split("\n");
-      const i = optionIndex();
-      const parsed = i >= 0 ? parseOptionLine(lines[i]) : null;
-      if (!parsed) { toast("Couldn't read the OptionSettings line as fields"); fieldsOn = false; }
-      else {
-        fieldsBox.replaceChildren(optionFields(parsed, () => {
-          const now = area.value.split("\n");
-          now[i] = optionLine(parsed);
-          area.value = now.join("\n");
-          renderHead();
-        }));
-      }
-    }
-    fieldsBox.hidden = !fieldsOn;
-    area.hidden = fieldsOn;
-    fieldsBtn.textContent = fieldsOn ? "Edit as text" : "Edit as fields";
-  };
-  fieldsBtn.addEventListener("click", () => showFields(!fieldsOn));
-  area.addEventListener("input", () => renderHead());
-
-  const renderHead = () => {
-    const s = server();
-    head.replaceChildren(
-      el("div", { class: "card-head" },
-        el("a", { class: "name", href: `#server/${id}` }, s ? s.name : `Server ${id}`),
-        s ? statePill(s.state) : null),
-      file ? el("div", {},
-        el("div", { style: "margin-top:6px" }, el("strong", {}, file.name), " ",
-          el("span", { class: "tag" }, file.kind), " ", dirty() ? el("span", { class: "tag unverified" }, "unsaved") : null),
-        el("div", { class: "hint" }, el("code", {}, file.path)),
-        el("div", { class: "hint" }, file.exists ? file.encoding : "Doesn't exist yet: saving creates it.",
-          file.kind === "json" ? " · JSON is checked before saving." : "")) : "");  // not null: replaceChildren prints it
-  };
-
-  const restartOffer = (what = "Saved") => el("div", { class: "notice ok" },
-    `${what}. The server is running; it reads the file when it starts. `,
-    el("div", { class: "buttons" },
-      el("button", { class: "primary", onclick: async (e) => {
-        const s = server();
-        if (!s || !confirm(`Restart ${s.name} now?`)) return;
-        e.target.disabled = true;
-        try { await api("POST", `/api/servers/${id}/restart`); toast(`Restart: ${s.name}`); messages.replaceChildren(); }
-        catch (err) { alert(err.message); e.target.disabled = false; }
-      } }, "Restart now"),
-      el("button", { onclick: () => messages.replaceChildren() }, "Later")));
-
-  const load = async () => {
-    try { file = await api("GET", base); } catch (e) {
-      root.replaceChildren(head, notice(e.message, "error"), el("a", { href: `#server/${id}` }, "Back"));
-      renderHead();
-      return;
-    }
-    area.value = file.text;
-    saved = area.value;
-    const hasLine = optionIndex() >= 0 && parseOptionLine(area.value.split("\n")[optionIndex()]);
-    fieldsBtn.hidden = !hasLine;
-    if (fieldsOn) showFields(Boolean(hasLine));
-    renderHead();
-    renderCopies(file.copies);
-  };
-
-  const save = async (force = false) => {
-    saveBtn.disabled = true;
-    try {
-      const res = await api("PUT", base, { text: area.value, base_sha256: file.sha256, force });
-      file.sha256 = res.sha256;
-      file.exists = true;
-      saved = area.value;
-      renderHead();
-      renderCopies(res.copies);
-      messages.replaceChildren(res.running ? restartOffer()
-        : notice(res.copy ? "Saved. The old file was kept as a copy below." : "Saved.", "ok"));
-    } catch (e) {
-      if (/changed on disk/.test(e.message)) {
-        if (confirm(`${e.message}. Overwrite it with your version? (Its current contents are kept as a copy.)`)) {
-          saveBtn.disabled = false; return save(true);
-        }
-        messages.replaceChildren(notice(`${e.message}. Not saved. Reload to see it (your edits are lost), or save again to overwrite.`, "error"));
-      } else {
-        messages.replaceChildren(notice(e.message, "error"));
-      }
-    }
-    saveBtn.disabled = false;
-  };
-  saveBtn.addEventListener("click", () => save());
-
-  const reload = () => {
-    if (dirty() && !confirm("Throw away your unsaved edits?")) return;
-    messages.replaceChildren();
-    load();
-  };
-
-  const viewCopy = async (c) => {
-    try {
-      const res = await api("GET", `${base}/copies/${encodeURIComponent(c.name)}`);
-      const pre = el("textarea", { class: "editor", wrap: "off", readonly: true, "aria-label": "Copy contents" });
-      pre.value = res.text;
-      copyView.replaceChildren(el("div", { class: "card" },
-        el("div", { class: "card-head" }, el("span", { class: "name" }, `Copy from ${new Date(c.created * 1000).toLocaleString()}`),
-          el("button", { class: "small", onclick: () => copyView.replaceChildren() }, "Close")),
-        el("div", { class: "hint" }, res.encoding), pre));
-      copyView.scrollIntoView();
-    } catch (e) { alert(e.message); }
-  };
-
-  const restore = async (c) => {
-    if (dirty() && !confirm("You have unsaved edits; restoring throws them away. Go on?")) return;
-    if (!confirm(`Put back the copy from ${new Date(c.created * 1000).toLocaleString()}? The current file is kept as a copy first.`)) return;
-    try {
-      const res = await api("POST", `${base}/copies/${encodeURIComponent(c.name)}/restore`);
-      copyView.replaceChildren();
-      await load();
-      messages.replaceChildren(res.running ? restartOffer("Restored")
-        : notice("Restored. The file it replaced was kept as a copy.", "ok"));
-    } catch (e) { alert(e.message); }
-  };
-
-  const renderCopies = (copies) => {
-    copiesBox.replaceChildren(copies.length ? el("table", {}, el("tbody", {}, copies.map((c, i) => el("tr", {},
-      el("td", {}, new Date(c.created * 1000).toLocaleString(), " ", i === 0 ? el("span", { class: "tag" }, "newest") : null,
-        el("div", { class: "hint" }, c.reason === "restore" ? "before a restore" : "before a save")),
-      el("td", {}, fmtSize(c.size_bytes)),
-      el("td", {}, el("div", { class: "buttons", style: "margin:0" },
-        el("button", { class: "small", onclick: () => viewCopy(c) }, "View"),
-        el("button", { class: "small", onclick: () => restore(c) }, "Restore")))))))
-      : el("p", { class: "muted" }, "None yet. Each save keeps the old file here."));
-  };
-
-  const onLeave = (e) => { if (dirty()) { e.preventDefault(); e.returnValue = ""; } };
-  window.addEventListener("beforeunload", onLeave);
-
-  root.replaceChildren(head, messages,
-    el("div", { class: "buttons", style: "margin:0 0 8px" }, saveBtn,
-      el("button", { type: "button", onclick: reload }, "Reload"), fieldsBtn,
-      el("label", { class: "check", style: "margin:0" }, wrapBox, "Wrap long lines")),
-    area, fieldsBox,
-    el("h2", {}, "Earlier copies"),
-    el("p", { class: "muted" }, "The newest 20 are kept. Restore puts one back exactly as it was."),
-    copiesBox, copyView);
-  renderHead();
-  load();
-  return { update: renderHead, dirty, close: () => window.removeEventListener("beforeunload", onLeave) };
-}
-
-// -- settings (D-52) and Discord (R-60..R-62) ------------------------------------------------
-
-async function settingsPage(root) {
-  const res = await api("GET", "/api/settings");
-  const n = res.notify;
-  const joinInput = el("input", { value: res.join_host, placeholder: "e.g. 100.x.y.z", autocomplete: "off", spellcheck: "false" });
-  const everyInput = el("input", { type: "number", min: "0", step: "any", value: res.default_backup_every_h });
-  const keepInput = el("input", { type: "number", min: "1", value: res.default_backup_keep });
-  const allBox = el("input", { type: "checkbox" });
-  const betaBox = el("input", { type: "checkbox", checked: res.update_beta });
-  const hourSelect = el("select", {},
-    el("option", { value: "-1", selected: res.update_auto_hour === -1 }, "Off (install by hand)"),
-    [...Array(24).keys()].map((h) => el("option", { value: String(h), selected: res.update_auto_hour === h },
-      `${String(h).padStart(2, "0")}:00`)));
-  const steamInput = el("input", { value: res.steamcmd_path, placeholder: "%USERPROFILE%\\Desktop\\SteamCmd\\steamcmd.exe", autocomplete: "off", spellcheck: "false" });
-  const saveSettings = async () => {
-    if (allBox.checked && !confirm(`Give all ${servers.length} servers this backup schedule and count?`)) return;
-    try {
-      const out = await api("PUT", "/api/settings", {
-        join_host: joinInput.value.trim(), steamcmd_path: steamInput.value.trim(),
-        default_backup_every_h: Number(everyInput.value || 0), default_backup_keep: Number(keepInput.value || 1),
-        update_beta: betaBox.checked, update_auto_hour: Number(hourSelect.value),
-        apply_backup_defaults: allBox.checked });
-      me = await api("GET", "/api/me");
-      toast(out.changed.length || out.servers_updated.length
-        ? `Saved${out.servers_updated.length ? `; ${out.servers_updated.length} servers updated` : ""}` : "Nothing changed");
-      settingsPage(root);
-    } catch (e) { alert(e.message); }
-  };
-
-  const live = res.live_status;
-  const liveBox = el("input", { type: "checkbox", checked: live.on });
-  const saveLive = async () => {
-    try {
-      await api("PUT", "/api/settings", { discord_live_status: liveBox.checked });
-      toast(liveBox.checked ? "Live status on" : "Live status off");
-      settingsPage(root);
-    } catch (e) { alert(e.message); }
-  };
-  const urlInput = el("input", { placeholder: "https://discord.com/api/webhooks/…", autocomplete: "off" });
-  const save = async (serverId, input) => {
-    const path = serverId ? `/api/servers/${serverId}/webhook` : "/api/notify";
-    try {
-      await api("PUT", path, { webhook_url: input.value.trim() });
-      toast(input.value.trim() ? "Webhook saved" : "Webhook removed");
-      settingsPage(root);
-    } catch (e) { alert(e.message); }
-  };
-  const test = async (serverId) => {
-    try {
-      await api("POST", `/api/notify/test${serverId ? `?server_id=${serverId}` : ""}`);
-      toast("Test message sent");
-    } catch (e) { alert(e.message); }
-  };
-  const serverRows = servers.map((s) => {
-    const own = n.servers[String(s.id)];
-    const input = el("input", { placeholder: own ? "Leave empty and save to remove" : "Optional: its own webhook", autocomplete: "off" });
-    return el("div", { class: "card" },
-      el("div", { class: "card-head" }, el("span", { class: "name" }, s.name)),
-      el("div", { class: "hint" }, own ? el("span", {}, "Own webhook: ", el("code", {}, own)) : "Uses the main webhook."),
-      input,
-      el("div", { class: "buttons" },
-        el("button", { class: "small", onclick: () => save(s.id, input) }, "Save"),
-        own ? el("button", { class: "small", onclick: () => test(s.id) }, "Test") : null));
-  });
-  const saveMain = () => {
-    if (!urlInput.value.trim() && !(n.configured && confirm("Remove the main webhook? Nothing will post to Discord."))) return;
-    save(null, urlInput);
-  };
-  const ownCount = Object.keys(n.servers).length;
-  const updateBox = el("div");
-  let checkNow = null;
-  const showUpdate = (u) => {
-    const status = { idle: "up to date", checking: "checking…", downloading: "downloading…",
-      ready: `${u.ready_version} is ready to install (see the dashboard)`, failed: u.error, installing: "installing…" }[u.status];
-    updateBox.replaceChildren(
-      el("div", { class: "hint" }, `This is Basecamp ${u.current}. `,
-        u.last_check ? `Last checked ${new Date(u.last_check).toLocaleString()}: ` : "Not checked yet. ",
-        el("span", { class: u.status === "failed" ? "unverified" : "" }, status || u.status)),
-      ...(u.has_key ? [] : [el("div", { class: "hint unverified" }, "This build has no release key, so it can't check updates.")]),
-      el("div", { class: "hint" }, u.check_h > 0 ? `Checks every ${u.check_h} h.` : "Automatic checks are off (update_check_h = 0)."),
-      el("div", { class: "buttons" }, el("button", { class: "small", onclick: checkNow }, "Check now")));
-  };
-  checkNow = async () => {
-    try {
-      let u = await api("POST", "/api/update/check");
-      showUpdate(u);
-      for (let i = 0; i < 150 && ["checking", "downloading"].includes(u.status); i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        u = await api("GET", "/api/update");
-        showUpdate(u);
-      }
-    } catch (e) { alert(e.message); }
-  };
-  showUpdate(res.update);
-  root.replaceChildren(el("h2", {}, "Settings"),
-    el("div", { class: "card" },
-      el("div", { class: "card-head" }, el("span", { class: "name" }, "Join address")),
-      field("Join host", joinInput, "The host PC's Tailscale IP (or name) friends type in. The Copy buttons give <join host>:<the server's join port>."),
-      el("div", { class: "card-head", style: "margin-top:18px" }, el("span", { class: "name" }, "Backups")),
-      el("div", { class: "hint" }, "What a new server starts with; each server can change its own under Edit."),
-      field("Back up every (hours)", everyInput, "While the server runs. 0 = only by hand and before updates."),
-      field("Backups to keep", keepInput),
-      el("label", { class: "check" }, allBox, `Also give all ${servers.length} existing servers this schedule and count`),
-      el("div", { class: "hint" }, "Stored in ", el("code", {}, res.backups_dir), "."),
-      el("div", { class: "card-head", style: "margin-top:18px" }, el("span", { class: "name" }, "SteamCMD")),
-      field("steamcmd.exe", steamInput, "Empty = the default (the greyed-out text)."),
-      el("div", { class: res.steamcmd_found ? "hint" : "hint unverified" },
-        res.steamcmd_found ? "Found: " : "Not found: ", el("code", {}, res.steamcmd)),
-      el("div", { class: "card-head", style: "margin-top:18px" }, el("span", { class: "name" }, "Basecamp updates")),
-      updateBox,
-      el("label", { class: "check" }, betaBox, "Beta channel: offer pre-releases too"),
-      field("Auto-install", hourSelect, "When a new release is out, install it at this hour (this PC's time). A version that rolled back once is never auto-installed."),
-      el("div", { class: "buttons" }, el("button", { class: "primary", onclick: saveSettings }, "Save settings"))),
-
-    el("h2", {}, "Discord"),
-    el("div", { class: "card" },
-      el("div", { class: "card-head" }, el("span", { class: "name" }, "Webhook"),
-        el("span", { class: "tag" }, n.configured ? "set" : "not set")),
-      el("div", { class: "hint" }, "One channel gets every message. Make a webhook in Discord (Channel settings → Integrations → Webhooks). It's kept in the data folder's secrets.toml and never shown in full."),
-      n.configured ? el("div", { class: "hint" }, el("code", {}, n.webhook)) : null,
-      field(n.configured ? "Replace with" : "Webhook URL", urlInput, n.configured ? "Leave empty and save to remove it." : null),
-      el("div", { class: "buttons" },
-        el("button", { class: "primary", onclick: saveMain }, "Save webhook"),
-        n.configured ? el("button", { onclick: () => test(null) }, "Send a test") : null),
-      el("div", { class: "hint" }, `Sent ${n.sent}, failed ${n.failed}, waiting ${n.pending} since Basecamp started.`),
-      el("label", { class: "check", style: "margin-top:12px" }, liveBox, "Live status message: keep one message in the channel showing every server's state and join address, edited in place"),
-      el("div", { class: "hint" }, live.on
-        ? (live.error ? el("span", { class: "unverified" }, `Not updated: ${live.error}. Basecamp keeps trying.`)
-          : `${live.has_message ? "Editing its message" : "Posts its message when a server changes"}${live.edits ? ` (${live.edits} edits since Basecamp started)` : ""}. Delete it in Discord and Basecamp posts a new one.`)
-        : "Off. Event messages post either way."),
-      el("div", { class: "buttons" }, el("button", { class: "small", onclick: saveLive }, "Save"))),
-    el("details", { class: "card", open: ownCount > 0 },
-      el("summary", {}, `Advanced: a webhook per server${ownCount ? ` (${ownCount} set)` : ""}`),
-      el("p", { class: "muted" }, "A server's own webhook replaces the main one for that server. Which events post is set in each server's Edit form."),
-      ...serverRows),
-
-    el("h2", {}, "Friends"),
-    friendCard(res, root),
-
-    el("h2", {}, "Set in settings.toml"),
-    tomlCard(res, root),
-
-    el("h2", {}, "Basecamp"),
-    restartCard(res.update));
-}
-
-// Friends may start, stop and restart (D-131). Off by default.
-function friendCard(res, root) {
-  const modes = { off: "Off: only admins", logins: "These Tailscale logins", anyone: "Anyone who can open the page" };
-  const radios = Object.entries(modes).map(([value, label]) =>
-    el("label", { class: "check" }, el("input", { type: "radio", name: "friend_control", value, checked: res.friend_control === value }), label));
-  const logins = el("textarea", { rows: 3, spellcheck: "false", autocapitalize: "off", placeholder: "pal@example.com\none per line" });
-  logins.value = res.friend_control_logins.join("\n");
-  const save = async () => {
-    const mode = radios.map((r) => $("input", r)).find((i) => i.checked).value;
-    try {
-      const out = await api("PUT", "/api/settings", { friend_control: mode,
-        friend_control_logins: logins.value.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean) });
-      toast(out.changed.length ? "Saved" : "Nothing changed");
-      settingsPage(root);
-    } catch (e) { alert(e.message); }
-  };
-  return el("div", { class: "card" },
-    el("p", { class: "muted", style: "margin-top:0" }, "Let friends start, stop and restart servers from their page. Nothing else: no config, delete, update, console or passwords. A stop or restart still warns players first, each click goes in the audit log, and a server takes one friend click per ",
-      `${res.friend_control_gap_s} s.`),
-    ...radios,
-    field("Logins", logins, "Their Tailscale logins, as on the admin list."),
-    el("div", { class: "hint unverified" }, "Not yet checked (Q-02): whether a friend's request through tailscale serve carries their Tailscale login. If it doesn't, the login list lets nobody in; 'Anyone who can open the page' works either way."),
-    el("div", { class: "hint" }, "'Anyone' means anyone who can reach this page: every friend you share the host PC with on Tailscale."),
-    el("div", { class: "buttons" }, el("button", { class: "small", onclick: save }, "Save")));
-}
-
-// settings.toml edited by hand (D-127): picked up within seconds, or on Reload settings.
-function tomlCard(res, root) {
-  const f = res.file;
-  const reload = async () => {
-    try {
-      const out = await api("POST", "/api/settings/reload");
-      const r = out.reloaded;
-      me = await api("GET", "/api/me");
-      toast(r.error ? "Not applied: the file has a problem"
-        : r.applied.length || r.restart.length
-          ? [r.applied.length ? `Applied ${r.applied.join(", ")}` : "", r.restart.length ? `after a restart: ${r.restart.join(", ")}` : ""].filter(Boolean).join("; ")
-          : "No changes");
-      if (!me.is_admin) { location.reload(); return; }
-      settingsPage(root);
-    } catch (e) { alert(e.message); }
-  };
-  return el("div", { class: "card" },
-    f.error ? notice(`settings.toml wasn't applied, so the settings are as before: ${f.error}`, "error") : null,
-    f.restart_pending.length ? notice(el("span", {}, "Changed in the file, used after ",
-      el("strong", {}, "Restart Basecamp"), ": ",
-      f.restart_pending.map((p) => `${p.key} ${p.now} → ${p.after}`).join(", "), ".")) : null,
-    el("p", { class: "muted", style: "margin-top:0" }, "Edit these in ", el("code", {}, res.settings_file),
-      `. Basecamp picks up a saved change within ${f.every_s} s (or press Reload settings), admin logins included. Only ${f.restart_keys.join(", ")} need a restart.`),
-    el("table", {}, el("tbody", {},
-      el("tr", {}, el("td", {}, "Admin logins"), el("td", {}, res.admin_logins.length ? res.admin_logins.join(", ") : "none (only this PC)")),
-      el("tr", {}, el("td", {}, "Config copies kept"), el("td", {}, String(res.config_copies_keep))),
-      el("tr", {}, el("td", {}, "Last read"), el("td", {}, new Date(f.loaded_at * 1000).toLocaleString())))),
-    el("div", { class: "buttons" }, el("button", { class: "small", onclick: reload }, "Reload settings")));
-}
-
-// Restart Basecamp (D-126): only under the launcher, which starts it again.
-function restartCard(u) {
-  const box = el("div");
-  if (u.restarting) waitForRestart(me.started_at, box);
-  return el("div", { class: "card" }, box,
-    el("div", { class: "buttons", style: "margin-top:0" },
-      el("button", { class: "danger", disabled: !u.can_install || u.restarting, onclick: (e) => restartBasecamp(box, e.target) }, "Restart Basecamp")),
-    el("div", { class: "hint" }, u.can_install
-      ? "Basecamp exits and its launcher starts it again within seconds. Game servers keep running and are picked up again; an install or update must finish first."
-      : "Basecamp isn't running under its launcher here (python -m basecamp), so nothing would start it again. Restart it by hand."));
-}
-
-// -- audit log -------------------------------------------------------------------------
-
-async function auditPage(root) {
-  const rows = await api("GET", "/api/audit?limit=200");
-  const names = Object.fromEntries(servers.map((s) => [s.id, s.name]));
-  root.replaceChildren(el("h2", {}, "Audit log"),
-    rows.length ? el("table", {},
-      el("thead", {}, el("tr", {}, ["When", "Who", "What", "Server", "Detail"].map((h) => el("th", {}, h)))),
-      el("tbody", {}, rows.map((r) => el("tr", {},
-        el("td", {}, new Date(r.ts).toLocaleString()), el("td", {}, r.who), el("td", {}, r.action),
-        el("td", {}, r.server_id === null ? "" : names[r.server_id] || `#${r.server_id}`),
-        el("td", {}, r.detail)))))
-      : el("p", { class: "empty" }, "Nothing yet."));
-}
-
-// -- routing ------------------------------------------------------------------------
-
+const ADMIN_ROUTES = ["config", "new", "edit", "newgame", "setup", "templates", "prefs", "settings", "discord", "audit", "welcome"];
 let lastHash = location.hash;
+let routing = false;
 
-function route() {
-  if (page && page.dirty && page.dirty() && !confirm("Leave without saving your edits?")) {
-    history.replaceState(null, "", lastHash || "#");
-    return;
+async function route() {
+  if (routing) return;
+  if (page && page.dirty && page.dirty()) {
+    routing = true;
+    const leave = await confirmSheet({ title: "Leave without saving?", body: "Your edits on this page are lost.", ok: "Leave", danger: true, cancel: "Stay" });
+    routing = false;
+    if (!leave) { history.replaceState(null, "", lastHash || "#dashboard"); return; }
   }
   lastHash = location.hash;
   if (page && page.close) page.close();
   page = null;
-  const root = $("#view");
-  const [name, arg, arg2] = location.hash.replace(/^#\/?/, "").split("/");
-  const id = arg ? Number(arg) : null;
+  const root = $("#main");
+  let [name, arg, arg2] = location.hash.replace(/^#\/?/, "").split("/");
+  name = name || "dashboard";
+  if (!isAdmin() && ADMIN_ROUTES.includes(name)) name = "dashboard";
+  const id = arg && /^\d+$/.test(arg) ? Number(arg) : null;
   window.scrollTo(0, 0);
-  if (name === "server" && id) page = serverPage(root, id);
-  else if (name === "config" && id && /^\d+$/.test(arg2 || "")) page = configPage(root, id, Number(arg2));
-  else if (name === "new") page = serverForm(root, null);
-  else if (name === "setup" && id) page = setupPage(root, id);
-  else if (name === "setup") newGamePage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
-  else if (name === "edit" && id) page = serverForm(root, id);
-  else if (name === "templates") templatesPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
-  else if (name === "settings" || name === "discord") settingsPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
-  else if (name === "audit") auditPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
-  else page = dashboard(root);
+  const nav = { activity: "activity", templates: "templates", prefs: "prefs", settings: "prefs", discord: "prefs",
+    newgame: "newgame", setup: "newgame" }[name] || "dashboard";
+  setNav(nav);
+  const fail = (e) => errorView(root, e.message);
+  try {
+    if (name === "server" && id) page = serverPage(root, id, arg2);
+    else if (name === "activity" || name === "audit") page = activityPage(root);
+    else if (name === "welcome") page = welcomePage(root);
+    else if (name === "config" && id && /^\d+$/.test(arg2 || "")) page = configPage(root, id, Number(arg2));
+    else if (name === "new") page = serverForm(root, null);
+    else if (name === "edit" && id) page = serverForm(root, id);
+    else if (name === "setup" && id) page = setupPage(root, id);
+    else if (name === "newgame" || name === "setup") page = await newGamePage(root);
+    else if (name === "templates") page = await templatesPage(root);
+    else if (name === "prefs" || name === "settings" || name === "discord") page = await settingsPage(root, arg);
+    else page = dashboard(root);
+  } catch (e) { fail(e); }
+}
+
+async function loadMe() {
+  try {
+    const now = await api("GET", "/api/me");
+    const changed = now.can_control !== me.can_control;
+    me = now;
+    document.body.classList.toggle("friend-locked", !isAdmin() && !canControl());
+    if (changed && page && page.update) page.update();
+  } catch (e) { /* offline; the socket shows it */ }
 }
 
 async function boot() {
+  applyTheme();
+  $("#theme").addEventListener("click", nextTheme);
   me = await api("GET", "/api/me");
-  $("#who").textContent = me.name || me.login;
+  document.body.dataset.role = isAdmin() ? "admin" : "friend";
+  document.body.classList.toggle("friend-locked", !isAdmin() && !canControl());
+  if (isAdmin()) setFailures(me.failures || 0);
+  renderWho();
+  renderFoot();
   window.addEventListener("hashchange", route);
   let first = true;
   keepSocket("/ws/status", {
     onMessage: (msg) => {
       if (msg.type !== "servers") return;
       servers = msg.servers;
-      if (first) { first = false; route(); } else if (page && page.update) page.update();
+      host = msg.host || host;
+      if (msg.failures !== undefined && msg.failures !== failures) setFailures(msg.failures);
+      if (first) { first = false; renderFoot(); route(); } else if (page && page.update) page.update();
     },
     onState: (up) => { $("#offline").hidden = up; },
   });
+  if (!isAdmin()) setInterval(loadMe, 60 * 1000);
+  setInterval(renderFoot, 60 * 60 * 1000);
 }
 
-boot().catch((e) => $("#view").replaceChildren(notice(e.message, "error")));
+boot().catch((e) => errorView($("#main"), e.message));

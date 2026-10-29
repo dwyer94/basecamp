@@ -20,7 +20,7 @@ from basecamp.notify import Notifier
 from basecamp.settings import Settings
 from basecamp.supervisor import Supervisor
 from tests.conftest import REPO, fake_config, stop_everything, wait_for
-from tests.test_api import ADMIN, AS_ADMIN, AS_FRIEND, BASE, FRIEND, ws_connect
+from tests.test_api import ADMIN, AS_ADMIN, AS_FRIEND, BASE, FRIEND, SERVE, ws_connect
 
 FAKE_STEAMCMD = REPO / "tools" / "fake_steamcmd.py"
 APP_ID = 2394010
@@ -330,3 +330,18 @@ def test_last_updated_from_the_manifest_else_basecamp(store, tmp_path):
     store.update_steam_run(run, result="ok", ended_at=True)
     found = steam.last_updated(plain, store)
     assert found is not None and found["source"] == "basecamp" and found["at"] > 0
+
+
+def test_one_page_for_everyone_and_nothing_from_the_internet(client):
+    page = client.get("/", headers=SERVE).text
+    assert "/static/app.js" in page and page == client.get("/").text
+    web = Path(__file__).resolve().parent.parent / "basecamp" / "web"
+    for name in ("index.html", "style.css", "app.js", "pages.js", "common.js"):
+        text = (web / name).read_text(encoding="utf-8")
+        assert "googleapis" not in text and "gstatic" not in text and "confirm(" not in text, name
+    font = client.get("/static/fonts/instrument-sans/InstrumentSans-Variable.woff2")
+    assert font.status_code == 200 and font.content[:4] == b"wOF2"
+    assert font.headers["content-type"] == "font/woff2"
+    for family in ("bricolage-grotesque", "instrument-sans", "jetbrains-mono"):
+        assert "SIL Open Font License" in (web / "fonts" / family / "OFL.txt").read_text(
+            encoding="utf-8")

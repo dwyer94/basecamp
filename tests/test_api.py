@@ -166,7 +166,7 @@ def test_spoofed_header_from_outside_loopback_is_a_friend(store, web_settings):
             assert not c.get("/api/me").json()["is_admin"]  # not local either
             assert c.post("/api/servers/1/start",
                           headers={"tailscale-user-login": ADMIN}).status_code == 403
-            assert "Game servers" in c.get("/").text  # the friend page
+            assert "/static/app.js" in c.get("/").text  # one page, parts hidden (D-135)
     finally:
         sup.detach()
 
@@ -174,8 +174,7 @@ def test_spoofed_header_from_outside_loopback_is_a_friend(store, web_settings):
 def test_tagged_device_through_serve_is_a_friend(client):
     # Serve sends no login for tagged devices; the request still comes from loopback.
     assert not client.get("/api/me", headers=SERVE).json()["is_admin"]
-    assert "Game servers" in client.get("/", headers=SERVE).text
-    assert "app.js" in client.get("/").text  # the admin page for this PC
+    assert "/static/app.js" in client.get("/", headers=SERVE).text  # the same page
 
 
 def test_cross_site_and_rebinding_requests_are_refused(client):

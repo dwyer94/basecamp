@@ -58,6 +58,7 @@ _UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 _CONSOLE_QUEUE_MAX = 5000  # a console client this far behind is dropped
 QUICK_GAP_S = 5.0  # one friend quick command per server per this long (D-137)
 mimetypes.add_type("application/manifest+json", ".webmanifest")  # add to home screen (R-72)
+mimetypes.add_type("font/woff2", ".woff2")  # the bundled fonts (D-138)
 
 
 Channel = Literal["", "stdin", "rcon", "rest"]
@@ -376,8 +377,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
 
     @app.get("/", include_in_schema=False)
     def index(w: Who) -> FileResponse:
-        page = "index.html" if w.is_admin else "friend.html"
-        return FileResponse(WEB_DIR / page, headers={"Cache-Control": "no-cache"})
+        """One page for everyone: friends get it with the owner's parts hidden (D-135)."""
+        return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
     app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 

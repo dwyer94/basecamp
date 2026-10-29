@@ -29,7 +29,7 @@ dev = [
 packages = ["basecamp", "basecamp.api"]
 
 [tool.setuptools.package-data]
-basecamp = ["web/*", "release_key.pub"]
+basecamp = ["web/*", "web/fonts/*/*", "release_key.pub"]
 
 [tool.setuptools.dynamic]
 version = { attr = "basecamp.__version__" }
