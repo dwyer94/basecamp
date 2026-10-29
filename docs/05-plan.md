@@ -133,10 +133,10 @@ The Later list in [01-requirements.md](01-requirements.md), ranked (first cut, 2
 5. ~~Add a template from the page (S-M).~~ **Done** (D-129).
 
 **Batch 2: friends and new games**
-6. **New game from a template** in one flow (M-L). Builds on 1 and 5; templates gain a field for the values a game needs before it works (e.g. Dragonwilds' `OwnerId`).
-7. Friend start/stop/restart permission (M). First the Q-02 test with one friend (cheap, and it decides whether this works at all).
-8. Player count (M). Friends see who's on; and 9 can skip or delay a restart or update while players are on.
-9. Scheduled restarts, then scheduled updates (S-M each). Use the stop warnings that exist, and 8 when it's there.
+6. ~~**New game from a template** in one flow (M-L). Builds on 1 and 5; templates gain a field for the values a game needs before it works (e.g. Dragonwilds' `OwnerId`).~~ **Done** (D-130, R-16).
+7. ~~Friend start/stop/restart permission (M). First the Q-02 test with one friend (cheap, and it decides whether this works at all).~~ **Done** (D-131, R-74). Q-02 is still open, so the login list is untested; "anyone" works either way.
+8. ~~Player count (M). Friends see who's on; and 9 can skip or delay a restart or update while players are on.~~ **Done** (D-132, R-73): the count, not names.
+9. ~~Scheduled restarts, then scheduled updates (S-M each). Use the stop warnings that exist, and 8 when it's there.~~ **Done** (D-133, R-26, R-35).
 
 **Batch 3: the fresher UI** (L)
 10. After batches 1 and 2, so the new screens (the new-game flow, friend controls, player counts) are designed once rather than restyled twice.

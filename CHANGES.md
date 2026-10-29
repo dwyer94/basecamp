@@ -30,6 +30,32 @@ GitHub release's notes, which the admin dashboard shows next to its Install butt
   page. It's checked as strictly as a file and saved to the data folder's `templates`, so a
   new game needs no file copied onto the host PC. Overriding a built-in or replacing an
   existing one asks first; data-folder templates (and broken files) can be deleted there.
+- **New game**, in one flow: pick the game's template, and Basecamp adds the server,
+  installs it with SteamCMD, starts it once so it writes its config files, stops it, asks
+  for the values the game needs (Dragonwilds: your Player ID, its `OwnerId`) and writes
+  them the way the config editor saves, keeping a copy of the old file, shows the firewall
+  check, and then it's ready to start. Each step shows its progress; you can leave the page
+  and carry on later from the dashboard. A step that fails stops there with the reason and
+  **Try again**. Templates have a new optional field, `required_values`.
+- **Friends can start, stop and restart servers**, if you let them: on the Settings page,
+  either a list of Tailscale logins or anyone who can open the page (off by default). They
+  get Start, Stop and Restart on their page and nothing else. A stop or restart still warns
+  players first, each click goes in the audit log with their login (or "unknown"), and a
+  server takes one friend click a minute. The login list only works if a friend's request
+  carries their Tailscale login, which hasn't been checked with a friend's device yet;
+  "anyone" works either way.
+- **Player count** on both pages, for games that can tell: Palworld through its REST API,
+  Enshrouded and V Rising through Steam's server query, or a game's RCON command. Asked
+  once a minute while the server runs; "unknown" when it can't tell. Friends see the
+  number, never names. Set under **Edit → Files → Player count**; templates have a new
+  optional field, `players`.
+- **Scheduled restarts and updates**: per server, restart every day at a time, and update
+  every day at a time when Steam has a newer build (both off by default, under **Edit →
+  Schedule**). They work like the buttons: stop warning, graceful stop, SteamCMD queue,
+  Discord messages. While players are on, a server can go ahead anyway, skip that day, or
+  wait until they've left (up to 2 hours); an unknown player count counts as nobody on.
+- The page's scripts are now checked for a newer copy on every load, so a phone never mixes
+  an old and a new one after an update.
 - `install.ps1 -WhatIf` no longer fails with "Release check failed: No such file" when
   it would download a release: a dry run skips the download, so it now says the real run
   checks the signature once the file is there.

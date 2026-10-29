@@ -11,8 +11,9 @@ Basecamp is a small Windows app that runs on an always-on Windows PC (the "host 
 - Keeps a list of game servers: Steam ones (installed and updated through SteamCMD) and non-Steam ones (any exe).
 - Starts at boot, not at login, and starts every server marked **start on boot**. Several servers can run at once.
 - Start, stop, restart from the web page. Stop is graceful when the game supports it (save, then quit), and can warn players a few minutes ahead, with a countdown and **Stop now**.
-- **One-click update** for Steam servers: stop, back up the save, run SteamCMD, start again. An **update available** badge when Steam has a newer build.
-- **Adding a game**: **Add server**, pick the game's template (the install folder defaults to SteamCMD's `steamapps\common\<game folder>`), or pick an existing install from the list of folders already there. A game without a template: leave it on **Detect** for an existing install, or fill in the form by hand with type **steam** and the Steam **App ID** of its dedicated server (SteamDB lists them; it's not the game's own ID). Then **Install** on the server's page downloads it with SteamCMD.
+- **One-click update** for Steam servers: stop, back up the save, run SteamCMD, start again. An **update available** badge when Steam has a newer build. Optionally a **daily restart** and a **daily update** (when there is one) at a set time, which can skip or wait while players are on.
+- **New game**: pick the game's template and Basecamp installs it, starts it once so it writes its config files, asks for the values it needs (e.g. Dragonwilds' owner ID), shows the firewall check, and it's ready to start.
+- **Adding a game** by hand: **Add server**, pick the game's template (the install folder defaults to SteamCMD's `steamapps\common\<game folder>`), or pick an existing install from the list of folders already there. A game without a template: leave it on **Detect** for an existing install, or fill in the form by hand with type **steam** and the Steam **App ID** of its dedicated server (SteamDB lists them; it's not the game's own ID). Then **Install** on the server's page downloads it with SteamCMD.
 - **Live console**: watch server output and type commands into it (stdin, RCON, or Palworld's REST API). Stops and warnings to players use the same channels.
 - **Copy join address** button: one click copies `<tailscale-ip>:<port>` (or a nicer line for Discord).
 - **Config file editor**: each server lists its config files (JSON, INI, etc.); edit them in the page, with a backup kept on every save.
@@ -20,7 +21,7 @@ Basecamp is a small Windows app that runs on an always-on Windows PC (the "host 
 - **Save backups**: zip each server's save folder on a schedule and before every update; keep the last N; download one from the page.
 - **Discord webhook**: posts when a server comes up, goes down, crashes or updates, with the join address. Optionally keeps one live status message, edited in place.
 - **Updates itself** from GitHub Releases: banner when a new version is out, one tap to install, automatic rollback if it fails.
-- **Two views**: the admin view (you, full control) and a read-only **friend view** (what's running, join address, status). Both can be added to a phone's home screen.
+- **Two views**: the admin view (you, full control) and a **friend view** (what's running, join address, status, how many players are on). If you allow it, friends can also start, stop and restart servers there, and nothing else. Both can be added to a phone's home screen.
 
 ## Docs
 

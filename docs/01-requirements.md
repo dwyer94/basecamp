@@ -7,7 +7,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 | Who | How they reach Basecamp | What they can do |
 |---|---|---|
 | **Admin** (you) | Browser on the prod PC, dev PC or phone, over Tailscale | Everything |
-| **Friends** | Browser over Tailscale (only friends who are on the tailnet; see [03-friend-access.md](03-friend-access.md)) | Read-only friend view |
+| **Friends** | Browser over Tailscale (only friends who are on the tailnet; see [03-friend-access.md](03-friend-access.md)) | Friend view; start, stop and restart only if the admin allows it (R-74) |
 
 ## Startup and uptime
 
@@ -28,6 +28,8 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-14** Edit and delete servers. Deleting removes Basecamp's record only; it never deletes game files (a separate "delete files too" option is **Later**).
 - **R-15** Import an existing install: point at a folder you already have, and Basecamp reads `steamapps/appmanifest_*.acf` to fill in the app ID. The Add form lists the folders in SteamCMD's `steamapps\common` to pick from, and a new Steam server's install folder defaults to `steamapps\common\<game folder>` (batch 1, D-125).
 
+- **R-16** **New game from a template, in one flow** (batch 2, D-130): pick the template → install folder (SteamCMD's default, R-15) → SteamCMD first install through the queue → a first start to write its config files, then a stop → the values the template marks as required (`required_values`, e.g. Dragonwilds' `OwnerId`), written into the config file as the editor saves it (R-41) → the firewall check (D-128) → ready to start. Each step shows its progress, the flow can be left and picked up again, and a step that fails stops there with the reason and can be tried again.
+
 ## Running servers
 
 - **R-20** Start, stop, restart, per server. Also "stop all" and "start all on-boot servers".
@@ -35,6 +37,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-22** **Graceful stop**, as a per-server recipe: e.g. send `save` (stdin or RCON), wait 10 s, send `shutdown`/`quit`, wait up to 60 s for exit, then Ctrl+Break, then kill. Other steps: Ctrl+C, and waiting for the game's own autosave (for games that don't save on exit, D-121). Default recipe if none is set: Ctrl+Break, wait 30 s, kill.
 - **R-23** **Live console**: shows server output live (last 2,000 lines kept in memory, full log on disk, rotated). Admin can type a command and send it via stdin or RCON.
 - **R-25** **Warn players before a stop** (Phase 6.5): per server, a command sent by stdin or RCON with the minutes left filled in (e.g. `broadcast Restarting in {minutes} min`), at a lead time and reminders (e.g. 5 and 1 min; none = off). It runs before stops, restarts and updates started from Basecamp, never before a crash restart. The page shows a countdown with **Stop now**, which skips the rest; **Kill** skips it too.
+- **R-26** **Scheduled restart** (batch 2, D-133): per server, daily at a time (off by default), only while it runs, with the stop warning (R-25) and the graceful stop; Discord posts as for a restart by hand. While players are on (R-73) it can go ahead, skip that day, or wait until they've left (up to 2 h); an unknown count counts as nobody on, and the console and audit log say so.
 - **R-24** **Copy join address**: one button copies `<tailscale-ip>:<join port>`. A second button copies a Discord-ready line, e.g. `Palworld is up → <tailscale-ip>:8211 (password in pins)`. The address shown uses whichever connection method is configured ([03-friend-access.md](03-friend-access.md)), so it changes if you add a relay later.
 
 ## Updates
@@ -43,7 +46,8 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-31** Only one SteamCMD run at a time (SteamCMD doesn't like parallel runs); other updates queue.
 - **R-32** If the update fails, don't start the server on half-updated files; mark it and show the SteamCMD output. The save backup from R-30 is kept.
 - **R-33** Custom (non-Steam) servers: no update button in v1. **Later**: an optional per-server "update command" (a script you write).
-- **R-34** **Update-available badge** (Phase 6.5): compare the installed build ID with Steam's for the server's branch, checked every 6 h and on **Check for update**, through the SteamCMD queue. A failed check shows "unknown". **Later**: scheduled updates, e.g. 5 am nightly.
+- **R-34** **Update-available badge** (Phase 6.5): compare the installed build ID with Steam's for the server's branch, checked every 6 h and on **Check for update**, through the SteamCMD queue. A failed check shows "unknown".
+- **R-35** **Scheduled update** (batch 2, D-133): per server, daily at a time (off by default), only when the update-available badge (R-34) says Steam has a newer build; the same steps as one-click update (R-30, R-31) and its Discord messages, and the same choice as R-26 while players are on.
 
 ## Config files
 
@@ -69,8 +73,10 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 
 ## Friend view
 
-- **R-70** Read-only page: each server's name, status, join address with copy button, uptime, and player count where the game supports it (**Later** for player count).
-- **R-71** No start/stop, no console, no config, no paths, no RCON passwords.
+- **R-70** Read-only page: each server's name, status, join address with copy button, uptime, and player count where the game supports it (R-73).
+- **R-71** No start/stop (unless R-74), no console, no config, no paths, no RCON passwords.
+- **R-73** **Player count** (batch 2, D-132): for each running server whose game supports it, ask how many players are on (Palworld's REST API, an RCON command and pattern, or Steam's server query on a query port), about once a minute; "unknown" when it can't tell. On the admin and friend views; friends get the number only, never names.
+- **R-74** **Friend permission** (batch 2, D-131): a setting, off by default: a list of friend logins, or anyone who reaches the page. Those friends get Start, Stop and Restart on the friend view and nothing else (no config, delete, update, console or passwords). Each click is audited with the login (or "unknown"); stops keep the warning (R-25); a server takes one friend click a minute. The login list works only if a friend's request carries their Tailscale login (Q-02, not yet checked); "anyone" works either way.
 - **R-72** **Add to home screen** (Phase 6.5): both pages have a web app manifest and icons, so a phone opens Basecamp like an app. No offline mode (no service worker).
 
 ## Security
@@ -92,16 +98,12 @@ Details in [07-updates.md](07-updates.md).
 
 ## Out of scope for v1 (Later list)
 
-Ranked in [05-plan.md](05-plan.md), "After v1". Dropped: disk-space warnings and a PC-wide CPU/RAM graph (owner, 2026-10-28; a separate monitoring tool covers the PC). Multiple admins already work (`admin_logins` is a list); per-friend rights are the friend permission below.
+Ranked in [05-plan.md](05-plan.md), "After v1". Dropped: disk-space warnings and a PC-wide CPU/RAM graph (owner, 2026-10-28; a separate monitoring tool covers the PC). Multiple admins already work (`admin_logins` is a list); per-friend rights are the friend permission (R-74). Batch 2 moved the new-game flow (R-16), scheduled restarts and updates (R-26, R-35), the player count (R-73) and the friend permission (R-74) out of this list.
 
-- Player count / player list (A2S query, Palworld REST API, RCON `players`)
-- Scheduled updates (R-34; the update-available badge is built)
-- Scheduled restarts (e.g. daily 4 am)
+- Player names (only the count is shown, D-132)
 - Update commands for custom servers (R-33)
 - Steam login for games that need a real account (most dedicated servers are anonymous)
 - Copying backups off the PC
 - Mod management (Workshop, Thunderstore)
 - A built-in relay for friends without Tailscale (see [03-friend-access.md](03-friend-access.md))
-- **New game from a template** in one flow: pick the template → install folder (default under one games folder) → SteamCMD first install → first start to write its config files → ask for the values the template marks as required (e.g. Dragonwilds' `OwnerId`) → show the firewall command → ready to start. Today these are separate steps: add the server, press Install, edit the config by hand
 - A fresher UI: the page is a plain MVP
-- Friends can start, stop and restart servers: a friend permission (for listed logins, or anyone who reaches the page), separate from admin (no config, delete, updates or passwords), each click in the audit log by login. Needs Q-02 answered first (does a friend's request carry their login?). Until then only `admin_logins` can start or stop, and that gives friends everything
