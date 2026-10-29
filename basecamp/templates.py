@@ -37,7 +37,23 @@ _CHECKABLE = {
     "steam_app_id", "exe", "args", "working_dir", "real_exe_name", "ports", "join_port_label",
     "log_source", "log_file", "ready_pattern", "ready_after_s", "stop_recipe", "config_files",
     "save_dir", "rcon_port", "rest_port", "min_free_ram_mb", "stop_warning", "steam_installdir",
+    "required_values",
 }
+# A key in an INI file or a dotted path in a JSON one: one line, no '=' or brackets.
+_VALUE_KEY = r"^[^\x00-\x1f=\[\]]{1,100}$"
+
+
+class RequiredValue(BaseModel):
+    """A value a game needs before it works, asked for by the new-game flow (D-130) and
+    written into one of the template's config files, e.g. Dragonwilds' ``OwnerId``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str = Field(min_length=1)  # one of config_files, written the same way
+    section: str = Field(default="", pattern=r"^[^\x00-\x1f\[\]]{0,200}$")  # INI only
+    key: str = Field(pattern=_VALUE_KEY)  # INI key, or a.b.c in JSON
+    label: str = Field(min_length=1, max_length=100)
+    hint: str = Field(default="", max_length=500)
 # A folder name SteamCMD might use under steamapps\common: no path separators, no drive,
 # none of Windows' reserved characters, no space or dot at either end ("." and "..").
 _FOLDER_NAME = (r'^(|[^\\/:*?"<>|\x00-\x1f .]'
@@ -71,12 +87,23 @@ class Template(BaseModel):
     rcon_port: int | None = Field(default=None, ge=1, le=65535)
     rest_port: int | None = Field(default=None, ge=1, le=65535)
     min_free_ram_mb: int = Field(default=0, ge=0)
+    required_values: list[RequiredValue] = Field(default_factory=list, max_length=20)
     notes: str = ""
     docs: list[str] = Field(default_factory=list)
     unverified: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check(self) -> Template:
+        files = {f.lower() for f in self.config_files}
+        for value in self.required_values:
+            if value.file.lower() not in files:
+                raise ValueError(f"required_values: {value.file!r} isn't one of config_files")
+            if value_format(value.file) is None:
+                raise ValueError(f"required_values: {value.file!r} isn't an .ini, .cfg or "
+                                 ".json file")
+            if value.section and value_format(value.file) == "json":
+                raise ValueError("required_values: section is for INI files; use a dotted "
+                                 "key in JSON")
         if self.kind is ServerKind.STEAM and self.steam_app_id is None:
             raise ValueError("a steam template needs steam_app_id")
         if self.log_source is LogSource.FILE and not self.log_file.strip():
@@ -90,6 +117,12 @@ class Template(BaseModel):
             raise ValueError(f"unverified lists unknown fields: {', '.join(sorted(unknown))}"
                              f" (allowed: {', '.join(sorted(_CHECKABLE))})")
         return self
+
+
+def value_format(path: str) -> str | None:
+    """"ini" or "json": the files a required value can be written into, else None."""
+    ext = ntpath.splitext(path)[1].lower()
+    return {".ini": "ini", ".cfg": "ini", ".json": "json"}.get(ext)
 
 
 @dataclass(frozen=True)

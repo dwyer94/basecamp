@@ -19,6 +19,8 @@ Options mimic awkward real games:
     --crash-after S    exit 3 after S seconds
     --autosave S       write <save-dir>/world.sav every S seconds (like Dragonwilds)
     --save-dir PATH    where --autosave writes (default: the working folder)
+    --write-config P   once up, write a settings file at P if it isn't there (like most
+                       games' first start): an INI with an empty OwnerId, or JSON for .json
 
 Like a real game, it keeps running if whoever reads its output goes away: write errors on
 a broken stdout pipe are ignored, and EOF on stdin just stops reading commands.
@@ -72,6 +74,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--crash-after", type=float, default=0)
     parser.add_argument("--autosave", type=float, default=0)
     parser.add_argument("--save-dir", default=".")
+    parser.add_argument("--write-config")
     return parser.parse_args(argv)
 
 
@@ -167,6 +170,14 @@ def main(argv: list[str]) -> int:
 
     threading.Thread(target=read_commands, daemon=True).start()
     time.sleep(args.ready_delay)
+    if args.write_config and not os.path.exists(args.write_config):
+        os.makedirs(os.path.dirname(os.path.abspath(args.write_config)), exist_ok=True)
+        with open(args.write_config, "w", encoding="utf-8", newline="") as f:
+            if args.write_config.lower().endswith(".json"):
+                f.write('{\n  "ServerName": "Fake",\n  "MaxPlayers": 4,\n  "Owner": ""\n}\n')
+            else:
+                f.write("[/Script/Fake.Settings]\r\nServerName=Fake\r\nOwnerId=\r\n")
+        out.say(f"Wrote default settings to {args.write_config}")
     out.say(f"Server ready on port {args.port}")
 
     started = time.monotonic()

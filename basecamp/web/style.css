@@ -151,3 +151,10 @@ pre.notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; ov
 .fw-command > .hint { flex-basis: 100%; }
 .fw-command code { flex: 1; min-width: 0; font-size: 13px; background: var(--bg); padding: 6px 8px;
   border-radius: 6px; border: 1px solid var(--line); }
+/* New game setup steps (D-130) */
+.steps { margin: 10px 0; padding-left: 22px; }
+.steps li { margin: 3px 0; color: var(--muted); }
+.steps li.step-done { color: var(--ok); }
+.steps li.step-done::after { content: " \2713"; }
+.steps li.step-current { color: inherit; font-weight: 600; }
+.steps li.step-skipped { text-decoration: line-through; }

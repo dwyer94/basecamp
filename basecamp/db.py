@@ -60,6 +60,27 @@ class SteamRun:
 _STEAM_RUN_FIELDS = frozenset(SteamRun.__dataclass_fields__) - {"id", "server_id", "queued_at"}
 
 
+@dataclass(frozen=True)
+class Setup:
+    """A new game being set up from a template (D-130)."""
+
+    server_id: int
+    template_id: str
+    step: str  # install, first_start, values, firewall, ready, done
+    status: str  # running, waiting, failed, done
+    message: str
+    required: list[dict]  # the template's required_values when the setup began
+    who: str
+    started_at: str
+    updated_at: str
+
+
+def _to_setup(row: sqlite3.Row) -> Setup:
+    data = dict(row)
+    data["required"] = json.loads(data["required"] or "[]")
+    return Setup(**data)
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -293,6 +314,44 @@ class Store:
                 " message = 'Basecamp stopped during the run'"
                 " WHERE result IN ('queued', 'running')", (_now(),))
         return cur.rowcount
+
+    # -- new-game setups (D-130) ---------------------------------------------------
+
+    def add_setup(self, server_id: int, template_id: str, step: str, status: str,
+                  required: list[dict], who: str) -> Setup:
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO setups (server_id, template_id, step, status, required, who,"
+                " started_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (server_id, template_id, step, status, json.dumps(required), who, now, now))
+        return self.get_setup(server_id)
+
+    def update_setup(self, server_id: int, **fields: object) -> None:
+        unknown = set(fields) - {"step", "status", "message"}
+        if unknown:
+            raise ValueError(f"unknown setups fields: {sorted(unknown)}")
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE setups SET {', '.join(f'{c} = ?' for c in fields)}, updated_at = ?"
+                " WHERE server_id = ?", [*fields.values(), _now(), server_id])
+
+    def get_setup(self, server_id: int) -> Setup:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM setups WHERE server_id = ?",
+                                     (server_id,)).fetchone()
+        if row is None:
+            raise KeyError(server_id)
+        return _to_setup(row)
+
+    def list_setups(self) -> list[Setup]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM setups ORDER BY started_at").fetchall()
+        return [_to_setup(row) for row in rows]
+
+    def delete_setup(self, server_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM setups WHERE server_id = ?", (server_id,))
 
     # -- helpers --------------------------------------------------------------
 

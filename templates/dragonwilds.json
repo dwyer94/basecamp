@@ -24,11 +24,17 @@
   "config_files": ["RSDragonwilds\\Saved\\Config\\WindowsServer\\DedicatedServer.ini"],
   "save_dir": "RSDragonwilds\\Saved\\SaveGames",
   "min_free_ram_mb": 8192,
+  "required_values": [
+    {"file": "RSDragonwilds\\Saved\\Config\\WindowsServer\\DedicatedServer.ini",
+     "section": "/Script/Dominion.DedicatedServerSettings", "key": "OwnerId",
+     "label": "Your Player ID (OwnerId)",
+     "hint": "At the bottom of the in-game Settings menu. Without it the server runs but nobody can join."}
+  ],
   "notes": "The server never saves when it stops (its log says \"Shutdown detected, do not save contents to disk\"), and it has no RCON and reads no console input, so Basecamp waits for its next autosave and then sends Ctrl+C, which ends it cleanly in about a second (D-120, D-121). It autosaves every 5 minutes, counted from when the world loads, with or without players; the args make that every 2 minutes (dom.StateSaveFrequencyMins), so a stop takes up to about 2 minutes and a crash loses at most 2. -log gives the exe a console: without it there's nothing to send Ctrl+C to, and on a signed-in desktop that console shows as a window (closing it ends the server without saving). Ctrl+Break, closing the console and taskkill end it at once without saving. The server won't serve without an OwnerId in DedicatedServer.ini: it logs that the OwnerId is empty and keeps running doing nothing (Basecamp then shows it Running after the timer). OwnerId is your Player ID, from the bottom of the in-game Settings menu. It goes under [/Script/Dominion.DedicatedServerSettings] with ServerName, DefaultWorldName and AdminPassword (ASCII, CRLF). The first start writes Saved\\Config\\WindowsServer\\DedicatedServer.ini; if it isn't there, create the WindowsServer folder and copy the values from Saved\\Config\\Linux\\DedicatedServer.ini. The server's Saved\\ folder is RSDragonwilds\\Saved\\ in the install folder; %LOCALAPPDATA%\\RSDragonwilds\\Saved\\ belongs to the game client, so don't back that up for the server. Worlds are SaveGames\\<world>.sav with a .sav.backup beside it. Each start renames the last log to RSDragonwilds-backup-<date>.log and starts a new RSDragonwilds.log. Besides UDP 7777 the server opens UDP 8888 (purpose unknown) and UDP 45453 (LAN discovery); a second server uses 7778. Needs 2 GB RAM plus 1 GB per player.",
   "docs": [
     "https://dragonwilds.runescape.com/news/how-to-dedicated-servers",
     "https://dragonwilds.runescape.wiki/w/Dedicated_Servers",
     "https://steamdb.info/app/4019830/"
   ],
-  "unverified": []
+  "unverified": ["required_values"]
 }

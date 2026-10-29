@@ -1,6 +1,7 @@
 // Admin page: dashboard, server page with live console, config files and backups, config
 // editor, add/edit form, templates, settings (with Discord), audit.
-// Hash routes: #  #server/<id>  #config/<id>/<n>  #new  #edit/<id>  #templates  #settings
+// Hash routes: #  #server/<id>  #config/<id>/<n>  #new  #edit/<id>  #setup  #setup/<id>
+//              #templates  #settings
 //              #audit  (#discord is the settings page)
 "use strict";
 
@@ -364,13 +365,20 @@ async function updateBanner(box) {
 function dashboard(root) {
   const list = el("div");
   const banner = el("div");
+  const setupsBox = el("div");
   updateBanner(banner);
+  api("GET", "/api/setups").then((rows) => setupsBox.replaceChildren(...rows.map((v) =>
+    el("div", { class: `notice ${v.status === "failed" ? "error" : ""}` },
+      `Setting up ${v.name}: ${STEP_TEXT[v.step] || v.step}${v.status === "failed" ? " stopped" : ""}. `,
+      el("a", { href: `#setup/${v.server_id}` }, "Continue"))))).catch(() => {});
   const refreshFirewall = () => loadFirewall().then(() => update());
   const timer = setInterval(refreshFirewall, 60 * 1000);
   root.replaceChildren(
     banner,
+    setupsBox,
     el("div", { class: "buttons", style: "margin-bottom:12px" },
-      el("a", { class: "button primary", href: "#new" }, "Add server"),
+      el("a", { class: "button primary", href: "#setup" }, "New game"),
+      el("a", { class: "button", href: "#new" }, "Add server"),
       el("a", { class: "button", href: "#templates" }, "Templates"),
       el("a", { class: "button", href: "#settings" }, "Settings"),
       el("a", { class: "button", href: "#audit" }, "Audit log")),
@@ -945,6 +953,147 @@ function serverForm(root, id) {
   return {};
 }
 
+// -- new game from a template, in one flow (D-130) -------------------------------------
+
+const STEP_TEXT = { install: "installing", first_start: "first start", values: "values it needs",
+  firewall: "firewall", ready: "ready to start" };
+
+async function newGamePage(root) {
+  const res = await api("GET", "/api/templates");
+  const tplSelect = el("select", {}, el("option", { value: "" }, "Pick a game…"),
+    res.templates.map((t) => el("option", { value: t.id }, `${t.name}${t.source === "data folder" ? " (data folder)" : ""}`)));
+  const nameInput = el("input", { autocomplete: "off", placeholder: "Default: the game's name" });
+  const installInput = el("input", { autocomplete: "off", spellcheck: "false", placeholder: "Default: SteamCMD's steamapps\\common\\<game folder>" });
+  const about = el("div");
+  const out = el("div");
+  tplSelect.addEventListener("change", () => {
+    const t = res.templates.find((x) => x.id === tplSelect.value);
+    about.replaceChildren(...(t ? [
+      t.required_values.length ? el("p", { class: "muted" }, "It will ask for: ", t.required_values.map((v) => v.label).join(", "), ".") : null,
+      t.unverified.length ? el("div", { class: "unverified" }, "Not yet checked: ", t.unverified.join(", ")) : null,
+      t.notes ? el("details", {}, el("summary", {}, "Notes"), el("p", { class: "muted" }, t.notes)) : null] : []).filter(Boolean));
+  });
+  const begin = async (btn) => {
+    if (!tplSelect.value) { toast("Pick a game"); return; }
+    btn.disabled = true;
+    try {
+      const v = await api("POST", "/api/setups", { template_id: tplSelect.value,
+        name: nameInput.value.trim(), install_dir: installInput.value.trim() });
+      location.hash = `#setup/${v.server_id}`;
+    } catch (e) { out.replaceChildren(notice(e.message, "error")); btn.disabled = false; }
+  };
+  root.replaceChildren(el("h2", {}, "New game"),
+    el("div", { class: "card" },
+      el("p", { class: "muted", style: "margin-top:0" }, "Basecamp adds the server from the game's template, installs it with SteamCMD, starts it once so it writes its config files, asks for the values it needs, shows the firewall, and then it's ready to start. You can leave this page and come back; the dashboard shows where it got to."),
+      field("Game", tplSelect), about,
+      field("Server name", nameInput),
+      field("Install folder", installInput, "Leave empty for SteamCMD's usual folder. It must be new or empty. To use a game that's already installed, use Add server instead."),
+      el("div", { class: "buttons" }, el("button", { class: "primary", onclick: (e) => begin(e.target) }, "Start setup"),
+        el("a", { class: "button", href: "#" }, "Cancel"))),
+    out);
+}
+
+function setupPage(root, id) {
+  const head = el("div", { class: "card" });
+  const body = el("div", { class: "card" });
+  const firewallBox = el("div");
+  let view = null;
+  let shownKey = "";
+  root.replaceChildren(el("h2", {}, "New game"), head, body);
+
+  const call = async (path, payload, btn) => {
+    if (btn) btn.disabled = true;
+    try { view = await api("POST", `/api/setups/${id}/${path}`, payload); shownKey = ""; render(); }
+    catch (e) { alert(e.message); }
+    if (btn) btn.disabled = false;
+  };
+  const finish = async (start, btn) => {
+    if (!start && !confirm("Leave the setup? The server stays as it is; you can carry on from its page.")) return;
+    btn.disabled = true;
+    try {
+      await api("POST", `/api/setups/${id}/finish${start ? "?start=true" : ""}`);
+      location.hash = `#server/${id}`;
+    } catch (e) { alert(e.message); btn.disabled = false; }
+  };
+
+  const valuesForm = () => {
+    const inputs = view.values.map((v) => el("input", { value: v.current, autocomplete: "off", spellcheck: "false" }));
+    return el("div", {},
+      el("p", { class: "muted" }, "The game needs these before it works. They go into its config file the way the config editor saves it, keeping a copy of the old file."),
+      ...view.values.map((v, i) => field(v.label, inputs[i],
+        el("span", {}, v.hint ? `${v.hint} ` : "", el("code", {}, `${v.file}${v.section ? ` [${v.section}]` : ""} ${v.key}`),
+          v.error ? el("span", { class: "unverified" }, ` ${v.error}`) : null))),
+      el("div", { class: "buttons" }, el("button", { class: "primary", onclick: (e) =>
+        call("values", { values: Object.fromEntries(inputs.map((x, i) => [String(i), x.value])) }, e.target) },
+      view.step === "values" ? "Save and go on" : "Save again")));
+  };
+
+  const render = () => {
+    if (!view) return;
+    const s = servers.find((x) => x.id === id);
+    head.replaceChildren(...[
+      el("div", { class: "card-head" }, el("a", { class: "name", href: `#server/${id}` }, view.name), statePill(view.state)),
+      el("ol", { class: "steps" }, view.steps.map((st) => el("li", { class: `step-${st.state}` },
+        st.label, st.state === "current" && view.status === "failed" ? " · stopped" : "",
+        st.state === "current" && view.running ? " · working…" : ""))),
+      view.message ? notice(view.message, view.status === "failed" ? "error" : "") : null].filter(Boolean));
+    const key = `${view.step} ${view.status} ${view.running}`;
+    const job = s && s.steam && s.steam.job;
+    if (view.status === "running" || view.running) {
+      shownKey = "";
+      body.replaceChildren(...[
+        el("p", {}, view.step === "install" ? "Installing with SteamCMD…" : "Starting it once so it writes its config files, then stopping it…"),
+        job ? notice(jobText(job)) : null,
+        job && job.phase === "steamcmd" && job.progress !== null ? el("progress", { max: "100", value: String(job.progress) }) : null,
+        el("p", { class: "hint" }, "Progress and output are in the server's ", el("a", { href: `#server/${id}` }, "console"), ".")].filter(Boolean));
+      return;
+    }
+    if (key === shownKey) return;  // don't wipe what the admin is typing
+    shownKey = key;
+    const leave = el("button", { onclick: (e) => finish(false, e.target) }, "Leave setup");
+    if (view.status === "failed") {
+      const last = s && s.steam && s.steam.last;
+      body.replaceChildren(...[
+        el("p", {}, `Stopped at: ${STEP_TEXT[view.step] || view.step}. Fix what it says above, then try again.`),
+        view.step === "install" && last ? el("p", {}, el("a", { href: `/api/servers/${id}/steam/runs/${last.run_id}/log`, target: "_blank" }, "SteamCMD output")) : null,
+        el("div", { class: "buttons" }, el("button", { class: "primary", onclick: (e) => call("retry", undefined, e.target) }, "Try again"),
+          el("a", { class: "button", href: `#server/${id}` }, "Server page"), leave)].filter(Boolean));
+      return;
+    }
+    if (view.step === "values") {
+      body.replaceChildren(valuesForm(), el("div", { class: "buttons" }, leave));
+    } else if (view.step === "firewall") {
+      firewallSection(id, firewallBox, root);
+      loadFirewall(true).then(() => firewallSection(id, firewallBox, root));
+      body.replaceChildren(
+        el("p", { class: "muted" }, "Friends can only join if Windows Firewall lets the game's ports in from Tailscale. If a port says missing, run the command on the host PC, then Check again."),
+        firewallBox,
+        el("div", { class: "buttons" }, el("button", { class: "primary", onclick: (e) => call("next", undefined, e.target) }, "Next"), leave),
+        view.values.length ? el("details", {}, el("summary", {}, "Change the values"), valuesForm()) : null);
+    } else if (view.step === "ready") {
+      body.replaceChildren(el("p", {}, el("strong", {}, `${view.name} is ready to start.`)),
+        el("div", { class: "buttons" },
+          el("button", { class: "primary", onclick: (e) => finish(true, e.target) }, "Start it"),
+          el("button", { onclick: async (e) => {
+            e.target.disabled = true;
+            try { await api("POST", `/api/setups/${id}/finish`); location.hash = `#server/${id}`; }
+            catch (err) { alert(err.message); e.target.disabled = false; }
+          } }, "Done, don't start")));
+    }
+  };
+
+  const load = async () => {
+    try { view = await api("GET", `/api/setups/${id}`); render(); }
+    catch (e) {
+      clearInterval(timer);
+      body.replaceChildren(notice(e.message, "error"), el("p", {}, el("a", { href: `#server/${id}` }, "Server page")));
+    }
+  };
+  const timer = setInterval(load, 1500);
+  load();
+  return { update: render, close: () => clearInterval(timer) };
+}
+
 // -- templates -----------------------------------------------------------------------
 
 const TEMPLATE_DOCS = "https://github.com/dwyer94/basecamp/blob/main/docs/08-templates.md";
@@ -1480,6 +1629,8 @@ function route() {
   if (name === "server" && id) page = serverPage(root, id);
   else if (name === "config" && id && /^\d+$/.test(arg2 || "")) page = configPage(root, id, Number(arg2));
   else if (name === "new") page = serverForm(root, null);
+  else if (name === "setup" && id) page = setupPage(root, id);
+  else if (name === "setup") newGamePage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
   else if (name === "edit" && id) page = serverForm(root, id);
   else if (name === "templates") templatesPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));
   else if (name === "settings" || name === "discord") settingsPage(root).catch((e) => root.replaceChildren(notice(e.message, "error")));

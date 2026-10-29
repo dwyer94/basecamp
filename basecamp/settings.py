@@ -95,6 +95,10 @@ class Settings:
     default_backup_keep: int = 10
     # R-41: old copies kept per config file saved from the page.
     config_copies_keep: int = 20
+    # New game from a template (D-130): how long the first start may take to reach Running,
+    # and then how long to wait for the config files it should write.
+    setup_start_timeout_s: float = 600.0
+    setup_config_wait_s: float = 60.0
     # RCON and REST (D-92..D-97): how long one command may take, and whether a server's
     # rcon_host may be another PC (the password crosses the network unencrypted).
     remote_timeout_s: float = 5.0

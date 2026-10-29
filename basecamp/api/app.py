@@ -40,6 +40,7 @@ from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig, ServerKind
 from basecamp.notify import Notifier
 from basecamp.selfupdate import SelfUpdater, UpdateError
 from basecamp.settings import PAGE_SETTINGS, Settings, SettingsFile
+from basecamp.setup import SetupError, Setups
 from basecamp.steam import Kind, SteamError, SteamRunner
 from basecamp.supervisor import InvalidState, PortInUse, Supervisor, SupervisorError
 
@@ -111,6 +112,18 @@ class DraftIn(BaseModel):
     name: str = ""
 
 
+class SetupIn(BaseModel):
+    """New game from a template (D-130). No install folder = SteamCMD's default."""
+
+    template_id: str = Field(min_length=1, max_length=63)
+    install_dir: str = Field(default="", max_length=400)
+    name: str = Field(default="", max_length=100)
+
+
+class SetupValuesIn(BaseModel):
+    values: dict[str, str] = Field(default_factory=dict, max_length=20)  # by place: "0", "1"
+
+
 def _who(request: Request) -> auth.Who:
     return request.state.who  # set by the middleware in create_app
 
@@ -167,7 +180,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                updater: SelfUpdater | None = None,
                live: LiveStatus | None = None,
                settings_check_s: float = 3.0,
-               fw: firewall.Firewall | None = None) -> FastAPI:
+               fw: firewall.Firewall | None = None,
+               setups: Setups | None = None) -> FastAPI:
     """The services are made by main.run; tests may leave them out (no crash restarts)."""
     hub = _Hub()
     cpu = views.CpuSampler()
@@ -198,6 +212,14 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
 
     settings_file = SettingsFile(settings, settings_reloaded, settings_check_s)
     fw = fw or firewall.Firewall()
+
+    def audit_as(who: str, action: str, server_id: int | None, detail: str) -> None:
+        store.add_audit(who, action, server_id, detail)
+        log.info("audit: %s %s server=%s %s", who, action, server_id, detail)
+
+    setups = setups or Setups(store, sup, steam, config_files, settings, audit=audit_as,
+                              cancel_restart=lambda sid: crashes.cancel(sid) if crashes
+                              else None)
     sup.add_listener(hub.poke)
     sup.add_change_listener(hub.poke)
     steam.add_listener(hub.poke)
@@ -348,6 +370,8 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             raise HTTPException(409, "Stop the server before deleting it")
         if steam.job(server_id) is not None:
             raise HTTPException(409, "Cancel its queued install or update first")
+        if setups.running(server_id):
+            raise HTTPException(409, "Its new game setup is running a step; wait for it")
         cancel_restart(server_id)
         store.delete_server(server_id)  # game files are never touched (R-14)
         audit(w, "server.delete", server_id, server.name)
@@ -827,18 +851,17 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             return ""
         return str(templates.common_dir(exe) / folder)
 
-    @app.post("/api/drafts")
-    def make_draft(body: DraftIn, w: Admin) -> dict:
-        """A pre-filled server form from a template, or from an existing install (R-15)."""
+    def build_draft(template_id: str, install_dir: str, name: str) -> dict:
+        """A pre-filled server form from a template, or from an existing install (R-15):
+        ``{"draft", "messages", "unverified"}``, and the template used."""
         loaded = load_templates()
         messages: list[str] = []
-        install = body.install_dir.strip().strip('"')
-        template_id = body.template_id
+        install = install_dir.strip().strip('"')
         manifests: list[templates.AppManifest] = []
         if not install and template_id in loaded.templates:
             chosen_template = loaded.get(template_id).template
             if chosen_template.kind is ServerKind.STEAM:
-                install = default_install(chosen_template, body.name, messages)
+                install = default_install(chosen_template, name, messages)
                 if install:
                     messages.append("Install folder: SteamCMD's default for this game. Change "
                                     "it if you want it somewhere else.")
@@ -867,7 +890,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                 messages.append(f"Found app {first.app_id} ({first.name or 'unknown'}) but no "
                                 "template for it. Fill in the rest by hand.")
                 return {"draft": {"kind": "steam", "steam_app_id": first.app_id,
-                                  "install_dir": install, "name": body.name or first.name,
+                                  "install_dir": install, "name": name or first.name,
                                   "exe_path": "", "ports": [], "stop_recipe": [],
                                   "config_files": []},
                         "messages": messages, "unverified": []}
@@ -875,7 +898,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             chosen = loaded.get(template_id)
         except KeyError:
             raise HTTPException(404, f"No template {template_id!r}") from None
-        draft = templates.draft(chosen.template, install, body.name)
+        draft = templates.draft(chosen.template, install, name)
         draft.update(backup_every_h=settings.default_backup_every_h,
                      backup_keep=settings.default_backup_keep)
         if install and not Path(draft["exe_path"]).is_file():
@@ -884,7 +907,111 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         if chosen.template.unverified:
             messages.append("Not yet checked against a real install: "
                             + ", ".join(chosen.template.unverified) + ".")
-        return {"draft": draft, "messages": messages, "unverified": chosen.template.unverified}
+        return {"draft": draft, "messages": messages, "unverified": chosen.template.unverified,
+                "template": chosen.template}
+
+    @app.post("/api/drafts")
+    def make_draft(body: DraftIn, w: Admin) -> dict:
+        """A pre-filled server form from a template, or from an existing install (R-15)."""
+        result = build_draft(body.template_id, body.install_dir, body.name)
+        result.pop("template", None)
+        return result
+
+    # -- new game from a template, in one flow (D-130) -----------------------------------
+
+    def setup_or_404(server_id: int):  # type: ignore[no-untyped-def]
+        try:
+            return setups.get(server_id)
+        except KeyError:
+            raise HTTPException(404, "No setup for that server") from None
+
+    def setup_call(fn: Callable[[], Any]) -> Any:
+        try:
+            return fn()
+        except SetupError as e:
+            raise HTTPException(409, str(e)) from None
+        except KeyError:
+            raise HTTPException(404, "No setup for that server") from None
+
+    @app.get("/api/setups")
+    def list_setups(w: Admin) -> list[dict]:
+        return [setups.view(s) for s in store.list_setups()]
+
+    @app.post("/api/setups", status_code=201)
+    def begin_setup(body: SetupIn, w: Admin) -> dict:
+        """Add a server from a template and start the new-game flow: install, first start,
+        the values it needs, the firewall, ready."""
+        result = build_draft(body.template_id, body.install_dir, body.name)
+        template: templates.Template | None = result.get("template")
+        if template is None:
+            raise HTTPException(404, f"No template {body.template_id!r}")
+        draft = result["draft"]
+        install = draft["install_dir"]
+        if template.kind is ServerKind.STEAM:
+            if not install:
+                raise HTTPException(400, " ".join(result["messages"])
+                                    or "Type an install folder")
+            folder = Path(install)
+            if folder.is_file():
+                raise HTTPException(409, f"{install} is a file")
+            if (folder.is_dir() and any(folder.iterdir())
+                    and not any(m.app_id == template.steam_app_id
+                                for m in templates.manifests_for(folder))):
+                raise HTTPException(409, f"{install} isn't empty and has no install of app "
+                                         f"{template.steam_app_id}. Pick an empty or new "
+                                         "folder, or import it with Add server.")
+        try:
+            config = ServerConfig.model_validate(draft)
+        except ValidationError as e:
+            raise HTTPException(400, str(e)) from None
+        server = save(config)
+        required = [{**v.model_dump(), "file": templates.resolve_path(install, v.file)}
+                    for v in template.required_values]
+        audit(w, "server.add", server.id, f"{server.name} (new game from {template.id})")
+        setup = setups.begin(server, required, w.label)
+        audit(w, "setup.start", server.id, template.id)
+        hub.poke()
+        return {**setups.view(setup), "messages": result["messages"]}
+
+    @app.get("/api/setups/{server_id}")
+    def read_setup(server_id: int, w: Admin) -> dict:
+        return setups.view(setup_or_404(server_id))
+
+    @app.post("/api/setups/{server_id}/retry")
+    def retry_setup(server_id: int, w: Admin) -> dict:
+        setup_or_404(server_id)
+        not_updating(server_id)
+        return setups.view(setup_call(lambda: setups.retry(server_id, w.label)))
+
+    @app.post("/api/setups/{server_id}/values")
+    def setup_values(server_id: int, body: SetupValuesIn, w: Admin) -> dict:
+        setup_or_404(server_id)
+        return setups.view(setup_call(
+            lambda: setups.write_values(server_id, body.values, w.label)))
+
+    @app.post("/api/setups/{server_id}/next")
+    def setup_next(server_id: int, w: Admin) -> dict:
+        setup_or_404(server_id)
+        return setups.view(setup_call(lambda: setups.next(server_id, w.label)))
+
+    @app.post("/api/setups/{server_id}/finish")
+    def finish_setup(server_id: int, w: Admin, start: bool = False) -> dict:
+        """Leave the flow (the server stays as it is); with ``start``, start it too."""
+        setup = setup_or_404(server_id)
+        server = get_server(server_id)
+        if start:
+            not_updating(server_id)
+        setup_call(lambda: setups.finish(server_id))
+        audit(w, "setup.finish", server_id, f"at {setup.step}")
+        out: dict[str, Any] = {"finished": True}
+        if start:
+            audit(w, "start", server_id, server.name)
+            try:
+                out["pid"] = sup.start(server_id).pid
+            except SupervisorError as e:
+                raise HTTPException(409, f"Setup closed, but it didn't start: {e}") from None
+        hub.poke()
+        return out
 
     # -- firewall indicator (D-128) -------------------------------------------------------
 
@@ -1090,4 +1217,5 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     app.state.configs = config_files
     app.state.live = live
     app.state.settings_file = settings_file
+    app.state.setups = setups
     return app
