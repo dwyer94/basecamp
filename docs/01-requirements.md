@@ -107,3 +107,4 @@ Ranked in [05-plan.md](05-plan.md), "After v1". Dropped: disk-space warnings and
 - Mod management (Workshop, Thunderstore)
 - A built-in relay for friends without Tailscale (see [03-friend-access.md](03-friend-access.md))
 - A fresher UI: the page is a plain MVP
+- Read-only debug endpoints for the admin: Basecamp's and the launcher's logs, console logs, health and internal state, settings without secrets (so the host PC can be checked from the dev PC)

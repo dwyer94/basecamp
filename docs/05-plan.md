@@ -141,12 +141,15 @@ The Later list in [01-requirements.md](01-requirements.md), ranked (first cut, 2
 **Batch 3: the fresher UI** (L)
 10. After batches 1 and 2, so the new screens (the new-game flow, friend controls, player counts) are designed once rather than restyled twice.
 
+**Batch 4: debugging from the dev PC** (S-M; can go before batch 3's later pieces)
+11. Read-only debug endpoints, admin only (owner, 2026-10-29), so problems on the host PC can be looked at from the dev PC without remoting in. For example: Basecamp's own log and the launcher log (tail, since a time), a server's console log, health (version, uptime, the launcher, the SteamCMD queue, scheduler and poller state), settings with secrets left out, recent errors and Discord delivery failures. Never secrets (webhook URL, RCON/REST passwords), never paths outside Basecamp's own folders, every call in the audit log.
+
 **Only when a need shows up**
-11. Copying backups off the PC (M). Same-disk backups are fine for now (Q-08).
-12. Update commands for custom servers (S). When a non-Steam server is added.
-13. Steam login for games that need a real account (M; a password and Steam Guard to keep in the data folder). When a game needs it.
-14. Mod management (L, per game). When a game is modded through Basecamp.
-15. A relay for friends without Tailscale (L, and it changes the security model). Only if a friend can't use Tailscale (Q-03), see [03-friend-access.md](03-friend-access.md).
+12. Copying backups off the PC (M). Same-disk backups are fine for now (Q-08).
+13. Update commands for custom servers (S). When a non-Steam server is added.
+14. Steam login for games that need a real account (M; a password and Steam Guard to keep in the data folder). When a game needs it.
+15. Mod management (L, per game). When a game is modded through Basecamp.
+16. A relay for friends without Tailscale (L, and it changes the security model). Only if a friend can't use Tailscale (Q-03), see [03-friend-access.md](03-friend-access.md).
 
 ## Rough size
 
