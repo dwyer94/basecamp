@@ -26,8 +26,35 @@
 <script src="/static/common.js"></script>
 <script>
 "use strict";
-// Friend view (R-70): name, status, uptime, join address with Copy. Nothing else.
+// Friend view (R-70): name, status, uptime, join address with Copy. With the friend
+// permission (D-131), Start, Stop and Restart too. Nothing else.
+let canControl = false;
+let last = [];
+
+async function act(s, action) {
+  const verb = action[0].toUpperCase() + action.slice(1);
+  if (action !== "start" && !confirm(`${verb} ${s.name}? Anyone playing on it gets dropped (after a warning, if it has one).`)) return;
+  try {
+    const res = await fetch(`/api/friend/servers/${s.id}/${action}`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(`${s.name}: ${data.detail || res.statusText}`); return; }
+    const ing = { stop: "Stopping", restart: "Restarting" }[action];
+    toast(data.warning_s ? `${ing} in ${Math.round(data.warning_s / 60)} min; players are being warned` : `${verb}: ${s.name}`);
+  } catch (e) { alert(e.message); }
+}
+
+function controls(s) {
+  if (!canControl) return null;
+  const up = s.state === "running" || s.state === "starting";
+  const idle = s.state === "stopped" || s.state === "crashed";
+  return el("div", { class: "buttons" },
+    el("button", { class: "small primary", disabled: !idle, onclick: () => act(s, "start") }, "Start"),
+    el("button", { class: "small", disabled: !up, onclick: () => act(s, "stop") }, "Stop"),
+    el("button", { class: "small", disabled: !up, onclick: () => act(s, "restart") }, "Restart"));
+}
+
 function render(servers) {
+  last = servers;
   const root = $("#servers");
   root.replaceChildren();
   if (!servers.length) root.append(el("p", { class: "empty" }, "No servers yet."));
@@ -39,13 +66,24 @@ function render(servers) {
       s.join_address ? el("div", { class: "address" },
         el("code", {}, s.join_address),
         el("button", { class: "small", onclick: () => copyText(s.join_address) }, "Copy"))
-        : null));
+        : null,
+      controls(s)));
   }
 }
+
+async function loadMe() {
+  try {
+    const me = await (await fetch("/api/me")).json();
+    if (Boolean(me.can_control) !== canControl) { canControl = Boolean(me.can_control); render(last); }
+  } catch (e) { /* offline; the socket shows it */ }
+}
+
 keepSocket("/ws/status", {
   onMessage: (msg) => msg.type === "servers" && render(msg.servers),
+  onOpen: loadMe,
   onState: (up) => { $("#offline").hidden = up; },
 });
+setInterval(loadMe, 60 * 1000);
 </script>
 </body>
 </html>

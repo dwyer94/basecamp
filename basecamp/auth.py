@@ -82,6 +82,19 @@ def identify(peer: str | None, headers: Mapping[str, str], settings: Settings) -
     return Who(login="", name="", is_admin=False)
 
 
+def can_control(who: Who, settings: Settings) -> bool:
+    """May start, stop and restart servers (D-131): admins, and friends when the friend
+    permission lets them. "logins" needs the friend's own Tailscale login on the request,
+    which only ``tailscale serve`` can set (Q-02: not yet seen with a friend's device)."""
+    if who.is_admin:
+        return True
+    if settings.friend_control == "anyone":
+        return True
+    if settings.friend_control == "logins" and who.login:
+        return who.login.lower() in {x.lower() for x in settings.friend_control_logins}
+    return False
+
+
 def check_origin(headers: Mapping[str, str]) -> bool:
     """For state-changing requests and WebSockets: an ``Origin`` header, when present, must
     be this same site. Browsers always send it on cross-site POSTs and on WebSockets (which

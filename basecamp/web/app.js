@@ -1546,11 +1546,40 @@ async function settingsPage(root) {
       el("p", { class: "muted" }, "A server's own webhook replaces the main one for that server. Which events post is set in each server's Edit form."),
       ...serverRows),
 
+    el("h2", {}, "Friends"),
+    friendCard(res, root),
+
     el("h2", {}, "Set in settings.toml"),
     tomlCard(res, root),
 
     el("h2", {}, "Basecamp"),
     restartCard(res.update));
+}
+
+// Friends may start, stop and restart (D-131). Off by default.
+function friendCard(res, root) {
+  const modes = { off: "Off: only admins", logins: "These Tailscale logins", anyone: "Anyone who can open the page" };
+  const radios = Object.entries(modes).map(([value, label]) =>
+    el("label", { class: "check" }, el("input", { type: "radio", name: "friend_control", value, checked: res.friend_control === value }), label));
+  const logins = el("textarea", { rows: 3, spellcheck: "false", autocapitalize: "off", placeholder: "pal@example.com\none per line" });
+  logins.value = res.friend_control_logins.join("\n");
+  const save = async () => {
+    const mode = radios.map((r) => $("input", r)).find((i) => i.checked).value;
+    try {
+      const out = await api("PUT", "/api/settings", { friend_control: mode,
+        friend_control_logins: logins.value.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean) });
+      toast(out.changed.length ? "Saved" : "Nothing changed");
+      settingsPage(root);
+    } catch (e) { alert(e.message); }
+  };
+  return el("div", { class: "card" },
+    el("p", { class: "muted", style: "margin-top:0" }, "Let friends start, stop and restart servers from their page. Nothing else: no config, delete, update, console or passwords. A stop or restart still warns players first, each click goes in the audit log, and a server takes one friend click per ",
+      `${res.friend_control_gap_s} s.`),
+    ...radios,
+    field("Logins", logins, "Their Tailscale logins, as on the admin list."),
+    el("div", { class: "hint unverified" }, "Not yet checked (Q-02): whether a friend's request through tailscale serve carries their Tailscale login. If it doesn't, the login list lets nobody in; 'Anyone who can open the page' works either way."),
+    el("div", { class: "hint" }, "'Anyone' means anyone who can reach this page: every friend you share the host PC with on Tailscale."),
+    el("div", { class: "buttons" }, el("button", { class: "small", onclick: save }, "Save")));
 }
 
 // settings.toml edited by hand (D-127): picked up within seconds, or on Reload settings.

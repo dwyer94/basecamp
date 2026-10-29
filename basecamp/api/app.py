@@ -82,6 +82,7 @@ class ConfigSaveIn(BaseModel):
 
 
 _JOIN_HOST = r"^[A-Za-z0-9._\-\[\]:]*$"
+_LOGIN = r"^ *[^\s\x00-\x1f\"'\\]* *$"  # a Tailscale login, e.g. pal@example.com or pal@github
 
 
 class SettingsIn(BaseModel):
@@ -94,6 +95,9 @@ class SettingsIn(BaseModel):
     update_beta: bool | None = None
     update_auto_hour: int | None = Field(default=None, ge=-1, le=23)  # -1 = off
     discord_live_status: bool | None = None  # R-63
+    friend_control: Literal["off", "logins", "anyone"] | None = None  # D-131
+    friend_control_logins: list[Annotated[str, Field(max_length=200, pattern=_LOGIN)]] | None \
+        = Field(default=None, max_length=100)
     # Also give every existing server the backup defaults.
     apply_backup_defaults: bool = False
 
@@ -317,6 +321,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     @app.get("/api/me")
     def me(w: Who) -> dict:
         info: dict[str, Any] = {"login": w.login, "name": w.name, "is_admin": w.is_admin,
+                                "can_control": auth.can_control(w, settings),
                                 "version": __version__, "started_at": STARTED_AT}
         if w.is_admin:
             info["join_host"] = settings.join_host
@@ -442,6 +447,66 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         cancel_restart(server_id)
         in_background("kill", server_id, lambda: sup.kill(server_id))
         return {"accepted": True}
+
+    # -- friend start, stop, restart (D-131) ------------------------------------------
+
+    friend_clicks: dict[int, float] = {}  # server id -> when a friend last clicked
+    friend_lock = threading.Lock()
+
+    def friend_action(server_id: int, w: auth.Who, action: str) -> Any:
+        """Start, stop or restart from the friend view, for whoever the friend permission
+        lets in. Nothing else: no kill, no Stop now, the stop warning always runs (R-25).
+        One click per server per ``friend_control_gap_s``, whoever clicks."""
+        if not auth.can_control(w, settings):
+            raise HTTPException(403, "Not allowed")
+        server = get_server(server_id)
+        who = w.login or "unknown"
+        not_updating(server_id)
+        not_counting_down(server_id)
+        state = sup.state(server_id)
+        if action == "start":
+            if state in ACTIVE_STATES:
+                raise HTTPException(409, f"{server.name} is {state.value}")
+            steam_view = steam.view(server)
+            if steam_view and steam_view["failed"]:
+                raise HTTPException(409, "Its last install or update failed; ask the admin")
+        elif state not in (ServerState.STARTING, ServerState.RUNNING):
+            raise HTTPException(409, f"{server.name} is {state.value}")
+        with friend_lock:
+            now = time.monotonic()
+            last = friend_clicks.get(server_id)
+            gap = settings.friend_control_gap_s
+            if last is not None and now - last < gap:
+                wait = round(gap - (now - last))
+                raise HTTPException(429, f"Someone just did that; try again in {wait} s")
+            friend_clicks[server_id] = now
+        store.add_audit(who, f"friend.{action}", server_id, server.name)
+        log.info("audit: %s friend.%s server=%s", who, action, server_id)
+        if action == "start":
+            try:
+                sup.start(server_id)
+            except SupervisorError as e:
+                raise HTTPException(409, str(e)) from None
+            return {"accepted": True}
+        if action == "stop":
+            cancel_restart(server_id)
+            in_background("stop", server_id, lambda: sup.stop(server_id, warn=True))
+        else:
+            in_background("restart", server_id, lambda: sup.restart(server_id, warn=True))
+        lead = server.stop_warning.lead_s if server.stop_warning else 0
+        return {"accepted": True, "warning_s": lead if state is ServerState.RUNNING else 0}
+
+    @app.post("/api/friend/servers/{server_id}/start", status_code=202)
+    def friend_start(server_id: int, w: Who) -> dict:
+        return friend_action(server_id, w, "start")
+
+    @app.post("/api/friend/servers/{server_id}/stop", status_code=202)
+    def friend_stop(server_id: int, w: Who) -> dict:
+        return friend_action(server_id, w, "stop")
+
+    @app.post("/api/friend/servers/{server_id}/restart", status_code=202)
+    def friend_restart(server_id: int, w: Who) -> dict:
+        return friend_action(server_id, w, "restart")
 
     def send(server_id: int, text: str, w: auth.Who, channel: str = "") -> None:
         server = get_server(server_id)
@@ -663,6 +728,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
                 "steamcmd": str(exe), "steamcmd_found": exe.is_file(),
                 "admin_logins": list(settings.admin_logins),
                 "config_copies_keep": settings.config_copies_keep,
+                "friend_control_gap_s": settings.friend_control_gap_s,
                 "backups_dir": str(settings.backups_dir),
                 "settings_file": str(settings.data_dir / "settings.toml"),
                 "notify": notify_info(), "update": updater.view(),
@@ -679,6 +745,9 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             values["join_host"] = values["join_host"].strip()
         if "steamcmd_path" in values:
             values["steamcmd_path"] = values["steamcmd_path"].strip().strip('"')
+        if "friend_control_logins" in values:
+            logins = [x.strip() for x in values["friend_control_logins"] if x.strip()]
+            values["friend_control_logins"] = tuple(dict.fromkeys(logins))
         changed = {k: v for k, v in values.items() if getattr(settings, k) != v}
         if changed:
             try:

@@ -29,7 +29,10 @@ DEFAULT_STEAMCMD = r"%USERPROFILE%\Desktop\SteamCmd\steamcmd.exe"
 # What the Settings page may change (D-52). The rest is a settings.toml edit, picked up
 # without a restart except for RESTART_SETTINGS (D-127).
 PAGE_SETTINGS = ("join_host", "steamcmd_path", "default_backup_every_h", "default_backup_keep",
-                 "update_beta", "update_auto_hour", "discord_live_status")
+                 "update_beta", "update_auto_hour", "discord_live_status", "friend_control",
+                 "friend_control_logins")
+# Who besides the admins may start, stop and restart servers from the friend view (D-131).
+FRIEND_CONTROL = ("off", "logins", "anyone")
 # Read once at start (the web server's address, the DB's migrations, the console buffers
 # and log rotation already set up): a change waits for Restart Basecamp. Every other
 # setting is read each time it's used, so a reload applies it at once.
@@ -65,6 +68,13 @@ class Settings:
     # D-27: Tailscale logins (Tailscale-User-Login) that get the admin view. A request from
     # the PC itself (loopback, no Tailscale headers) is admin too; everyone else is a friend.
     admin_logins: tuple[str, ...] = ()
+    # D-131: friends may start, stop and restart servers: "off", "logins" (the Tailscale
+    # logins in friend_control_logins; works only if a friend's request carries their login,
+    # Q-02) or "anyone" who reaches the page. One friend click per server per
+    # friend_control_gap_s, so nobody can spam restarts.
+    friend_control: str = "off"
+    friend_control_logins: tuple[str, ...] = ()
+    friend_control_gap_s: float = 60.0
     # R-05: an exit nobody asked for restarts after crash_restart_delay_s, unless it is the
     # crash_limit-th crash within crash_window_s: then the server stays Crashed.
     crash_restart_delay_s: float = 10.0
@@ -177,7 +187,8 @@ class Settings:
             old = path.read_text(encoding="utf-8") if path.is_file() else ""
             new = _set_toml_keys(old, "basecamp", values)
             parsed = tomllib.loads(new).get("basecamp", {})
-            if any(parsed.get(k) != v for k, v in values.items()):  # never write a mangled file
+            if any(parsed.get(k) != (list(v) if isinstance(v, tuple) else v)
+                   for k, v in values.items()):  # never write a mangled file
                 raise ValueError("settings.toml couldn't be updated safely; edit it by hand")
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_name(path.name + ".tmp")
@@ -238,11 +249,14 @@ class Settings:
         for key in ("migrations_dir", "templates_dir"):
             if key in values:
                 values[key] = Path(values[key])  # type: ignore[arg-type]
-        if "admin_logins" in values:
-            logins = values["admin_logins"]
-            if isinstance(logins, str):
-                logins = [logins]
-            values["admin_logins"] = tuple(str(x).strip() for x in logins)  # type: ignore[union-attr]
+        for key in ("admin_logins", "friend_control_logins"):
+            if key in values:
+                logins = values[key]
+                if isinstance(logins, str):
+                    logins = [logins]
+                values[key] = tuple(str(x).strip() for x in logins)  # type: ignore[union-attr]
+        if values.get("friend_control", "off") not in FRIEND_CONTROL:
+            raise ValueError(f"friend_control should be one of {', '.join(FRIEND_CONTROL)}")
         if "notify_retry_s" in values:
             values["notify_retry_s"] = tuple(float(x) for x in values["notify_retry_s"])  # type: ignore[union-attr]
         if check_types:
@@ -404,4 +418,6 @@ def _toml_value(value: object) -> str:
         return repr(value)
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)  # JSON escapes are valid TOML strings
+    if isinstance(value, list | tuple) and all(isinstance(x, str) for x in value):
+        return "[" + ", ".join(json.dumps(x, ensure_ascii=False) for x in value) + "]"
     raise TypeError(f"can't write {type(value).__name__} to settings.toml")
