@@ -33,10 +33,10 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 ## Running servers
 
 - **R-20** Start, stop, restart, per server. Also "stop all" and "start all on-boot servers".
-- **R-21** States: **Stopped**, **Starting**, **Running**, **Stopping**, **Updating**, **Crashed**. Shown on the dashboard with uptime, CPU and RAM per server.
+- **R-21** States: **Stopped**, **Starting**, **Running**, **Stopping**, **Updating**, **Crashed**. Shown on the dashboard with uptime, CPU and RAM per server, and since batch 4 when a stopped or crashed server went down and how many crashes Basecamp gave up after (D-142).
 - **R-22** **Graceful stop**, as a per-server recipe: e.g. send `save` (stdin or RCON), wait 10 s, send `shutdown`/`quit`, wait up to 60 s for exit, then Ctrl+Break, then kill. Other steps: Ctrl+C, and waiting for the game's own autosave (for games that don't save on exit, D-121). Default recipe if none is set: Ctrl+Break, wait 30 s, kill.
 - **R-23** **Live console**: shows server output live (last 2,000 lines kept in memory, full log on disk, rotated). Admin can type a command and send it via stdin or RCON.
-- **R-25** **Warn players before a stop** (Phase 6.5): per server, a command sent by stdin or RCON with the minutes left filled in (e.g. `broadcast Restarting in {minutes} min`), at a lead time and reminders (e.g. 5 and 1 min; none = off). It runs before stops, restarts and updates started from Basecamp, never before a crash restart. The page shows a countdown with **Stop now**, which skips the rest; **Kill** skips it too.
+- **R-25** **Warn players before a stop** (Phase 6.5): per server, a command sent by stdin or RCON with the minutes left filled in (e.g. `broadcast Restarting in {minutes} min`), at a lead time and reminders (e.g. 5 and 1 min; none = off). It runs before stops, restarts and updates started from Basecamp, never before a crash restart. The page shows a countdown with **Stop now**, which skips the rest; **Kill** skips it too; **Cancel** calls it off and the server keeps running (batch 4, D-140; friends too with R-74), until the stop itself has begun.
 - **R-26** **Scheduled restart** (batch 2, D-133): per server, daily at a time (off by default), only while it runs, with the stop warning (R-25) and the graceful stop; Discord posts as for a restart by hand. While players are on (R-73) it can go ahead, skip that day, or wait until they've left (up to 2 h); an unknown count counts as nobody on, and the console and audit log say so.
 - **R-24** **Copy join address**: one button copies `<tailscale-ip>:<join port>`. A second button copies a Discord-ready line, e.g. `Palworld is up → <tailscale-ip>:8211 (password in pins)`. The address shown uses whichever connection method is configured ([03-friend-access.md](03-friend-access.md)), so it changes if you add a relay later.
 
@@ -77,6 +77,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-71** No start/stop (unless R-74), no typing console commands, no config, no paths, no backup list, no RCON passwords.
 - **R-73** **Player count** (batch 2, D-132): for each running server whose game supports it, ask how many players are on (Palworld's REST API, an RCON command and pattern, or Steam's server query on a query port), about once a minute; "unknown" when it can't tell. On the admin and friend views; friends get the number only, never names.
 - **R-74** **Friend permission** (batch 2, D-131): a setting, off by default: a list of friend logins, or anyone who reaches the page. Those friends get Start, Stop and Restart on the friend view, Update since batch 3 (D-135), and the template's quick commands marked for friends (D-137); nothing else (no config, delete, typing console commands, backups or passwords). Each click is audited with the login (or "unknown"); stops keep the warning (R-25) and an update backs up the save first; a server takes one friend click a minute. The login list works only if a friend's request carries their Tailscale login (Q-02, not yet checked); "anyone" works either way.
+- **R-75** **See what friends see** (batch 4, D-143): the owner can switch their own view to the friend view, served as friends get it, with a banner and **Back to owner view**. It only takes rights away and never applies to a friend.
 - **R-72** **Add to home screen** (Phase 6.5): both pages have a web app manifest and icons, so a phone opens Basecamp like an app. No offline mode (no service worker).
 
 ## Security
@@ -84,6 +85,7 @@ IDs (`R-xx`) are referenced from the plan. **v1** = first usable version. **Late
 - **R-80** Admin actions need you to be the admin (Tailscale identity or password; see [02-architecture.md](02-architecture.md)).
 - **R-81** Not reachable from the internet. Reachable only from the tailnet (and loopback on the prod PC).
 - **R-82** Secrets (RCON passwords, webhook URL, admin password hash) stay in `C:\BasecampData\`, never in the repo, never sent to the friend view.
+- **R-84** **Debug views** (batch 4, D-141): read-only, admin only, audited: Basecamp's and the launcher's logs, a server's console log, health, settings without secrets, recent errors. Secrets are redacted from every answer; no path comes from the request.
 - **R-83** Every admin action is written to an audit log (who, what, when). Since batch 3 the log also holds Basecamp's own events (crashes, update results, scheduled backups, Discord failures) and is shown as the Activity feed (D-134).
 
 ## Updating Basecamp itself
@@ -98,7 +100,7 @@ Details in [07-updates.md](07-updates.md).
 
 ## Out of scope for v1 (Later list)
 
-Ranked in [05-plan.md](05-plan.md), "After v1". Dropped: disk-space warnings and a PC-wide CPU/RAM graph (owner, 2026-10-28; a separate monitoring tool covers the PC). Multiple admins already work (`admin_logins` is a list); per-friend rights are the friend permission (R-74). Batch 2 moved the new-game flow (R-16), scheduled restarts and updates (R-26, R-35), the player count (R-73) and the friend permission (R-74) out of this list.
+Ranked in [05-plan.md](05-plan.md), "After v1". Dropped: disk-space warnings and a PC-wide CPU/RAM graph (owner, 2026-10-28; a separate monitoring tool covers the PC). Multiple admins already work (`admin_logins` is a list); per-friend rights are the friend permission (R-74). Batch 2 moved the new-game flow (R-16), scheduled restarts and updates (R-26, R-35), the player count (R-73) and the friend permission (R-74) out of this list; batch 4 moved cancelling a countdown (R-25), "stopped since" (R-21), the friend preview (R-75) and the debug views (R-84).
 
 - Player names (only the count is shown, D-132)
 - Update commands for custom servers (R-33)
@@ -106,7 +108,3 @@ Ranked in [05-plan.md](05-plan.md), "After v1". Dropped: disk-space warnings and
 - Copying backups off the PC
 - Mod management (Workshop, Thunderstore)
 - A built-in relay for friends without Tailscale (see [03-friend-access.md](03-friend-access.md))
-- Cancel a restart during its stop-warning countdown (owner and friends)
-- "Stopped since" and "gave up after N tries" on the server cards
-- A "see what friends see" preview for the owner
-- Read-only debug endpoints for the admin: Basecamp's and the launcher's logs, console logs, health and internal state, settings without secrets (so the host PC can be checked from the dev PC)

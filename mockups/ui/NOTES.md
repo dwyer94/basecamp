@@ -108,14 +108,14 @@ The real page follows the mock. Where it differs, and why:
 
 - **Monograms** are the first letters of two words, or the first two letters of one ("Pa" for Palworld, not "Pw"): the mock's were hand-picked.
 - **Dates and times** use the browser's own format (for example "Oct 27, 2026, 07:03 PM" on an English-US browser).
-- **Stopped cards** have no "since yesterday 23:40": Basecamp doesn't record when a server stopped. The band's fact is empty, or says an update is queued.
-- **Crashed cards** say "not restarting" or "restarting at 14:05", not "gave up after 3 tries": the crash count isn't kept per server.
-- **A countdown card** has "Restart now" (or Stop now / Update now) but no **Cancel restart**: a stop warning can't be cancelled yet, only skipped or ended with Kill. Cancel restart is there for a pending crash restart, as before.
+- **Stopped cards** say "since 23:40" as in the mock (batch 4, D-142), in the browser's time format ("since 08:01 PM" on an English-US browser). After the PC restarted while a server ran, when it stopped isn't known, so the fact is empty.
+- **Crashed cards** say "gave up after 3 tries" as in the mock (batch 4, D-142), or "restarting at 14:05" while a restart is pending.
+- **A countdown card** has **Cancel restart** (Cancel stop, Cancel update) as in the mock (batch 4, D-140), and friends with friend controls on get it too: the owner made friends one trusted level after the mock showed it as the owner's only. The server page has it in the countdown callout, next to Restart now.
 - **Updating cards** don't show "Backup 13:58" or "Build A to B" chips; the band shows SteamCMD's progress and the hint says the save is backed up first.
 - **The friend firewall tab** shows each port's status with a plain sentence ("The owner has been told") instead of the rule name: friends get the status only.
 - **PID** in the details panel is the owner's only (the mock showed it to friends); exit codes too.
 - **Stopping steps** in the Edit form are editable rows (action, command, wait) rather than a read-only list with Edit buttons; **Notes** and **Config files** are in the form too (Basics and Running), since the mock left them out.
-- **Settings → Friends** has no "See what friends see" link: the page can't show the friend view from the owner's browser. To look, open it from a friend's device, or on the dev PC through a proxy that adds a friend's `Tailscale-User-Login`.
+- **Settings → Friends** has **See what friends see** as in the mock (batch 4, D-143). Rather than the mock's role switch hiding parts, Basecamp serves the owner's browser the friend JSON until **Back to owner view** in the banner at the top, which also says which friend controls are in effect.
 - **"Updated outside Basecamp"** Activity rows aren't written: noticing that needs Basecamp to watch the manifests over time. The card and server page do show the manifest's date, which includes such updates.
 - **Fonts** are the upstream variable files, unmodified, about 480 KB rather than ~150 KB of Latin subsets (D-138).
 - The mock-only parts (pink bar, notes, role switch, views index) aren't in the page.

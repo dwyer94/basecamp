@@ -87,6 +87,22 @@ GitHub release's notes, which the admin dashboard shows next to its Install butt
 - `install.ps1 -WhatIf` no longer fails with "Release check failed: No such file" when
   it would download a release: a dry run skips the download, so it now says the real run
   checks the signature once the file is there.
+- **Cancel a countdown.** While a stop, restart or update counts down with its warning to
+  players, **Cancel restart** (or Cancel stop, Cancel update) on the card and the server
+  page calls it off and the server keeps running. Friends with friend controls on can
+  cancel too, the owner's and scheduled ones included. Once the stop itself has begun it's
+  too late, and the page says so. It's in Activity with who did it and posted to Discord.
+  A cancelled scheduled restart or update waits until the next day.
+- **"Stopped since 23:40" and "gave up after 3 tries"** on the cards, the server page and
+  Needs you, for friends too. Kept across Basecamp restarts (a new table, migration 0011).
+- **See what friends see**: a button on Settings → Friends turns your own view into the
+  friend view, served exactly as friends get it, with a banner that says which friend
+  controls are in effect and **Back to owner view**.
+- **Debug views** for the owner: read-only `/api/debug/...` answers with Basecamp's log,
+  the launcher's log, a server's console log, health, the settings and recent errors, so
+  the host PC can be looked at from another PC over Tailscale. Secrets are blanked out of
+  everything they return, each read goes in the audit log, and friends get none of it
+  ([docs/09-debug.md](docs/09-debug.md)).
 
 ## 0.2.1
 
