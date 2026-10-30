@@ -109,6 +109,18 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 600; font-size: 0.8rem; flex: none; }
 .topbar .newgame-top { display: none; }
 
+/* "See what friends see" (D-143): the owner previewing the friend view */
+.previewbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 0.9rem;
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--accent-soft); border-bottom: 1px solid var(--line);
+}
+.previewbar[hidden] { display: none; }
+.previewbar > svg.i { color: var(--accent); }
+.previewbar .grow { flex: 1 1 240px; min-width: 0; }
+
 /* ---------- shell ---------- */
 .shell { display: grid; grid-template-columns: var(--side) minmax(0, 1fr); min-height: calc(100vh - 56px); }
 .side {

@@ -140,12 +140,27 @@ class SetupIn(BaseModel):
     name: str = Field(default="", max_length=100)
 
 
+class ViewIn(BaseModel):
+    """See what friends see (D-143): "friend" previews the friend view, "owner" ends it."""
+
+    as_: Literal["friend", "owner"] = Field(alias="as")
+
+
 class SetupValuesIn(BaseModel):
     values: dict[str, str] = Field(default_factory=dict, max_length=20)  # by place: "0", "1"
 
 
 def _who(request: Request) -> auth.Who:
     return request.state.who  # set by the middleware in create_app
+
+
+def _friend_login(w: auth.Who) -> str:
+    """Who a friend action is audited as: the friend's login, "unknown" without one, and
+    never an admin's login for an owner previewing the friend view (D-143), since friends
+    see the logins on friend actions in Activity."""
+    if w.preview:
+        return auth.PREVIEW_WHO
+    return w.login or "unknown"
 
 
 def _admin(request: Request) -> auth.Who:
@@ -407,6 +422,9 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         info: dict[str, Any] = {"login": w.login, "name": w.name, "is_admin": w.is_admin,
                                 "can_control": auth.can_control(w, settings),
                                 "version": __version__, "started_at": STARTED_AT}
+        if w.preview:  # the banner says which friend controls are in effect (D-143)
+            info["preview"] = {"friend_control": settings.friend_control,
+                               "listed": len(settings.friend_control_logins)}
         if w.is_admin:
             info["join_host"] = settings.join_host
             info["backup_defaults"] = {"backup_every_h": settings.default_backup_every_h,
@@ -415,6 +433,25 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
             info["steamcmd_found"] = settings.steamcmd_exe.is_file()
             info["steamcmd"] = str(settings.steamcmd_exe)
         return info
+
+    @app.post("/api/view")
+    def set_view(body: ViewIn, w: Who) -> JSONResponse:
+        """See what friends see (D-143): a session cookie that makes the owner's requests
+        friend requests, until "owner" clears it. Only an admin may turn it on; anyone may
+        clear it (it only gives back what the login already has)."""
+        res = JSONResponse({"view": body.as_})
+        if body.as_ == "friend":
+            if not w.is_admin:
+                raise HTTPException(403, "Admins only")
+            res.set_cookie(auth.VIEW_COOKIE, "friend", httponly=True, samesite="strict",
+                           path="/")
+            audit(w, "view.friend")
+        else:
+            res.delete_cookie(auth.VIEW_COOKIE, path="/")
+            if w.preview:
+                store.add_audit(w.login, "view.owner", None, "")
+                log.info("audit: %s view.owner", w.login)
+        return res
 
     # -- servers ---------------------------------------------------------------------
 
@@ -563,7 +600,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         if not auth.can_control(w, settings):
             raise HTTPException(403, "Not allowed")
         server = get_server(server_id)
-        who = w.login or "unknown"
+        who = _friend_login(w)
         not_updating(server_id)
         not_counting_down(server_id)
         state = sup.state(server_id)
@@ -637,7 +674,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         if not sup.counting_down(server_id):
             raise HTTPException(409, "Too late to cancel: it isn't counting down")
         friend_gap(cancel_clicks, server_id, settings.friend_control_gap_s)
-        return cancel_countdown(server_id, w.login or "unknown", "friend.cancel")
+        return cancel_countdown(server_id, _friend_login(w), "friend.cancel")
 
     @app.post("/api/friend/servers/{server_id}/start", status_code=202)
     def friend_start(server_id: int, w: Who) -> dict:
@@ -670,7 +707,7 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         friend_gap(quick_clicks, server_id, QUICK_GAP_S)
         command = quick[n]["command"]
         channel = quick[n]["channel"] or sup.remote.default_channel(server)
-        who = w.login or "unknown"
+        who = _friend_login(w)
         store.add_audit(who, "friend.command", server_id, command)
         log.info("audit: %s friend.command server=%s %s", who, server_id, command)
         try:

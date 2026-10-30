@@ -42,6 +42,7 @@ Either way: **admin** = your Tailscale login (Plan A) or a valid admin session (
 - A request with no Tailscale or forwarding headers and a loopback `Host` is the PC itself, the local admin.
 - Anything else, such as Serve traffic from a tagged device, is a friend (D-28).
 - Cross-site requests and unknown `Host` names are refused (D-29).
+- **See what friends see** (D-143): an admin request carrying the `bc_view=friend` cookie is served as a friend, routes and WebSockets alike. It is read only after the request is found to be an admin's, so it can only take rights away.
 
 ## Code layout
 
@@ -200,7 +201,8 @@ Built in Phases 2 to 5: everything here except `/api/events`.
 
 | Method | Path | Who |
 |---|---|---|
-| GET | `/api/me` | everyone (who you are) |
+| GET | `/api/me` | everyone (who you are; while previewing the friend view, which friend controls are in effect) |
+| POST | `/api/view` (`{"as": "friend"}` sets the preview cookie, admin; `{"as": "owner"}` clears it, anyone; D-143) | admin / everyone |
 | GET | `/api/servers` · `/api/servers/{id}` | friend (allow-lists: the card, and the server page's details, D-30, D-135) / admin (full; `/{id}` adds the quick commands and the last backup) |
 | POST | `/api/servers` · PUT/DELETE `/api/servers/{id}` | admin |
 | POST | `/api/servers/{id}/start` · `/stop` · `/restart` · `/kill` · `/update` · `/install` | admin (stop/restart/kill answer 202, D-32; update/install answer 202 with the run id and queue; start/stop/restart answer 409 while an install or update runs, D-41, or a stop warning counts down, D-62). `/stop?now=true` skips the warning, and during a countdown skips the rest of it |

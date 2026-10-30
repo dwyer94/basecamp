@@ -995,6 +995,7 @@ const ACTIONS = {
   "setup.retry": ["plus", "idle", "setup step tried again", "Setup retried"], "setup.values": ["plus", "idle", "setup values written", "Setup values"],
   "setup.next": ["plus", "idle", "setup moved on", "Setup next"],
   debug: ["terminal", "idle", "debug view read:", "Debug read"],
+  "view.friend": ["eye", "idle", "", "Friend view preview"], "view.owner": ["eye", "idle", "", "Friend view preview ended"],
   "rcon.password": ["shield", "idle", "RCON password changed", "RCON password"], "rest.password": ["shield", "idle", "REST password changed", "REST password"],
 };
 
@@ -1012,6 +1013,7 @@ const GLOBAL = {
   "update.check": () => ["Basecamp", " checked for updates."], "update.install": (d) => ["Basecamp", ` update: ${d}.`],
   "update.refused": (d) => ["Basecamp", ` update refused: ${d}`], "update.dismiss": () => ["Basecamp", " update banner dismissed."],
   debug: (d) => ["Debug view", ` read: ${d}.`],
+  "view.friend": () => ["Friend view", " previewed by the owner."], "view.owner": () => ["Friend view", " preview ended."],
   "basecamp.restart": () => ["Basecamp", " restarted."], "basecamp.restart.refused": (d) => ["Basecamp", ` restart refused: ${d}`],
 };
 
@@ -1174,8 +1176,37 @@ async function loadMe() {
     const changed = now.can_control !== me.can_control;
     me = now;
     document.body.classList.toggle("friend-locked", !isAdmin() && !canControl());
+    renderPreview();
     if (changed && page && page.update) page.update();
   } catch (e) { /* offline; the socket shows it */ }
+}
+
+// -- see what friends see (D-143) -----------------------------------------------------------
+
+function friendControlText(p) {
+  if (p.friend_control === "anyone") return "Friend controls are on for anyone who reaches the page.";
+  if (p.friend_control === "logins") {
+    return p.listed ? `Friend controls are on for ${p.listed} listed login${p.listed === 1 ? "" : "s"}; you're shown as one of them.`
+      : "Friend controls are on for listed logins, but none are listed, so friends can only look.";
+  }
+  return "Friend controls are off, so friends can only look.";
+}
+
+async function setView(as) {
+  try {
+    await api("POST", "/api/view", { as });
+    if (as === "friend") location.hash = "#dashboard";
+    location.reload();
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+function renderPreview() {
+  const bar = $("#previewbar");
+  bar.hidden = !me.preview;
+  if (!me.preview) return;
+  bar.replaceChildren(icon("eye"),
+    el("div", { class: "grow" }, el("strong", {}, "You're seeing what friends see. "), friendControlText(me.preview)),
+    el("button", { class: "btn sm", type: "button", onclick: () => setView("owner") }, "Back to owner view"));
 }
 
 async function boot() {
@@ -1187,6 +1218,7 @@ async function boot() {
   if (isAdmin()) setFailures(me.failures || 0);
   renderWho();
   renderFoot();
+  renderPreview();
   window.addEventListener("hashchange", route);
   let first = true;
   keepSocket("/ws/status", {

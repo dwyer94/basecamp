@@ -915,7 +915,9 @@ async function settingsPage(root, jump) {
     el("div", { class: "choice" }, radios), loginsBox,
     el("p", { class: "hint" }, `A stop, restart or update still warns players first. Each server takes one friend click per ${res.friend_control_gap_s} s, and every click goes in Activity with their login.`),
     el("div", { class: "btnrow" }, saveBtn((b) => putSettings({ friend_control: $("input[name=fc]:checked", friendsCard).value,
-      friend_control_logins: logins.value.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean) }, b))));
+      friend_control_logins: logins.value.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean) }, b)),
+    el("button", { class: "btn ghost", type: "button", title: "Your own view becomes the friend view, served as friends get it, until you go back",
+      onclick: () => setView("friend") }, icon("eye"), "See what friends see")));
 
   // Discord
   const live = res.live_status;
