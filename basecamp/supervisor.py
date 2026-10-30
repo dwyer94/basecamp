@@ -37,6 +37,7 @@ import logging
 import os
 import secrets
 import shutil
+import sqlite3
 import subprocess
 import threading
 import time
@@ -964,6 +965,10 @@ class Supervisor:
         if old is new:
             return
         log.debug("Server %s: %s -> %s", server_id, old, new)
+        try:  # "Stopped since 23:40" (D-142), kept across Basecamp restarts
+            self._store.record_state(server_id, new.value, time.time())
+        except sqlite3.Error as e:  # deleted meanwhile
+            log.debug("Server %s: state not recorded: %s", server_id, e)
         for fn in list(self._listeners):
             try:
                 fn(server_id, old, new)

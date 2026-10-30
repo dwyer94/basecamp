@@ -47,7 +47,7 @@ function stateOf(s) {
   }
   if (s.state === "crashed") {
     return { st: "bad", key: "bad", label: isAdmin() ? "Crashed" : "Down", mark: "alert",
-      fact: s.restart_at ? `restarting at ${hhmm(s.restart_at)}` : "not restarting" };
+      fact: s.restart_at ? `restarting at ${hhmm(s.restart_at)}` : s.gave_up_after ? `gave up after ${s.gave_up_after} tries` : "not restarting" };
   }
   if (s.state === "starting") return { st: "upd", key: "starting", label: "Starting", mark: "refresh", fact: "" };
   if (s.state === "stopping") return { st: "upd", key: "stopping", label: "Stopping", mark: "refresh", fact: "" };
@@ -56,7 +56,7 @@ function stateOf(s) {
   }
   const queued = s.job && !jobActive(s);
   return { st: "idle", key: "idle", label: "Stopped", mark: "hollow",
-    fact: queued ? `${s.job.kind === "install" ? "install" : "update"} queued` : "" };
+    fact: queued ? `${s.job.kind === "install" ? "install" : "update"} queued` : s.state_since ? `since ${sinceWhen(s.state_since)}` : "" };
 }
 
 function stateMark(st) {
@@ -368,7 +368,7 @@ function needsYouRows(extras) {
   const rows = [];
   for (const s of servers) {
     if (s.state === "crashed" && !s.restart_at) {
-      rows.push(attRow("bad", "alert", `${s.name} crashed and Basecamp stopped retrying.`,
+      rows.push(attRow("bad", "alert", `${s.name} crashed and Basecamp stopped retrying${s.gave_up_after ? ` after ${s.gave_up_after} tries` : ""}.`,
         `${s.last_exit_code !== null && s.last_exit_code !== undefined ? `Exit code ${s.last_exit_code}. ` : ""}Check the console, then start it again.`,
         [el("a", { class: "btn sm", href: `#server/${s.id}` }, "Open console"),
           el("button", { class: "btn sm primary", type: "button", onclick: () => act(s, "start") }, "Start")]));
@@ -697,7 +697,7 @@ function renderHead(head, s, st) {
       el("div", { class: "grow" }, el("div", {}, s.restart_at
         ? [el("strong", {}, "Crashed"), `, so Basecamp starts it again at ${hhmm(s.restart_at)}.`]
         : [el("strong", {}, isAdmin() ? "Crashed" : "Down"), isAdmin()
-          ? `. Basecamp isn't restarting it.${s.last_exit_code !== null && s.last_exit_code !== undefined ? ` Last exit code ${s.last_exit_code}.` : ""} The console below has its last output.`
+          ? `. Basecamp ${s.gave_up_after ? `gave up after ${s.gave_up_after} tries and ` : ""}isn't restarting it.${s.last_exit_code !== null && s.last_exit_code !== undefined ? ` Last exit code ${s.last_exit_code}.` : ""} The console below has its last output.`
           : ". The owner has been told; you can start it again."]))));
   }
   if (st.key === "upd" && s.job) {
@@ -759,6 +759,7 @@ function renderSide(side, s, st, detail) {
     row("Up", s.uptime_s !== null ? fmtUp(s.uptime_s) : "");
     row("CPU, RAM", [s.cpu_percent !== null && s.cpu_percent !== undefined ? `${s.cpu_percent}%` : "", s.rss_mb ? fmtMB(s.rss_mb) : ""].filter(Boolean).join(", "));
   }
+  if (["idle", "bad"].includes(st.key) && s.state_since) row(st.key === "bad" ? `${st.label} since` : "Stopped since", whenShort(s.state_since));
   const build = isAdmin() ? s.steam && s.steam.build_id : detail && detail.build_id;
   const latest = isAdmin() ? s.steam && s.steam.latest && s.steam.latest.build_id : detail && detail.latest_build;
   row("Build", build);

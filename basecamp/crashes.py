@@ -3,7 +3,8 @@
 When a server goes to Crashed (an exit nobody asked for, also one found after a Basecamp
 restart), it is started again after ``crash_restart_delay_s``, unless that was its
 ``crash_limit``-th crash within ``crash_window_s``: then it stays Crashed until someone
-presses Start. Giving up clears its count, so after that Start it gets its retries back.
+presses Start. Giving up clears its count, so after that Start it gets its retries back. How
+many crashes it gave up after is kept in the store until it starts ("gave up after 3 tries").
 Each crash, and giving up, posts to Discord (when those events are on for the server).
 
 A pending restart is cancelled by Stop, Kill or Delete (``cancel``), and is skipped if the
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import sqlite3
 import threading
 import time
 from collections import deque
@@ -57,6 +59,10 @@ class CrashPolicy:
         return True
 
     def on_state(self, server_id: int, old: ServerState, new: ServerState) -> None:
+        if new is ServerState.STARTING:  # started again: "gave up after" is over (D-142)
+            with contextlib.suppress(sqlite3.Error):
+                self._store.set_gave_up(server_id, 0)
+            return
         if new is not ServerState.CRASHED or old is ServerState.CRASHED:
             return
         try:
@@ -83,6 +89,8 @@ class CrashPolicy:
                            "Press Start when it's fixed")
             log.error("%s crashed %d times in %d minutes; giving up", server.name, count,
                       minutes)
+            with contextlib.suppress(sqlite3.Error):
+                self._store.set_gave_up(server_id, count)
             activity.record(self._store, "crash.gave_up", server_id,
                             f"Crashed {count} times in {minutes} min ({how}); not restarting")
             self._notify(server_id, NotifyEvent.GAVE_UP,

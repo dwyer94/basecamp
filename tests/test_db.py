@@ -96,7 +96,7 @@ def test_migrations_are_applied_once_and_new_ones_later(tmp_path):
     shutil.copytree(MIGRATIONS_DIR, migrations)
     conn = db.connect(tmp_path / "x.db")
 
-    assert db.migrate(conn, migrations) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert db.migrate(conn, migrations) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     assert db.migrate(conn, migrations) == []
 
     (migrations / "0099_add_column.sql").write_text(

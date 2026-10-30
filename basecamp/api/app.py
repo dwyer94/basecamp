@@ -329,14 +329,16 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         return views.admin_view(settings, server, status, cpu, restart_at(server.id),
                                 steam.view(server), remote_view(server),
                                 players.admin_view(server), schedules.view(server),
-                                last_updated(server, store), last_line)
+                                last_updated(server, store), last_line,
+                                recorded=store.server_status(server.id))
 
     def friend_view(server, status) -> dict:  # type: ignore[no-untyped-def]
         return views.friend_view(settings, server, status, players.friend_view(server),
                                  cpu_percent=cpu.percent(status.pid),
                                  steam=steam.view(server),
                                  last_updated=last_updated(server, store),
-                                 restart_at=restart_at(server.id))
+                                 restart_at=restart_at(server.id),
+                                 recorded=store.server_status(server.id))
 
     def quick_commands(server) -> list[dict]:  # type: ignore[no-untyped-def]
         """The quick console commands from the server's template (D-137), numbered."""

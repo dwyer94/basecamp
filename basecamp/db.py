@@ -411,6 +411,32 @@ class Store:
         with self._lock:
             self._conn.execute("DELETE FROM setups WHERE server_id = ?", (server_id,))
 
+    # -- when each server's state changed (D-142) ------------------------------
+
+    def record_state(self, server_id: int, state: str, at: float) -> None:
+        """The server changed to ``state`` at ``at``. Keeps ``gave_up_after``."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO server_status (server_id, state, since) VALUES (?, ?, ?) "
+                "ON CONFLICT (server_id) DO UPDATE SET state = excluded.state, "
+                "since = excluded.since", (server_id, state, at))
+
+    def set_gave_up(self, server_id: int, crashes: int) -> None:
+        """How many crashes Basecamp gave up after (0 = it hasn't, or was started again)."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO server_status (server_id, gave_up_after) VALUES (?, ?) "
+                "ON CONFLICT (server_id) DO UPDATE SET gave_up_after = excluded.gave_up_after",
+                (server_id, crashes))
+
+    def server_status(self, server_id: int) -> tuple[str, float, int] | None:
+        """(state, since, gave_up_after) as last recorded, or None."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT state, since, gave_up_after FROM server_status WHERE server_id = ?",
+                (server_id,)).fetchone()
+        return (row["state"], row["since"], row["gave_up_after"]) if row else None
+
     # -- helpers --------------------------------------------------------------
 
     @staticmethod

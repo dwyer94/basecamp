@@ -22,9 +22,11 @@ from basecamp.supervisor import ServerStatus
 # last_updated: {"at", "source"} when the game was last updated: "steam" (the app
 # manifest's LastUpdated) or "basecamp" (its own last good update), else None.
 # job: a queued or running install or update, {"kind", "phase", "progress", "position"}.
+# state_since: when it went Stopped or Crashed ("Stopped since 23:40"), else None;
+# gave_up_after: the crashes Basecamp stopped retrying after, while Crashed (D-142).
 FRIEND_FIELDS = ("id", "name", "state", "uptime_s", "join_address", "players",
                  "cpu_percent", "rss_mb", "last_updated", "update_available", "job",
-                 "stop_warning", "restart_at")
+                 "stop_warning", "restart_at", "state_since", "gave_up_after")
 # The server page's details panel and Schedule tab, on top of the card.
 FRIEND_DETAIL_FIELDS = (*FRIEND_FIELDS, "build_id", "latest_build", "schedule",
                         "last_backup", "quick_commands")
@@ -62,11 +64,26 @@ def _job(steam: dict | None) -> dict | None:
     return view
 
 
+def state_since(recorded: tuple[str, float, int] | None,
+                state: ServerState) -> tuple[float | None, int | None]:
+    """(since, gave up after) for a Stopped or Crashed server, from the store's record
+    (D-142). A server that crashed, then Basecamp restarted, is Stopped since the crash."""
+    if recorded is None or state not in (ServerState.STOPPED, ServerState.CRASHED):
+        return None, None
+    was, since, gave_up = recorded
+    down = (ServerState.STOPPED.value, ServerState.CRASHED.value, ServerState.STOPPING.value)
+    if was != state.value and not (state is ServerState.STOPPED and was in down):
+        return None, None
+    return (since or None), ((gave_up or None) if state is ServerState.CRASHED else None)
+
+
 def friend_view(settings: Settings, server: Server, status: ServerStatus,
                 players: dict | None = None, *, cpu_percent: float | None = None,
                 steam: dict | None = None, last_updated: dict | None = None,
-                restart_at: float | None = None) -> dict:
+                restart_at: float | None = None,
+                recorded: tuple[str, float, int] | None = None) -> dict:
     warning = status.warning
+    since, gave_up = state_since(recorded, status.state)
     view = {
         "id": server.id,
         "name": server.name,
@@ -84,6 +101,8 @@ def friend_view(settings: Settings, server: Server, status: ServerStatus,
         "stop_warning": {"kind": warning["kind"], "stop_at": warning["stop_at"]}
         if warning else None,
         "restart_at": restart_at,  # a crash restart is pending (R-05)
+        "state_since": since,
+        "gave_up_after": gave_up,
     }
     assert tuple(view) == FRIEND_FIELDS
     return view
@@ -156,10 +175,12 @@ def admin_view(settings: Settings, server: Server, status: ServerStatus,
                cpu: CpuSampler | None = None, restart_at: float | None = None,
                steam: dict | None = None, remote: dict | None = None,
                players: dict | None = None, schedule: dict | None = None,
-               last_updated: dict | None = None, last_line: str | None = None) -> dict:
+               last_updated: dict | None = None, last_line: str | None = None,
+               recorded: tuple[str, float, int] | None = None) -> dict:
     cpu_percent = cpu.percent(status.pid) if cpu else None
     view = friend_view(settings, server, status, players, cpu_percent=cpu_percent,
-                       steam=steam, last_updated=last_updated, restart_at=restart_at)
+                       steam=steam, last_updated=last_updated, restart_at=restart_at,
+                       recorded=recorded)
     view.update(
         config=server.model_dump(mode="json", exclude={"id"}),
         discord_line=discord_line(settings, server),

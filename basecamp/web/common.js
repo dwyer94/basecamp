@@ -160,6 +160,14 @@ function whenShort(ts) {
   return new Date(ts * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+// After "since": "23:40", "yesterday 23:40", "12 Oct 18:03"
+function sinceWhen(ts) {
+  const n = daysAgo(ts);
+  if (n === 0) return hhmm(ts);
+  if (n === 1) return `yesterday ${hhmm(ts)}`;
+  return whenShort(ts);
+}
+
 // "just now", "5 min ago", "3 h ago", "yesterday", "2 days ago"
 function relTime(ts) {
   const s = Date.now() / 1000 - ts;
