@@ -82,6 +82,7 @@ class Players:
         self._wake = threading.Event()
         self._closed = threading.Event()
         self._thread: threading.Thread | None = None
+        self.last_poll = 0.0  # when a poll round last finished (epoch seconds)
         sup.add_listener(self._on_state)
 
     def add_listener(self, fn: Callable[[], None]) -> None:
@@ -157,6 +158,7 @@ class Players:
             gone = set(self._counts) - running
             for sid in gone:
                 del self._counts[sid]
+        self.last_poll = time.time()
         if gone:
             self._changed()
 
@@ -176,6 +178,16 @@ class Players:
     def close(self) -> None:
         self._closed.set()
         self._wake.set()
+
+    def health(self) -> dict:
+        """For the debug view: is the poller running, when it last polled, the counts."""
+        with self._mu:
+            counts = {sid: {"count": c.count, "max": c.most, "checked_at": c.checked_at,
+                            "error": c.error}
+                      for sid, c in self._counts.items()}
+        return {"running": bool(self._thread and self._thread.is_alive()),
+                "every_s": self._settings.players_poll_s, "last_poll": self.last_poll or None,
+                "counts": counts}
 
     def _on_state(self, server_id: int, old: ServerState, new: ServerState) -> None:
         if new is ServerState.RUNNING or old is ServerState.RUNNING:

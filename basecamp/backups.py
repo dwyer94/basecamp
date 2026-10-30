@@ -211,6 +211,9 @@ class Backups:
     def stop_scheduler(self) -> None:
         self._stop.set()
 
+    def scheduler_running(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
+
     def due(self, server: Server, now: float | None = None) -> bool:
         """A scheduled backup is due: the schedule is on, the server is running (its save
         only changes then), and the newest backup or last attempt is older than the

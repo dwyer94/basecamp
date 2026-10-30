@@ -68,7 +68,7 @@ def kind(action: str) -> str:
     if action.startswith("notify"):
         return "discord"
     if action.startswith(("config", "console", "settings", "template", "server.", "setup",
-                          "rcon.", "rest.")):
+                          "rcon.", "rest.", "debug")):
         return "config"
     return "server"
 

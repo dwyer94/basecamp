@@ -18,20 +18,23 @@ import asyncio
 import contextlib
 import logging
 import mimetypes
+import os
 import sqlite3
+import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import psutil
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from basecamp import __version__, activity, auth, configs, firewall, notify, templates
+from basecamp import __version__, activity, auth, configs, debug, firewall, notify, templates
 from basecamp.api import views
 from basecamp.backups import BackupError, Backups, save_folder
 from basecamp.configs import ConfigFiles
@@ -43,7 +46,7 @@ from basecamp.models import ACTIVE_STATES, NotifyEvent, ServerConfig, ServerKind
 from basecamp.notify import Notifier
 from basecamp.players import Players
 from basecamp.schedule import Schedules
-from basecamp.selfupdate import SelfUpdater, UpdateError
+from basecamp.selfupdate import LAUNCHER_ENV, SelfUpdater, UpdateError
 from basecamp.settings import PAGE_SETTINGS, Settings, SettingsFile
 from basecamp.setup import SetupError, Setups
 from basecamp.steam import Kind, SteamError, SteamRunner, last_updated
@@ -1360,6 +1363,128 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
         dismissed = activity.dismiss(store, w.label)
         hub.poke()
         return {"dismissed": dismissed, "open_failures": activity.open_failures(store)}
+
+    # -- read-only debug views (batch 4, item 11; docs/09-debug.md) ----------------------
+    # Admin only (a friend, or the owner previewing the friend view, gets 403). Each call is
+    # audited as "debug", which friends' Activity never shows. Nothing from the request is
+    # used as a path, and every line of text goes through debug.Redactor.
+
+    def debug_audit(w: auth.Who, what: str, server_id: int | None = None) -> None:
+        store.add_audit(w.label, "debug", server_id, what)
+        log.info("audit: %s debug %s", w.label, what)
+
+    def log_files(name: str) -> list[Path]:
+        if name == "basecamp":
+            return debug.rotated(settings.logs_dir / "basecamp.log", 5)
+        if updater.root is None:
+            raise HTTPException(404, "Not running under the launcher, so there's no "
+                                     f"{name} log here")
+        if name == "launcher":
+            return debug.rotated(updater.root / "logs" / "launcher.log", 2)
+        return [updater.root / "logs" / "basecamp-output.log"]
+
+    def debug_tail(paths: list[Path], lines: int, since: str | None) -> dict:
+        try:
+            when = debug.parse_since(since)
+        except ValueError:
+            raise HTTPException(400, "since: an ISO date and time (this PC's), or epoch "
+                                     "seconds") from None
+        out = debug.tail(paths, lines, when, debug.Redactor(settings))
+        if not out["files"]:
+            raise HTTPException(404, "No such log yet")
+        return out
+
+    @app.get("/api/debug")
+    def debug_index(w: Admin) -> dict:
+        return {"endpoints": [
+            "/api/debug/health", "/api/debug/settings", "/api/debug/errors?lines=",
+            "/api/debug/logs/basecamp?lines=&since=", "/api/debug/logs/launcher?lines=&since=",
+            "/api/debug/logs/basecamp-output?lines=&since=",
+            "/api/debug/servers/{id}/console?lines=&since="],
+            "max_lines": debug.MAX_LINES}
+
+    @app.get("/api/debug/logs/{name}")
+    def debug_log(name: Literal["basecamp", "launcher", "basecamp-output"], w: Admin,
+                  lines: int = debug.DEFAULT_LINES, since: str | None = None) -> dict:
+        """Basecamp's own log, or the launcher's (and Basecamp's output under it)."""
+        debug_audit(w, f"log {name} lines={lines}" + (f" since={since}" if since else ""))
+        return {"log": name, **debug_tail(log_files(name), lines, since)}
+
+    @app.get("/api/debug/servers/{server_id}/console")
+    def debug_console(server_id: int, w: Admin, lines: int = debug.DEFAULT_LINES,
+                      since: str | None = None) -> dict:
+        """A server's console.log: its output, Basecamp's notes, SteamCMD's output."""
+        server = get_server(server_id)
+        debug_audit(w, f"console lines={lines}" + (f" since={since}" if since else ""),
+                    server_id)
+        path = settings.server_log_dir(server_id) / "console.log"
+        return {"server_id": server_id, "name": server.name,
+                **debug_tail(debug.rotated(path, settings.console_log_backups), lines, since)}
+
+    @app.get("/api/debug/settings")
+    def debug_settings(w: Admin) -> dict:
+        """The settings in effect, from an allow-list; which secrets are set, not them."""
+        debug_audit(w, "settings")
+        ids = [s.id for s in store.list_servers()]
+        return {"settings": debug.settings_view(settings),
+                "secrets_set": debug.secrets_view(settings, ids),
+                "file": settings_file.view()}
+
+    @app.get("/api/debug/errors")
+    def debug_errors(w: Admin, lines: int = 100) -> dict:
+        """Warnings and errors from basecamp.log, the hard failures in Activity (Discord
+        messages that weren't delivered among them), and the Discord counters."""
+        debug_audit(w, f"errors lines={lines}")
+        redact = debug.Redactor(settings)
+        logged = debug.tail(log_files("basecamp"), lines, None, redact, debug.PROBLEM)
+        failures = [{**item, "detail": redact(item["detail"] or "")}
+                    for item in activity.feed(store, True, limit=min(max(lines, 1), 500),
+                                              failures_only=True)]
+        return {"log": logged, "failures": failures,
+                "open_failures": activity.open_failures(store),
+                "discord": {"sent": notifier.sent, "failed": notifier.failed,
+                            "pending": notifier.pending(), "live_status": live.view()}}
+
+    @app.get("/api/debug/health")
+    def debug_health(w: Admin) -> dict:
+        """Version, uptime, the launcher, the SteamCMD queue, the schedulers and the player
+        count poller, the live status message, and each server's state."""
+        debug_audit(w, "health")
+        launcher_pid = None
+        if os.environ.get(LAUNCHER_ENV):
+            with contextlib.suppress(psutil.Error, AttributeError):
+                launcher_pid = psutil.Process().parent().pid
+        u = updater.view()
+        servers = []
+        for server in store.list_servers():
+            status = sup.status(server.id)
+            servers.append({
+                "id": server.id, "name": server.name, "state": status.state.value,
+                "pid": status.pid, "uptime_s": status.uptime_s, "adopted": status.adopted,
+                "has_console": status.has_console, "last_exit_code": status.last_exit_code,
+                "stop_warning": status.warning, "restart_at": restart_at(server.id)})
+        return {
+            "version": __version__, "python": sys.version.split()[0], "pid": os.getpid(),
+            "started_at": STARTED_AT, "uptime_s": round(time.time() - STARTED_AT),
+            "data_dir": str(settings.data_dir),
+            "launcher": {"under_launcher": updater.launcher is not None,
+                         "launcher_version": updater.launcher, "pid": launcher_pid,
+                         "root": str(updater.root) if updater.root else None},
+            "self_update": {k: u[k] for k in ("current", "status", "error", "install_error",
+                                              "available", "ready_version", "last_check",
+                                              "failure", "last_update")},
+            "steamcmd": {"found": settings.steamcmd_exe.is_file(), "jobs": steam.jobs()},
+            "scheduler": schedules.health(),
+            "players": players.health(),
+            "backups": {"scheduler_running": backups.scheduler_running()},
+            "live_status": live.view(),
+            "discord": {"sent": notifier.sent, "failed": notifier.failed,
+                        "pending": notifier.pending()},
+            "settings_file": settings_file.view(),
+            "open_failures": activity.open_failures(store),
+            "host": views.host_view(True),
+            "servers": servers,
+        }
 
     # -- WebSockets -----------------------------------------------------------------
 

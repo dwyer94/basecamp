@@ -993,6 +993,7 @@ const ACTIONS = {
   "setup.start": ["plus", "idle", "new game setup started", "Setup started"], "setup.finish": ["plus", "idle", "new game setup closed", "Setup closed"],
   "setup.retry": ["plus", "idle", "setup step tried again", "Setup retried"], "setup.values": ["plus", "idle", "setup values written", "Setup values"],
   "setup.next": ["plus", "idle", "setup moved on", "Setup next"],
+  debug: ["terminal", "idle", "debug view read:", "Debug read"],
   "rcon.password": ["shield", "idle", "RCON password changed", "RCON password"], "rest.password": ["shield", "idle", "REST password changed", "REST password"],
 };
 
@@ -1009,6 +1010,7 @@ const GLOBAL = {
   "template.refused": (d) => ["Template", ` refused: ${d}`],
   "update.check": () => ["Basecamp", " checked for updates."], "update.install": (d) => ["Basecamp", ` update: ${d}.`],
   "update.refused": (d) => ["Basecamp", ` update refused: ${d}`], "update.dismiss": () => ["Basecamp", " update banner dismissed."],
+  debug: (d) => ["Debug view", ` read: ${d}.`],
   "basecamp.restart": () => ["Basecamp", " restarted."], "basecamp.restart.refused": (d) => ["Basecamp", ` restart refused: ${d}`],
 };
 

@@ -36,6 +36,7 @@ Basecamp is a small Windows app that runs on an always-on Windows PC (the "host 
 | [docs/06-decisions.md](docs/06-decisions.md) | Decisions made so far, and open questions |
 | [docs/07-updates.md](docs/07-updates.md) | How Basecamp updates itself from GitHub Releases, with signing and rollback |
 | [docs/08-templates.md](docs/08-templates.md) | Adding a game: the template format, finding the facts, testing and shipping it |
+| [docs/09-debug.md](docs/09-debug.md) | Read-only debug views for looking at the host PC from the dev PC |
 
 ## Stack
 

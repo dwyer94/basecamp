@@ -94,6 +94,13 @@ class Schedules:
     def close(self) -> None:
         self._closed.set()
 
+    def health(self) -> dict:
+        """For the debug view: is the loop running, and what schedule.json holds."""
+        with self._mu:
+            state = {k: dict(v) for k, v in self._state.items()}
+        return {"running": bool(self._thread and self._thread.is_alive()),
+                "every_s": self._settings.schedule_check_s, "state": state}
+
     def tick(self) -> list[tuple[int, str, str]]:
         """One look at every server. Returns ``(server id, kind, what happened)`` for each
         schedule that was due."""

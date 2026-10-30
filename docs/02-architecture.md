@@ -76,6 +76,7 @@ basecamp/
   api/app.py         FastAPI app: REST routes, status and console WebSockets, pages
   api/views.py       admin view vs friend view of a server (D-30)
   activity.py        the Activity feed: failures, clearing, the friend allow-list (D-134)
+  debug.py           read-only debug views: log tails, the redactor, the settings allow-list (D-141)
   web/               index.html, common.js, app.js, pages.js, style.css, fonts/ (no build step)
 migrations/          numbered SQL files, add-only
 templates/           built-in game templates, one JSON per game (docs/08-templates.md)
@@ -203,6 +204,7 @@ Built in Phases 2 to 5: everything here except `/api/events`.
 | GET | `/api/servers` · `/api/servers/{id}` | friend (allow-lists: the card, and the server page's details, D-30, D-135) / admin (full; `/{id}` adds the quick commands and the last backup) |
 | POST | `/api/servers` · PUT/DELETE `/api/servers/{id}` | admin |
 | POST | `/api/servers/{id}/start` · `/stop` · `/restart` · `/kill` · `/update` · `/install` | admin (stop/restart/kill answer 202, D-32; update/install answer 202 with the run id and queue; start/stop/restart answer 409 while an install or update runs, D-41, or a stop warning counts down, D-62). `/stop?now=true` skips the warning, and during a countdown skips the rest of it |
+| POST | `/api/servers/{id}/countdown/cancel` · `/api/friend/servers/{id}/countdown/cancel` (call off the stop, restart or update a stop warning counts down to; the server keeps running; 409 once the stop steps have begun; friends: one per server per `friend_control_gap_s`, its own clock, D-140) | admin / friends with the friend permission |
 | POST | `/api/friend/servers/{id}/start` · `/stop` · `/restart` · `/update` (stop and restart always warn, update backs up the save; one friend click per server per minute, 429) · `/quick/{n}` (a template quick command marked `friend: true`, picked by number; one per server per 5 s) | friends with the friend permission, and admins (D-131, D-135, D-137) |
 | GET/POST | `/api/setups` (list; begin `{template_id, name, install_dir}`) · GET `/api/setups/{id}` · POST `.../retry` · `.../values` (`{values: {"0": ...}}`) · `.../next` · `.../finish[?start=true]` (D-130) | admin |
 | POST | `/api/servers/{id}/steam/cancel` · `/steam/check` (build check, 202) · GET `/api/servers/{id}/steam/runs/{run}/log` · GET `/api/steam` (SteamCMD path and queue) | admin |
@@ -220,6 +222,7 @@ Built in Phases 2 to 5: everything here except `/api/events`.
 | GET | `/api/activity?server_id=&limit=&before=&failures=` (the feed, newest first; friends get server events only, filtered here) · POST `/api/activity/{id}/dismiss` · POST `/api/activity/dismiss` (all) (D-134) | everyone / admin |
 | POST | `/api/restart` (Restart Basecamp through the launcher, 202; 409 without the launcher or while an install or update is queued or running, D-126) | admin |
 | GET | `/api/events` · `/api/audit` | admin |
+| GET | `/api/debug` · `/health` · `/settings` · `/errors` · `/logs/{basecamp,launcher,basecamp-output}` · `/servers/{id}/console` (read-only, secrets redacted, `lines` and `since`; [09-debug.md](09-debug.md), D-141) | admin (audited) |
 | GET | `/healthz` | localhost |
 
 ## UI
