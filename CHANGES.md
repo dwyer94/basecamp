@@ -3,6 +3,12 @@
 Release notes. `scripts\release.ps1 <version>` publishes the section for that version as the
 GitHub release's notes, which the admin dashboard shows next to its Install button.
 
+## 0.3.1
+
+- After an update the page always loads that version's styles and scripts. Updating from
+  0.2.x to 0.3.0 could leave the page unstyled and stuck on "Loading…" until a hard refresh
+  (Ctrl+F5), because the browser reused 0.2.x's files. 0.3.1 fixes that for everyone.
+
 ## 0.3.0
 
 A new look, friends who can run the servers, and a guided way to add a game. Install it from

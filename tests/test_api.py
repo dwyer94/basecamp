@@ -341,7 +341,18 @@ def test_pages_and_health(client):
     res = client.get("/static/app.js")
     assert res.status_code == 200 and res.headers["cache-control"] == "no-cache"
     assert client.get("/healthz").json()["ok"]
-    assert "Basecamp" in client.get("/").text
+    page = client.get("/")
+    assert "Basecamp" in page.text and page.headers["cache-control"] == "no-cache"
+
+
+def test_page_links_carry_the_version(client):
+    """A browser holding an older version's files fetches the new ones (D-144)."""
+    from basecamp import __version__
+    page = client.get("/").text
+    for name in ("style.css", "common.js", "app.js", "pages.js"):
+        assert f'"/static/{name}?v={__version__}"' in page
+    assert '"/static/style.css"' not in page
+    assert client.get(f"/static/style.css?v={__version__}").status_code == 200
 
 
 # -- backups and Discord (Phase 4) ---------------------------------------------------------
@@ -413,7 +424,7 @@ def test_backup_download_streams_the_zip_and_is_audited(client, tmp_path, web_se
 
 def test_add_to_home_screen_files(client):
     page = client.get("/").text
-    assert '<link rel="manifest" href="/static/manifest.webmanifest">' in page
+    assert '<link rel="manifest" href="/static/manifest.webmanifest?v=' in page
     assert 'rel="apple-touch-icon"' in page
     assert 'rel="manifest"' in client.get("/", headers=AS_FRIEND).text  # friends too
     res = client.get("/static/manifest.webmanifest")

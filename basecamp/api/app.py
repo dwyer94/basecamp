@@ -19,6 +19,7 @@ import contextlib
 import logging
 import mimetypes
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -29,7 +30,7 @@ from typing import Annotated, Any, Literal
 
 import psutil
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
@@ -61,6 +62,7 @@ from basecamp.supervisor import (
 log = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+_STATIC_LINK = re.compile(r'("/static/[^"?]+)"')  # a link in index.html, to add ?v=<version>
 STARTED_AT = time.time()  # tells the page a restart happened (D-126)
 STATUS_INTERVAL_S = 5.0  # uptime, CPU and RAM refresh on the status WebSocket
 _UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
@@ -402,9 +404,14 @@ def create_app(store: Store, sup: Supervisor, settings: Settings, *,
     # -- pages --------------------------------------------------------------------
 
     @app.get("/", include_in_schema=False)
-    def index(w: Who) -> FileResponse:
-        """One page for everyone: friends get it with the owner's parts hidden (D-135)."""
-        return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+    def index(w: Who) -> HTMLResponse:
+        """One page for everyone: friends get it with the owner's parts hidden (D-135).
+
+        Its /static/ links carry the version, so a browser that kept an older version's
+        files (0.2.x sent no Cache-Control) fetches the new ones after an update (D-144)."""
+        page = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+        page = _STATIC_LINK.sub(rf'\1?v={__version__}"', page)
+        return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
     app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
