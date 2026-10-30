@@ -3,7 +3,11 @@
 Release notes. `scripts\release.ps1 <version>` publishes the section for that version as the
 GitHub release's notes, which the admin dashboard shows next to its Install button.
 
-## Unreleased
+## 0.3.0
+
+A new look, friends who can run the servers, and a guided way to add a game. Install it from
+the update banner: no reinstall, and game servers keep running. It adds database tables
+only, so rolling back to 0.2.1 still works.
 
 - **Add server needs no typed path.** Picking a game fills in SteamCMD's usual folder for
   it (`<SteamCMD folder>\steamapps\common\<game folder>`), and **Or import an existing
